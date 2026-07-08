@@ -1,0 +1,68 @@
+System Library "Web-native text-skinned talking-head library" id "hologlyph" {
+    todos "./meta/todos"
+    decisions "./meta/decisions"
+    research "./meta/research"
+    sources "./meta/sources"
+
+    Container Engine "Core runtime engine and subsystems" id "hologlyph.runtime" {
+        Module Core "Player loop, scene graph, lifecycle, host" id "hologlyph.runtime.core" {
+            path "./src/core"
+        }
+        Module Renderer "Three.js renderer, WebGPU/WebGL2 fallback, camera" id "hologlyph.runtime.renderer" {
+            path "./src/renderer"
+        }
+        Module TextSkin "OffscreenCanvas text engine, CanvasTexture, GPU UV scroll" id "hologlyph.runtime.textskin" {
+            path "./src/text-skin"
+        }
+        Module Shaders "VFX: liquid pool emergence, selective bloom, emissive" id "hologlyph.runtime.shaders" {
+            path "./src/shaders"
+        }
+        Module Motion "MotionEngine: blendshapes, gaze/saccades, gestures" id "hologlyph.runtime.motion" {
+            path "./src/motion"
+        }
+        Module Speech "TTS adapters, viseme mapping, lip-sync" id "hologlyph.runtime.speech" {
+            path "./src/speech"
+        }
+        Module Audio "AudioWorklet PCM analysis, AudioContext lifecycle" id "hologlyph.runtime.audio" {
+            path "./src/audio"
+        }
+        Module Behavior "State machine, scroll/observer integration" id "hologlyph.runtime.behavior" {
+            path "./src/behavior"
+        }
+    }
+
+    Container Asset "Asset loading and optimization" id "hologlyph.asset" {
+        Module Loader "GLB loader, Draco/Meshopt/KTX2, shared rig schema" id "hologlyph.asset.loader" {
+            path "./src/asset"
+        }
+        Module Pipeline "Offline glTF-Transform/Meshopt optimization tooling" id "hologlyph.asset.pipeline" {
+            path "./tools/asset-pipeline"
+        }
+    }
+
+    Container Adapter "Packaging and framework integrations" id "hologlyph.adapter" {
+        Module WebComponent "Custom element, declarative API, teardown" id "hologlyph.adapter.web-component" {
+            path "./src/element"
+        }
+        Module Frameworks "React/Vue/Svelte thin wrappers" id "hologlyph.adapter.frameworks" {
+            path "./src/adapters"
+        }
+    }
+}
+
+# Dependency edges (acyclic)
+hologlyph.adapter.web-component -> hologlyph.runtime.core "wraps engine"
+hologlyph.adapter.frameworks -> hologlyph.adapter.web-component "thin wrapper over element"
+hologlyph.runtime.core -> hologlyph.runtime.renderer "owns renderer"
+hologlyph.runtime.core -> hologlyph.runtime.behavior "drives state machine"
+hologlyph.runtime.core -> hologlyph.runtime.motion "ticks motion"
+hologlyph.runtime.core -> hologlyph.runtime.speech "drives speech"
+hologlyph.runtime.core -> hologlyph.runtime.textskin "feeds text skin"
+hologlyph.runtime.core -> hologlyph.runtime.shaders "owns VFX"
+hologlyph.runtime.renderer -> hologlyph.runtime.textskin "applies text texture"
+hologlyph.runtime.renderer -> hologlyph.runtime.shaders "applies VFX materials"
+hologlyph.runtime.renderer -> hologlyph.asset.loader "loads GLB bust"
+hologlyph.runtime.behavior -> hologlyph.runtime.motion "selects mood/skeletal tracks"
+hologlyph.runtime.motion -> hologlyph.asset.loader "consumes rig/blendshapes"
+hologlyph.runtime.speech -> hologlyph.runtime.motion "drives viseme blendshapes"
+hologlyph.runtime.speech -> hologlyph.runtime.audio "analyzes audio for fallback"
