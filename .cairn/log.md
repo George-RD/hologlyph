@@ -1,3 +1,12 @@
 - scan: nodes=2, findings=0, errors=0
 - scan: nodes=16, findings=10, errors=7
 - scan: nodes=16, findings=2, errors=0
+- scan: nodes=16, findings=2, errors=0
+- scan: nodes=16, findings=2, errors=0
+- scan: nodes=16, findings=22, errors=10
+- scan: nodes=16, findings=22, errors=10
+- scan: nodes=16, findings=22, errors=10
+- scan: nodes=16, findings=19, errors=2
+- scan: nodes=16, findings=19, errors=2
+- scan: nodes=16, findings=2, errors=0
+- scan: nodes=16, findings=2, errors=0

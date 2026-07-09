@@ -1,0 +1,41 @@
+{
+  "name": "hologlyph",
+  "version": "0.1.0",
+  "description": "Web-native text-skinned talking-head library",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/hologlyph.js",
+  "module": "./dist/hologlyph.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/hologlyph.js",
+    "./react": "./dist/adapters/react.js",
+    "./vue": "./dist/adapters/vue.js",
+    "./svelte": "./dist/adapters/svelte.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite demo",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "tsc --noEmit && vitest run",
+    "optimize-asset": "bun tools/asset-pipeline/optimize.ts"
+  },
+  "dependencies": {
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.4.1",
+    "@gltf-transform/extensions": "^4.4.1",
+    "@gltf-transform/functions": "^4.4.1",
+    "@types/three": "^0.178.0",
+    "happy-dom": "^18.0.1",
+    "meshoptimizer": "^1.2.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.4"
+  }
+}
