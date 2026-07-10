@@ -6,15 +6,15 @@ Everything in v2 flows through interfaces that already exist in `src/contracts.t
 
 ## Asset track (sequential, first)
 
-1. Source a permissively licensed head mesh. Candidates in preference order: a CC0 scan-derived bust (e.g. from a public domain scan repository), a VRoid/VRM-derived export (check licence per model), or a stylised sculpt. Hard requirements: quad-friendly topology under the 536 KB post-Meshopt budget (dec.performance-budget), UV layout usable by the projective text-skin mapping.
-2. Author the 24 rig-schema morphs. Where the source lacks blendshapes, derive them: visemes via wrap-deform from an ARKit-style donor or hand-sculpt the 6 dominant visemes and interpolate the rest; expressions likewise. `validateRig` is the acceptance oracle.
-3. Run `tools/asset-pipeline/optimize.ts` (Draco/Meshopt + KTX2) and record the exact command in the pipeline README.
+1. Source (decided by res.asset-sourcing): primary is a MakeHuman/MPFB2 exported head-bust under CC0 (assets are public-domain dedicated; the output licence adds an explicit no-claim clause). It ships the faceunits01 set of 54 ARKit facial units plus visemes, quad topology, ~3.5-4.8k verts for a bust slice. Backup: Blender Studio Human Base Meshes Stylized Head (CC0, zero morphs, all shapes authored downstream). Hard requirements either way: under the 536 KB post-Meshopt budget (dec.performance-budget), UVs usable by the projective text-skin mapping (face re-unwrapped to a dedicated island).
+2. Author the 27 rig-schema morphs (15 visemes + 12 expressions; res.morph-authoring corrected the earlier count of 24). Pipeline: canonicalise with a committed `@gltf-transform/core` script under `tools/asset-pipeline/` that renames Oculus-15 shapes directly or composites ARKit-52 shapes into the canonical names (weights in specs/morph-authoring-detail.md), drops non-canonical targets; where shapes are missing, transfer from an MPFB2 donor in Blender (Surface Deform / ShapeKeyWrap); sculpt the donor-less morphs (`exp_relaxed`, `mouth_round`, stylised expression set). `validateRig` is the acceptance oracle.
+3. Run `tools/asset-pipeline/optimize.ts` (Meshopt + KTX2), then re-run `validateRig` (compression can strip or damage morph targets); record the exact command in the pipeline README.
 4. Asset delivery decision: commit the optimized GLB (simplest, repo grows ~0.5 MB) versus fetch-on-build. Default: commit it; record dec.default-asset-delivery.
 
 ## Parallel wave (after asset lands)
 
 - Demo integration: engine option `avatarUrl` default points at the bust; placeholder stays as documented fallback when load fails or URL is empty.
-- Viseme e2e: capture one fixture of provider viseme metadata (hand-authored JSON is acceptable; format matches the mode-2 adapter contract), replay through SpeechEngine -> MotionEngine with a mock clock, assert blendshape weights at keyframes.
+- Viseme e2e (decided by res.viseme-provider-format): hand-authored fixture in Amazon Polly viseme speech-mark JSONL shape (never a captured API response), a small parser mapping Polly's 17-symbol en-US alphabet onto the 15 canonical morphs (table in the research artefact), replayed through SpeechEngine -> MotionEngine with a mock clock, asserting blendshape weights at keyframes. Azure/Google/ElevenLabs rejected: 22-ID + 55-blendshape over-specification or no viseme output at all.
 - Text-skin fit: tune `DEFAULT_GRID` density and emissive ramp against the bust UVs; screenshot-based manual check in the demo, numeric check on non-black pixel fraction like the v1 probe.
 
 ## Verification
