@@ -73,6 +73,29 @@ is an architecture change and requires a paired decision artefact under
 (chained via `informed_by:`), then make the blueprint edit. The hook gate checks
 structure and interface promises; an undeclared structural change is caught.
 
+### Development loop (start here in a fresh session)
+
+To pick up the next unit of work, run `cairn brief` (no arguments): it selects
+the next open todo and fuses the task, binding decisions, contract, and gates.
+Caveat: its gate list is cargo-hardcoded and wrong for this repo; the Build and
+test section below is authoritative. Then, per unit:
+
+1. Branch from main (`git checkout -b <type>/<slug>`).
+2. Set the todo's frontmatter `status: in_progress` (`meta/todos/todo.<slug>.md`).
+3. TDD: write the failing test first and confirm it fails for the right reason,
+   then implement to green. Required for bugfixes, expected for features;
+   deviations get a line in the change dir's `implementation-notes.md`.
+4. When you resolve a decision the design flagged as open (e.g. commit-vs-fetch
+   asset delivery), record it as a decision artefact BEFORE building on it, and
+   link the research that informed it via `informed_by:`.
+5. Log cairn friction to `meta/cairn-feedback.jsonl` as it happens, not at the end.
+6. Run the full gate (Build and test section plus `cairn hook all`), set the todo
+   `status: done`, tick the matching box in the change's `tasks.md`, then land
+   via feature-branch PR, squash-merge, branch deleted.
+
+Keep a running `implementation-notes.md` in the active change directory logging
+every deviation from the plan and every discovered edge case.
+
 ## Build and test
 
 - `bun install` - install dependencies.
@@ -94,8 +117,9 @@ Run the type-check and tests before any commit, alongside `cairn hook all`.
 - Commit with a message file: `git commit -F <file>` (write the message to a
   temp file, review it, then commit).
 - British spelling, no em dashes, in code comments and docs.
-- One regression test per defect: when fixing a bug, add a test that fails
-  without the fix and passes with it.
+- Test-first: write the failing test before the implementation (see Development
+  loop). One regression test per defect: when fixing a bug, the test must fail
+  without the fix and pass with it.
 
 ## Cairn friction feedback
 
