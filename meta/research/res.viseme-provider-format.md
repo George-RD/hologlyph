@@ -11,7 +11,9 @@ Provider survey (all claims from official docs): Azure Speech emits first-class 
 
 Recommendation: model the committed fixture on Amazon Polly viseme speech marks. The alphabet is small, shape-named, and maps onto the repo's 15 morphs with only benign many-to-one merges (`t`,`l` -> viseme_dd; `@`,`a` -> viseme_aa; `e`,`E` -> viseme_ee; `o`,`O` -> viseme_oh; `u` -> viseme_ou; `i` -> viseme_ih; `p` -> viseme_pp; `f` -> viseme_ff; `T` -> viseme_th; `s` -> viseme_ss; `S` -> viseme_ch; `k` -> viseme_kk; `r` -> viseme_rr; sil -> viseme_sil). The parser sets the mapped morph to 1.0 per event or interpolates between consecutive events.
 
-Fixture provenance: hand-author the JSONL in Polly's documented shape; do not commit a captured `SynthesizeSpeech` response (avoids AWS Service Terms questions entirely and keeps the fixture deterministic). Example, hand-authored, for "hello":
+> Correction (2026-07-13, res.local-tts-dev + dec.head-asset-source): fixture generation is now a committed dev-only espeak-ng script emitting this same strictly-Polly shape (no invented symbols), replacing hand-authoring as the default; a second canonical VisemeFrame fixture covers `viseme_nn`, which Polly's alphabet cannot express. The provenance rule below still holds.
+
+Fixture provenance: author the JSONL in Polly's documented shape; do not commit a captured `SynthesizeSpeech` response (avoids AWS Service Terms questions entirely and keeps the fixture deterministic). Example, hand-authored, for "hello":
 
 ```jsonl
 {"time":0,"type":"viseme","start":0,"end":0,"value":"sil"}

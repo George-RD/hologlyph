@@ -63,7 +63,7 @@
 | `@gltf-transform/core` | MIT, active | GLB read/write, rename/combine morph targets | https://gltf-transform.dev/ |
 | ShapeKeyWrap | GPL-3.0, active | Automates Surface-Deform bind/capture/rename | https://github.com/MykytaPetrenko/ShapeKeyWrap |
 | ARKit Creator Blender Addon | MIT, recent (2024/25) | Bakes 52 ARKit poses from a facial rig | https://github.com/tsikerdekis/ARKit-Creator-Blender-Addon |
-| MPFB2 | GPL-3.0 code, **CC0 output**, active | Generates human base with ARKit face units + visemes | https://github.com/makehumancommunity/mpfb2 |
+| MPFB2 | GPL-3.0 code, **CC0 output**, active | Human base mesh + 34 bundled FACS expression units (correction 2026-07-13, res.head-asset-alternatives: ARKit units and visemes are NOT bundled; they resolve from a separately installed target pack, licence to re-verify) | https://github.com/makehumancommunity/mpfb2 |
 | deformation_transfer_ARkit_blendshapes | MIT, research | Transfers 52 ARKit shapes from reference meshes | https://github.com/vasiliskatr/deformation_transfer_ARkit_blendshapes |
 | Faceit | Commercial (~$99) | Semi-auto ARKit/FACS shape keys (not open source) | Blender Market |
 | ARKitBlendshapeHelper | No licence, stale ~2023 | **Avoid** for a clean repo | - |
