@@ -1,8 +1,2 @@
-reconcilers:
-  - id: rust-code
-    version: phase-1
-    config:
-      ignore:
-        - target
 context: ""
 rules: {}

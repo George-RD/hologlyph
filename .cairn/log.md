@@ -17,3 +17,9 @@
 - scan: nodes=16, findings=34, errors=0
 - scan: nodes=16, findings=34, errors=0
 - scan: nodes=16, findings=31, errors=0
+- scan: nodes=16, findings=31, errors=0
+- scan: nodes=16, findings=31, errors=0
+- scan: nodes=16, findings=30, errors=0
+- scan: nodes=16, findings=30, errors=0
+- scan: nodes=16, findings=30, errors=0
+- scan: nodes=16, findings=30, errors=0
