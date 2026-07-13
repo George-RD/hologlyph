@@ -12,3 +12,8 @@
 - scan: nodes=16, findings=2, errors=0
 - scan: nodes=16, findings=2, errors=0
 - archive: implement-v1 merged; no operations
+- scan: nodes=16, findings=6, errors=0
+- scan: nodes=16, findings=34, errors=0
+- scan: nodes=16, findings=34, errors=0
+- scan: nodes=16, findings=34, errors=0
+- scan: nodes=16, findings=31, errors=0

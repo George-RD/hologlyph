@@ -66,7 +66,7 @@
 | MPFB2 | GPL-3.0 code, **CC0 output**, active | Generates human base with ARKit face units + visemes | https://github.com/makehumancommunity/mpfb2 |
 | deformation_transfer_ARkit_blendshapes | MIT, research | Transfers 52 ARKit shapes from reference meshes | https://github.com/vasiliskatr/deformation_transfer_ARkit_blendshapes |
 | Faceit | Commercial (~$99) | Semi-auto ARKit/FACS shape keys (not open source) | Blender Market |
-| ARKitBlendshapeHelper | No licence, stale ~2023 | **Avoid** for a clean repo | — |
+| ARKitBlendshapeHelper | No licence, stale ~2023 | **Avoid** for a clean repo | - |
 
 ## 5. Mapping tables
 
