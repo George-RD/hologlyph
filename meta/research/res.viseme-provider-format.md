@@ -13,7 +13,7 @@ Recommendation: model the committed fixture on Amazon Polly viseme speech marks.
 
 > Correction (2026-07-13, res.local-tts-dev + dec.head-asset-source): fixture generation is now a committed dev-only espeak-ng script emitting this same strictly-Polly shape (no invented symbols), replacing hand-authoring as the default; a second canonical VisemeFrame fixture covers `viseme_nn`, which Polly's alphabet cannot express. The provenance rule below still holds.
 
-Fixture provenance: author the JSONL in Polly's documented shape; do not commit a captured `SynthesizeSpeech` response (avoids AWS Service Terms questions entirely and keeps the fixture deterministic). Example, hand-authored, for "hello":
+Fixture provenance: generate (or in a pinch hand-author) the JSONL in Polly's documented shape; never commit a captured `SynthesizeSpeech` response (avoids AWS Service Terms questions entirely and keeps the fixture deterministic). Illustrative example for "hello":
 
 ```jsonl
 {"time":0,"type":"viseme","start":0,"end":0,"value":"sil"}
