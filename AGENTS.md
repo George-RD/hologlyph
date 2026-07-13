@@ -80,16 +80,21 @@ the next open todo and fuses the task, binding decisions, contract, and gates.
 Caveat: its gate list is cargo-hardcoded and wrong for this repo; the Build and
 test section below is authoritative. Then, per unit:
 
-1. Branch from main (`git checkout -b <type>/<slug>`).
-2. Set the todo's frontmatter `status: in_progress` (`meta/todos/todo.<slug>.md`).
-3. TDD: write the failing test first and confirm it fails for the right reason,
+1. Identify the active change: the todo's `satisfies:` frontmatter names it,
+   and its directory is `meta/changes/<name>/` (verify with `cairn change list`,
+   read its proposal/design/tasks before coding). If the work belongs to no
+   active change, scaffold one first with `cairn change new <change-id>` per the
+   Change lifecycle above.
+2. Branch from main (`git checkout -b <type>/<slug>`).
+3. Set the todo's frontmatter `status: in_progress` (`meta/todos/todo.<slug>.md`).
+4. TDD: write the failing test first and confirm it fails for the right reason,
    then implement to green. Required for bugfixes, expected for features;
    deviations get a line in the change dir's `implementation-notes.md`.
-4. When you resolve a decision the design flagged as open (e.g. commit-vs-fetch
+5. When you resolve a decision the design flagged as open (e.g. commit-vs-fetch
    asset delivery), record it as a decision artefact BEFORE building on it, and
    link the research that informed it via `informed_by:`.
-5. Log cairn friction to `meta/cairn-feedback.jsonl` as it happens, not at the end.
-6. Run the full gate (Build and test section plus `cairn hook all`), set the todo
+6. Log cairn friction to `meta/cairn-feedback.jsonl` as it happens, not at the end.
+7. Run the full gate (Build and test section plus `cairn hook all`), set the todo
    `status: done`, tick the matching box in the change's `tasks.md`, then land
    via feature-branch PR, squash-merge, branch deleted.
 
