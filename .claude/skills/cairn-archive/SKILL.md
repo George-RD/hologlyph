@@ -16,8 +16,8 @@ I'll help you archive a change that has been fully implemented and accepted.
 **Prerequisites**
 
 - All tasks in tasks.md are marked complete
-- `cairn accept <change-id>` has passed
-- Quality gates pass: `cargo build`, `cargo clippy`, `cargo fmt --check`, `cargo test`
+- `cairn change accept <change-id>` has passed
+- Quality gates pass: `tsc --noEmit`, `vitest run`, `vite build` (see the root AGENTS.md "Build and test" section and the `gates:` block in `cairn.config.yaml`)
 
 **Steps**
 
@@ -39,8 +39,9 @@ I'll help you archive a change that has been fully implemented and accepted.
 
    Ensure the project is in a clean state:
    ```bash
-   cargo test
-   cargo fmt --check
+   tsc --noEmit        # type-check
+   vitest run          # unit tests
+   vite build          # production build
    ```
 
 4. **Archive the change**
@@ -49,7 +50,7 @@ I'll help you archive a change that has been fully implemented and accepted.
    delta, refreshes generated output, logs the archival, and moves the change
    into the dated archive directory:
    ```bash
-   cairn archive <change-id>
+   cairn change archive <change-id>
    ```
 
 5. **Update any references**

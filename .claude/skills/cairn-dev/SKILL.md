@@ -26,11 +26,10 @@ If `cairn context` shows findings, triage them before adding new ones.
 | **Orientation** | `cairn context` | `--json` |
 | **Full scan** | `cairn scan` | `--json` |
 | **Lint findings** | `cairn lint` | `--json` (exit 1 on errors) |
-| **Non-blocking lint** | `cairn check [<node>]` | always exit 0 |
 | **Inspect node** | `cairn get <node>` | `--json` |
 | **Node + neighbours** | `cairn neighbourhood <node>` | `--json`, `--include-todos`, `--include-changes`, `--include-orphans` |
 | **Node files** | `cairn files <node>` | `--json` |
-| **Dependency graph** | `cairn depends <node>` / `cairn dependents <node>` | `--json`, `--transitive` |
+| **Dependency graph** | `cairn deps <node> --direction <in|out>` | `--json`, `--transitive` (default: `out`) |
 | **Build order** | `cairn order` | `--json` |
 | **Provenance trail** | `cairn rationale <node>` | `--json` |
 | **Decisions** | `cairn decisions <node>` | `--json`, `--status accepted` |
@@ -40,18 +39,24 @@ If `cairn context` shows findings, triage them before adding new ones.
 | **Sources** | `cairn sources <node>` | `--json` |
 | **Contracts** | `cairn contract <node>` | `--json` |
 | **Project status** | `cairn status` | `--json` |
-| **Commit gate** | `cairn hook <structural\|interface\|tension\|all>` | `--json` |
-| **Active changes** | `cairn changes` | `--json` |
-| **Change details** | `cairn show <change-id>` | `--json` |
+| **Commit gate** | `cairn hook <structural\|interface\|tension\|architecture-decision\|all>` | `--json` |
+| **Active changes** | `cairn change list` | `--json` |
+| **Change details** | `cairn change show <change-id>` | `--json` |
+| **Project health** | `cairn health` | lint, hooks, and module state |
+| **Next ready unit** | `cairn next` | `--json` |
+| **Node bundle** | `cairn bundle <node>` | `--json` |
+| **Remediation plan** | `cairn remediate` | `--json` |
 | **Brownfield onboard** | `cairn onboard` | `--json` |
 | **Record cairn friction** | `cairn feedback "<message>"` | `--json`; logs to `.cairn/feedback.md`, prints upstream issue link |
 | **Brownfield extract** | `cairn init --from-code` | `--force` (overwrite existing) |
 | **Brownfield refine** | `cairn refine` | writes timestamped change |
 | **Disconnected islands** | `cairn islands` | `--json` |
-| **Acceptance gate** | `cairn accept [<change-id>]` | `--json` (gate_outcome in data) |
+| **Acceptance gate** | `cairn change accept [<change-id>]` | `--json` (gate_outcome in data) |
 | **Export** | `cairn export --format <json\|dot> --output <path>` | full graph export |
 | **Bootstrap** | `cairn init` | creates blueprint, config, meta dirs |
 | **Web explorer** | `cairn ui` | `--port <N>` |
+ 
+For this TypeScript repo, the top-level `gates:` block in `cairn.config.yaml` drives the language-aware acceptance battery run by `cairn change accept`.
 
 Node IDs use dotted notation (e.g. `cairn.kernel.scanner`). Run `cairn get <id>` to verify a node exists.
 
@@ -71,7 +76,7 @@ When adding new source files:
 3. Run `cairn scan` to verify zero orphans
 
 When adding a dependency between modules:
-1. `cairn depends <target> --transitive` to check for cycles
+1. `cairn deps <target> --direction out --transitive` to check for cycles
 2. Add the edge in `cairn.blueprint`: `from.id -> to.id "relationship label"`
 3. `cairn scan` to verify
 
@@ -232,7 +237,7 @@ The pre-commit hook typically runs `cairn hook structural`. CI can run `cairn ho
 
 **Before modifying a module:** `cairn rationale <node>` shows the provenance chain (decisions, research, sources) explaining why it's shaped the way it is. Respect existing decisions.
 
-**Before adding a dependency:** `cairn dependents <node> --transitive` and `cairn depends <node> --transitive` reveal the full impact graph. Check for cycles.
+**Before adding a dependency:** `cairn deps <node> --direction in --transitive` and `cairn deps <node> --direction out --transitive` reveal the full impact graph. Check for cycles.
 
 **Understanding feature scope:** `cairn neighbourhood <node> --include-changes --include-todos` shows the node in context with its active work items.
 
@@ -241,7 +246,7 @@ The pre-commit hook typically runs `cairn hook structural`. CI can run `cairn ho
 ## When NOT to use cairn
 
 - Don't use `cairn scan` as a substitute for `cargo build` or language-specific compilation. They check different things.
-- Don't use `cairn check` to gate commits. Use `cairn hook` which has correct blocking semantics.
+- Use `cairn hook all` (correct blocking semantics) to gate commits; `cairn lint` reports findings and exits 1 on errors.
 - Don't modify `cairn.blueprint` without running `cairn scan` afterward to verify.
 - Don't add artefact files without ensuring the node declares the artefact directory in its blueprint entry.
 
@@ -255,7 +260,7 @@ All commands with `--json` produce a consistent envelope:
 
 - `status: "ok"` means the command succeeded (findings may still exist in data)
 - `status: "error"` means the command failed or verification was incomplete
-- `accept --json` includes `data.gate_outcome` ("passed", "failed", or "blocked")
+- `change accept --json` includes `data.gate_outcome` ("passed", "failed", or "blocked")
 - Exit codes: 0 = clean success, 1 = success with findings or operational error, 2 = usage error
 
 ## User-facing copy

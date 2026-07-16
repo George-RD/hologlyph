@@ -1,3 +1,5 @@
+> Auto-scaffolded by cairn. This guide may lag the live CLI, and the root AGENTS.md wins where they disagree.
+
 # Working with cairn in this repository
 
 This project uses [cairn](https://github.com/cairn-framework/cairn) to keep the
@@ -18,13 +20,13 @@ cairn directly. Do not infer state from freeform notes, scratch files, or
 memory; the graph is the source of truth.
 
 - `cairn status`: project summary (nodes, findings, backlog).
-- `cairn changes`: active change proposals.
+- `cairn change list`: active change proposals.
 - `cairn decisions` and `cairn research`: the provenance chain (research feeds
   decisions, which feed changes), listed per node.
 - `cairn sources <id>`: external material a node cites. The link is on the
   graph; the content stays in the referenced file.
 
-If you are asked "what next", start with `cairn status` and `cairn changes`,
+If you are asked "what next", start with `cairn status` and `cairn change list`,
 then `cairn todos <node>` / open todo artefacts under `meta/todos/`. Treat any
 scratch or `docs/` note as secondary context, never as current state.
 
@@ -33,13 +35,13 @@ scratch or `docs/` note as secondary context, never as current state.
 When recording a decision, research finding, or external source, place it in
 the correct typed directory under `meta/` and link it to the graph:
 
-- `meta/decisions/dec.<slug>.md` — decisions. Require `id`, `nodes:`, `status`,
+- `meta/decisions/dec.<slug>.md` (decisions). Require `id`, `nodes:`, `status`,
   `date`. Chain to research or sources via `informed_by: [res.X, src.Y]`.
-- `meta/research/res.<slug>.md` — research. Require `id`, `nodes:`. Cite
+- `meta/research/res.<slug>.md` (research). Require `id`, `nodes:`. Cite
   sources via `sources: [src.Z]`.
-- `meta/sources/src.<slug>.md` — external material. Require `id`, `file:`,
+- `meta/sources/src.<slug>.md` (external material). Require `id`, `file:`,
   `verification`. Anchors transitively; carry no `nodes:` field.
-- `meta/todos/todo.<slug>.md` — durable per-node tasks. Require `node:`,
+- `meta/todos/todo.<slug>.md` (durable per-node tasks). Require `node:`,
   `status:`, `created:`. Scaffold with `cairn todo new <slug> --node <id>`;
   status changes are file edits (open, in_progress, done, blocked).
 

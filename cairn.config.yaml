@@ -1,2 +1,21 @@
 context: ""
 rules: {}
+
+# Keep build output and deps out of TypeScript reconciliation (cairn 0.3.0).
+# node_modules/.git/.DS_Store are ignored by default; dist is our Vite output.
+ignore:
+  - dist
+
+# Language-aware acceptance battery (cairn 0.3.0, feat #340). Before 0.3.0 the
+# accept gate was hardcoded to cargo and always failed on this bun/TypeScript
+# repo. A top-level `gates:` list overrides that: each `command` is whitespace
+# split into argv and run at the repo root with no shell (so no pipes, &&, or
+# quoted spaces). Success is strictly exit 0. These mirror AGENTS.md "Build and
+# test".
+gates:
+  - name: typecheck
+    command: bunx tsc --noEmit
+  - name: tests
+    command: bunx vitest run
+  - name: build
+    command: bun run build
