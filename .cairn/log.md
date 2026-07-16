@@ -23,3 +23,5 @@
 - scan: nodes=16, findings=30, errors=0
 - scan: nodes=16, findings=30, errors=0
 - scan: nodes=16, findings=30, errors=0
+- scan: nodes=16, findings=30, errors=0
+- archive: omp-project-config merged; no operations
