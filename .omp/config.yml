@@ -1,0 +1,54 @@
+# Project-scoped Oh My Pi config for hologlyph.
+# Hides skill families belonging to other repos/domains from THIS repo only
+# (globs match skill names; cwd-scoping comes from this file's location).
+# See skill omp-project-scope-skill-disables for the mechanism and caveats.
+skills:
+  ignoredSkills:
+    # other repos' skill families
+    - "gnss-watch-*"
+    - "yarnling-*"
+    - "*meerk40t*"
+    - "cli-anything-*"
+    - "install-cli-anything-*"
+    - "grbl-laser-first-bringup"
+    - "create-laser-papercraft-design"
+    - "workflowz-plan-issue-tdd"
+    - "openspine-*"
+    - "cairn-webui-spine-endpoint-flip"
+    - "prototype-app-reconciliation-audit"
+    - "george-family-health-log"
+    - "omp-usage-dashboard-refresh"
+    # hindsight memory-service ops
+    - "*hindsight*"
+    - "contextualize-omp-updates"
+    # marketing / copywriting workshops
+    - "grandslam-*"
+    - "hundred-million-leads"
+    - "business-copy-style"
+    - "personal-copy-authenticity"
+    - "kofi-donation-button-github-and-landing"
+    # unrelated infra / devops
+    - "*1password*"
+    - "gcp-vertex-quota-increase-cli"
+    - "cf-workers-builds-wedge-recovery"
+    - "nixos-remote-config-safe-edit"
+    - "network-reachability-port-policy-probe"
+    - "openssh-postquantum-warning-fix"
+    - "wire-macos-launchd-agent-for-cli"
+    # Rust / cargo-dist release tooling
+    - "rust-llm-coding-discipline"
+    - "cargo-dist-*"
+    - "crates-io-publish-size-cap-verify"
+    - "retrofit-release-notes-cargo-dist"
+    # benchmarking / autoresearch harnesses
+    - "autoresearch-*"
+    - "bench-wire-proxy-arm-validation"
+    - "omp-bench-advisor-confound-fix"
+    # video / promo production
+    - "*remotion*"
+    # entertainment personas / unused tools
+    - "drunk-claude*"
+    - "dg"
+    - "herdr"
+    # mengto design-prompting family
+    - "mengto-*"
