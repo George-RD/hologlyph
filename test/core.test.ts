@@ -77,6 +77,7 @@ interface FakeRenderer extends RendererHost {
 interface FakeAsset extends AssetLoader {
   disposeCount: number;
   loadCalls: number;
+  loadUrls: string[];
   attachRendererCalls: unknown[];
 }
 
@@ -346,9 +347,13 @@ vi.mock('../src/asset', () => ({
   createAssetLoader() {
     const asset: FakeAsset = {
       loadCalls: 0,
+      loadUrls: [],
       attachRendererCalls: [],
-      async load() {
+      async load(url: string) {
         this.loadCalls++;
+        this.loadUrls.push(url);
+        // Failure injection for delivery tests: fail: URLs reject.
+        if (url.startsWith('fail:')) throw new Error('injected load failure');
         return {
           root: new THREE.Group(),
           morphMeshes: [],
@@ -693,6 +698,38 @@ describe('renderer handle wired to asset loader', () => {
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
     expect(asset.attachRendererCalls.length).toBe(1);
     expect(asset.attachRendererCalls[0]).toBe(renderer.gpuRenderer);
+    engine.dispose();
+  });
+});
+
+describe('avatar delivery (dec.default-asset-delivery)', () => {
+  it('loads the packaged bust by default when no avatarUrl is given', async () => {
+    const engine = createEngine();
+    const asset = h.registry.asset.at(-1)!;
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    expect(asset.loadCalls).toBe(1);
+    expect(asset.loadUrls[0]).toMatch(/assets\/hologlyph-bust\.glb$/);
+    engine.dispose();
+  });
+
+  it('an empty avatarUrl explicitly requests the placeholder (no load attempt)', async () => {
+    const engine = createEngine({ avatarUrl: '' });
+    const asset = h.registry.asset.at(-1)!;
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    expect(asset.loadCalls).toBe(0);
+    engine.dispose();
+  });
+
+  it('degrades to the placeholder and still becomes ready when the load fails', async () => {
+    const engine = createEngine({ avatarUrl: 'fail://broken.glb' });
+    const asset = h.registry.asset.at(-1)!;
+    let ready = false;
+    engine.on('ready', () => {
+      ready = true;
+    });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    expect(asset.loadCalls).toBe(1);
+    expect(ready).toBe(true);
     engine.dispose();
   });
 });
