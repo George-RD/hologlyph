@@ -101,6 +101,8 @@ export interface MotionEngine extends Disposable {
   applyVisemeFrame(frame: VisemeFrame): void;
   clearVisemes(): void;
   triggerNod(kind: NodClass): void;
+  /** Additive head orientation target in radians, applied on top of nods/gaze; smoothed toward the target each update; reduced motion snaps or flattens per existing conventions. */
+  setHeadTarget(yaw: number, pitch: number): void;
   setGazeMode(mode: GazeMode): void;
   setReducedMotion(reduced: boolean): void;
 }

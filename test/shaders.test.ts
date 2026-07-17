@@ -13,7 +13,12 @@ import {
   buildSkinMaterial,
   GLOW_GAIN,
   planarUV,
+  PLANAR_DENSITY,
   RIM_GAIN,
+  SHADE_AMBIENT,
+  SHADE_FILL_WEIGHT,
+  SHADE_FLOOR,
+  SHADE_KEY_WEIGHT,
   U_SCALE,
   V_SCALE,
 } from '../src/shaders/materials';
@@ -147,6 +152,13 @@ describe('planar skin projection (pure)', () => {
     expect(planarUV(0, 0.5).v).toBeCloseTo(V_SCALE / 2, 6);
   });
 
+  it('uses a low planar density so glyphs read large on the bust', () => {
+    // ~35% larger letters than the old 124: 92 cells per world unit.
+    expect(PLANAR_DENSITY).toBe(92);
+    // U_SCALE / V_SCALE must still derive from the density and stay square.
+    expect(U_SCALE).toBeCloseTo(PLANAR_DENSITY / 96, 6);
+    expect(V_SCALE).toBeCloseTo(PLANAR_DENSITY / 64, 6);
+  });
   it('keeps glyph cells square: equal world-space cell density on both axes', () => {
     // 96 columns per u unit and 64 rows per v unit; equal cells per world
     // unit on x and y means U_SCALE * 96 === V_SCALE * 64.
@@ -154,6 +166,22 @@ describe('planar skin projection (pure)', () => {
   });
 });
 
+describe('skin shading constants (pure)', () => {
+  it('weights the two directional lights by their scene intensities', () => {
+    // Key light intensity 2.2 white; fill light intensity 0.8 cool.
+    expect(SHADE_KEY_WEIGHT).toBeCloseTo(2.2, 6);
+    expect(SHADE_FILL_WEIGHT).toBeCloseTo(0.8, 6);
+  });
+
+  it('adds a small ambient floor and clamps shade above a readable minimum', () => {
+    expect(SHADE_AMBIENT).toBeCloseTo(0.08, 6);
+    expect(SHADE_FLOOR).toBeCloseTo(0.12, 6);
+    expect(SHADE_AMBIENT).toBeGreaterThan(0);
+    expect(SHADE_AMBIENT).toBeLessThan(SHADE_FLOOR);
+    expect(SHADE_FLOOR).toBeGreaterThan(0);
+    expect(SHADE_FLOOR).toBeLessThan(1);
+  });
+});
 describe('buildSkinMaterial (no GPU objects)', () => {
   it('is translucent with a base opacity floor below full glyph luma', () => {
     expect(BASE_OPACITY).toBeGreaterThan(0);

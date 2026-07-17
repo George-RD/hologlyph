@@ -19,6 +19,7 @@ import {
   float,
   luminance,
   normalView,
+  normalWorld,
   positionLocal,
   positionViewDirection,
   pow,
@@ -36,7 +37,7 @@ const GRID_COLS = 96;
 const GRID_ROWS = 64;
 
 /** Glyph cells per world unit for the planar projection (tuned in the demo). */
-export const PLANAR_DENSITY = 124;
+export const PLANAR_DENSITY = 92;
 
 /** Horizontal projection scale: u advances this much per world unit of x. */
 export const U_SCALE = PLANAR_DENSITY / GRID_COLS;
@@ -52,6 +53,17 @@ export const GLOW_GAIN = 1.4;
 
 /** Strength of the cool fresnel rim added to the emissive for the holo edge. */
 export const RIM_GAIN = 0.12;
+/** Key directional-light weight for the matte skin-shading term (scene key intensity 2.2, white). */
+export const SHADE_KEY_WEIGHT = 2.2;
+
+/** Fill directional-light weight for the matte skin-shading term (scene fill intensity 0.8, cool). */
+export const SHADE_FILL_WEIGHT = 0.8;
+
+/** Small additive ambient floor so shadowed skin keeps a faint base luminance. */
+export const SHADE_AMBIENT = 0.08;
+
+/** Lower clamp on the skin-shading term so facial glyphs never read fully black. */
+export const SHADE_FLOOR = 0.12;
 
 /** The float uniform we advance each frame from `skin.scrollOffset`. */
 export interface ScrollUniform {
@@ -108,20 +120,34 @@ export function buildSkinMaterial(skin: TextSkinEngine): BuiltSkinMaterial {
   );
   const sampled = texture(skinTexture, projected);
 
-  // Glyph colour straight from the texture.
+  // Matte skin shading: treat the bust as plain skin lit by the scene's two
+  // directional lights so glyph brightness follows the 3D facial topography.
+  // Half-lambert diffuse from world-space light directions against the world
+  // normal, plus a small ambient floor, clamped to a readable minimum.
+  const keyDir = vec3(1.2, 1.6, 2.0).normalize();
+  const fillDir = vec3(-1.5, 0.4, 1.0).normalize();
+  const shade = saturate(dot(normalWorld, keyDir)).mul(SHADE_KEY_WEIGHT)
+    .add(saturate(dot(normalWorld, fillDir)).mul(SHADE_FILL_WEIGHT))
+    .add(SHADE_AMBIENT)
+    .clamp(SHADE_FLOOR, 1);
+
+  // Glyph colour straight from the texture. The renderer's real lights shade
+  // colorNode already; applying the analytic term here would double-shade it.
   material.colorNode = sampled.rgb;
 
   // Translucency: unlit backdrop at BASE_OPACITY, lit glyphs approach opaque.
   const luma = luminance(sampled.rgb);
   material.opacityNode = luma.mul(1 - BASE_OPACITY).add(BASE_OPACITY);
 
-  // Emissive glow plus a subtle cool fresnel rim for the holographic edge.
+  // Emissive glow (also shaded by the skin term) plus a subtle cool fresnel
+  // rim for the holographic edge. The rim stays un-shaded so the holo
+  // contour reads at full strength regardless of facial angle.
   const rim = pow(
     saturate(float(1).sub(dot(normalView, positionViewDirection))),
     3,
   ).mul(RIM_GAIN);
   const rimTint = vec3(0.5, 0.7, 1.0).mul(rim);
-  material.emissiveNode = sampled.rgb.mul(GLOW_GAIN).add(rimTint);
+  material.emissiveNode = sampled.rgb.mul(GLOW_GAIN).mul(shade).add(rimTint);
 
   return {
     material: material as unknown as THREE.Material,
