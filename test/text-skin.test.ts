@@ -125,4 +125,68 @@ describe('grid fill (text-skin texture)', () => {
       .reduce((n, line) => n + line.length, 0);
     expect(fillText).toBeGreaterThan(baseline * 10);
   });
+
+  it('streams repeated text with per-row phase shifts so spaces never stack into columns', () => {
+    const { cols, rows, padding, cellWidth, cellHeight } = DEFAULT_GRID;
+    // Reconstruct each drawn row as a sparse string from fillText calls.
+    const rowChars = new Map<number, Map<number, string>>();
+    const ctx: CanvasLike = {
+      fillStyle: '#000',
+      font: '',
+      textBaseline: 'top' as CanvasTextBaseline,
+      textAlign: 'left' as CanvasTextAlign,
+      clearRect() {},
+      fillRect() {},
+      fillText(ch: string, x: number, y: number) {
+        const r = Math.round((y - padding) / cellHeight);
+        const c = Math.round((x - padding) / cellWidth);
+        if (!rowChars.has(r)) rowChars.set(r, new Map());
+        rowChars.get(r)!.set(c, ch);
+      },
+    };
+
+    // 'Hi' normalises to a 3-char repeat unit ('Hi '), which divides the 96
+    // default columns exactly: the case most likely to recreate stacked
+    // space columns if rows are not phase-shifted.
+    drawText(ctx, 'Hi', DEFAULT_GRID);
+
+    // Every row is filled to full width: the padded repeat unit carries at
+    // most a few trailing spaces, so a glyph must land within the last
+    // handful of columns of every row (no dark right-edge stripe).
+    for (let r = 0; r < rows; r++) {
+      const row = rowChars.get(r);
+      expect(row, `row ${r} drawn`).toBeDefined();
+      const maxCol = Math.max(...row!.keys());
+      expect(maxCol).toBeGreaterThanOrEqual(cols - 6);
+    }
+
+    // Rows are NOT identical copies: adjacent rows must place characters at
+    // different columns (or different characters per column), so word gaps
+    // cannot stack into continuous vertical channels.
+    const signature = (r: number): string =>
+      [...rowChars.get(r)!.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([c, ch]) => `${c}:${ch}`)
+        .join(',');
+    const distinct = new Set<string>();
+    for (let r = 0; r < rows; r++) distinct.add(signature(r));
+    expect(distinct.size).toBeGreaterThan(1);
+  });
+
+  it('terminates and draws for a single-column grid', () => {
+    let drawn = 0;
+    const ctx: CanvasLike = {
+      fillStyle: '#000',
+      font: '',
+      textBaseline: 'top' as CanvasTextBaseline,
+      textAlign: 'left' as CanvasTextAlign,
+      clearRect() {},
+      fillRect() {},
+      fillText() {
+        drawn++;
+      },
+    };
+    drawText(ctx, 'Hi', { ...DEFAULT_GRID, cols: 1, rows: 8 });
+    expect(drawn).toBeGreaterThan(0);
+  });
 });

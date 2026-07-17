@@ -6,6 +6,12 @@ import {
   createFallbackTTSAdapter,
 } from '../src/speech';
 import { UtteranceHandleImpl } from '../src/speech/emitter';
+import {
+  SILENCE_FRAME_WEIGHTS,
+  visemeSequenceForWord,
+  weightsForViseme,
+  wordAt,
+} from '../src/speech/visemes';
 import type { FrameScheduler } from '../src/speech/adapters/provider';
 import type {
   AudioEngine,
@@ -51,10 +57,13 @@ class FakeUtterance {
 
 class FakeSynth {
   last: FakeUtterance | null = null;
+  cancelCount = 0;
   speak(u: FakeUtterance): void {
     this.last = u;
   }
-  cancel(): void {}
+  cancel(): void {
+    this.cancelCount++;
+  }
 }
 
 // --- Provider / fallback fakes -------------------------------------------
@@ -149,33 +158,103 @@ describe('demo adapter', () => {
     vi.unstubAllGlobals();
   });
 
-  it('emits start, decaying energy pulses from boundaries, and end', () => {
+  it('extracts boundary words and maps digraphs and skipped letters', () => {
+    expect(wordAt('Hello, world', 0)).toBe('Hello');
+    expect(wordAt('Hello, world', 5)).toBe('');
+    expect(wordAt('Hello, world', 7, 5)).toBe('world');
+    expect(wordAt("can't stop", 0, 0)).toBe("can't");
+    expect(wordAt('abc', 0, 2)).toBe('ab');
+    expect(visemeSequenceForWord('three')).toEqual([
+      'viseme_th',
+      'viseme_rr',
+      'viseme_ee',
+    ]);
+    expect(visemeSequenceForWord('tchow')).toEqual([
+      'viseme_ch',
+      'viseme_ou',
+    ]);
+    expect(visemeSequenceForWord('phoo')).toEqual([
+      'viseme_ff',
+      'viseme_ou',
+    ]);
+    expect(visemeSequenceForWord('qux')).toEqual([
+      'viseme_kk',
+      'viseme_ou',
+    ]);
+  });
+
+  it('does not double the authored jaw: viseme weights pin jaw_open to 0', () => {
+    // The authored viseme morph targets already embed their own jawOpen
+    // deltas, so the frame must not add a second jaw_open on top.
+    expect(weightsForViseme('viseme_aa')).toEqual({ viseme_aa: 1, jaw_open: 0 });
+    expect(weightsForViseme('viseme_pp')).toEqual({ viseme_pp: 1, jaw_open: 0 });
+    expect(weightsForViseme('viseme_sil')).toEqual(SILENCE_FRAME_WEIGHTS);
+    for (const weight of Object.values(weightsForViseme('viseme_oh'))) {
+      expect(weight).toBeGreaterThanOrEqual(0);
+      expect(weight).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('emits boundary visemes at 75 ms cadence and one silence frame', () => {
     const adapter = createDemoTTSAdapter();
+    const frames: VisemeFrame[] = [];
     const energies: number[] = [];
-    let started = 0;
-    let ended = 0;
-    const handle = adapter.speak('hello', makeFakeAudio());
-    handle.on('energy', (e) => energies.push(e));
-    handle.on('start', () => started++);
-    handle.on('end', () => ended++);
+    const handle = adapter.speak('ae', makeFakeAudio());
+    handle.on('viseme', (frame) => frames.push(frame));
+    handle.on('energy', (energy) => energies.push(energy));
 
     const synth = env.speechSynthesis as FakeSynth;
     synth.last!.onstart!();
-    vi.advanceTimersByTime(60); // quiet ticks before any boundary
-    synth.last!.onboundary!({});
-    vi.advanceTimersByTime(90); // peak then decay
-    synth.last!.onend!();
-
-    expect(started).toBe(1);
-    expect(ended).toBe(1);
-
-    const peak = energies.indexOf(1);
-    expect(peak).toBeGreaterThanOrEqual(0);
-    const tail = energies.slice(peak);
-    for (let i = 1; i < tail.length; i++) {
-      expect(tail[i]!).toBeLessThanOrEqual(tail[i - 1]!);
-    }
+    synth.last!.onboundary!({ charIndex: 0, charLength: 2 });
+    vi.advanceTimersByTime(30); // first viseme (aa) at t=0
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.weights).toEqual(weightsForViseme('viseme_aa'));
+    expect(frames[0]!.time).toBeCloseTo(0, 5);
+    vi.advanceTimersByTime(90); // second viseme (ee) at t=0.075
+    expect(frames).toHaveLength(2);
+    expect(frames[1]!.weights).toEqual(weightsForViseme('viseme_ee'));
+    expect(frames[1]!.time - frames[0]!.time).toBeCloseTo(0.075, 5);
+    vi.advanceTimersByTime(300); // silence frame after the word at t=0.15
+    expect(frames).toHaveLength(3);
+    expect(frames[2]!.weights).toEqual(SILENCE_FRAME_WEIGHTS);
+    expect(frames[2]!.time - frames[1]!.time).toBeCloseTo(0.075, 5);
+    expect(energies).toEqual([]);
   });
+
+  it('cancel stops viseme emission', () => {
+    const adapter = createDemoTTSAdapter();
+    const frames: VisemeFrame[] = [];
+    const handle = adapter.speak('hello', makeFakeAudio());
+    handle.on('viseme', (frame) => frames.push(frame));
+    const synth = env.speechSynthesis as FakeSynth;
+    synth.last!.onstart!();
+    synth.last!.onboundary!({ charIndex: 0, charLength: 5 });
+    vi.advanceTimersByTime(30);
+    expect(frames).toHaveLength(1);
+    handle.cancel();
+    vi.advanceTimersByTime(300);
+    expect(frames).toHaveLength(1);
+  });
+
+  it('dispose cancels the active utterance and stops viseme emission', () => {
+    const adapter = createDemoTTSAdapter();
+    const frames: VisemeFrame[] = [];
+    let ended = 0;
+    const handle = adapter.speak('hello', makeFakeAudio());
+    handle.on('viseme', (frame) => frames.push(frame));
+    handle.on('end', () => ended++);
+    const synth = env.speechSynthesis as FakeSynth;
+    synth.last!.onstart!();
+    synth.last!.onboundary!({ charIndex: 0, charLength: 5 });
+    vi.advanceTimersByTime(30);
+    expect(frames).toHaveLength(1);
+    adapter.dispose();
+    expect(synth.cancelCount).toBe(1);
+    expect(ended).toBe(1);
+    vi.advanceTimersByTime(300);
+    expect(frames).toHaveLength(1);
+  });
+
   it('emits error then end when speechSynthesis is missing', async () => {
     vi.stubGlobal('speechSynthesis', undefined);
     vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance);
@@ -190,7 +269,7 @@ describe('demo adapter', () => {
     expect(ended).toBe(true);
   });
 
-  it('cancel emits exactly one end and stops the energy loop', () => {
+  it('cancel emits exactly one end and stops the viseme loop', () => {
     const adapter = createDemoTTSAdapter();
     let ended = 0;
     const handle = adapter.speak('hi', makeFakeAudio());
@@ -199,7 +278,6 @@ describe('demo adapter', () => {
     synth.last!.onstart!();
     handle.cancel();
     expect(ended).toBe(1);
-    // further ticks must not emit another end
     vi.advanceTimersByTime(100);
     expect(ended).toBe(1);
   });

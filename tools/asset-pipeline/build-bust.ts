@@ -49,7 +49,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Document, WebIO } from '@gltf-transform/core';
+ import { Document, Primitive, WebIO } from '@gltf-transform/core';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE = join(HERE, '.cache');
@@ -66,12 +66,12 @@ const INTERMEDIATE_OUT = join(HERE, '.build', 'hologlyph-bust.intermediate.glb')
 // ---------------------------------------------------------------------------
 type Recipe = Record<string, Record<string, number>>;
 
-const VISEME_RECIPE: Recipe = {
+export const VISEME_RECIPE: Recipe = {
   viseme_sil: {},
-  viseme_aa: { jawOpen: 1.0, mouthStretch_L: 0.3, mouthStretch_R: 0.3 },
-  viseme_ee: { jawOpen: 0.5, mouthStretch_L: 0.8, mouthStretch_R: 0.8 },
+  viseme_aa: { jawOpen: 0.55, mouthStretch_L: 0.3, mouthStretch_R: 0.3 },
+  viseme_ee: { jawOpen: 0.35, mouthStretch_L: 0.8, mouthStretch_R: 0.8 },
   viseme_ih: { mouthStretch_L: 1.0, mouthStretch_R: 1.0, jawOpen: 0.2 },
-  viseme_oh: { mouthFunnel: 1.0, jawOpen: 0.5 },
+  viseme_oh: { mouthFunnel: 1.0, jawOpen: 0.4 },
   viseme_ou: { mouthPucker: 1.0, jawOpen: 0.4 },
   // mouthClose kept light: ICT's delta assumes jaw-open compensation, so a full
   // weight with a closed jaw folds the lips into a lump (seen in keyframe render).
@@ -82,9 +82,9 @@ const VISEME_RECIPE: Recipe = {
     mouthLowerDown_L: 0.4,
     mouthLowerDown_R: 0.4,
   },
-  viseme_th: { jawOpen: 0.6, mouthShrugLower: 0.6 },
-  viseme_dd: { jawOpen: 0.5, mouthDimple_L: 0.5, mouthDimple_R: 0.5 },
-  viseme_kk: { jawOpen: 0.5, mouthStretch_L: 0.4, mouthStretch_R: 0.4 },
+  viseme_th: { jawOpen: 0.4, mouthShrugLower: 0.6 },
+  viseme_dd: { jawOpen: 0.35, mouthDimple_L: 0.5, mouthDimple_R: 0.5 },
+  viseme_kk: { jawOpen: 0.35, mouthStretch_L: 0.4, mouthStretch_R: 0.4 },
   viseme_ch: { mouthFunnel: 0.7, mouthPucker: 0.7 },
   viseme_ss: { mouthSmile_L: 0.8, mouthSmile_R: 0.8, jawOpen: 0.15 },
   // Spec table 5.2 lists only mouthDimpleRight for nn; the left dimple is added
@@ -252,6 +252,8 @@ interface BuiltGeometry {
   headPivot: [number, number, number];
   leftEyePivot: [number, number, number];
   rightEyePivot: [number, number, number];
+  /** Per-vertex partition: 0 = bust, 1 = sclera, 2 = iris, 3 = mouth, 4 = teeth. */
+  eyeCat: Uint8Array;
 }
 
 const JOINT_ROOT = 0;
@@ -260,6 +262,51 @@ const JOINT_HEAD = 2;
 const JOINT_EYE_L = 3;
 const JOINT_EYE_R = 4;
 
+ /**
+  * Smooth, area-weighted vertex normals: face normals are cross products of
+  * triangle edges, accumulated per vertex, then normalised. The caller passes
+  * the triangle index list and vertex count so the same routine can run over a
+  * partitioned sub-mesh (the eyes are split from the bust after assembly).
+  */
+ function computeSmoothNormals(
+   position: Float32Array,
+   indices: ArrayLike<number>,
+   count: number,
+ ): Float32Array {
+   const out = new Float32Array(count * 3);
+   for (let t = 0; t < indices.length; t += 3) {
+     const a = indices[t]!,
+       b = indices[t + 1]!,
+       c = indices[t + 2]!;
+     const ax = position[a * 3]!,
+       ay = position[a * 3 + 1]!,
+       az = position[a * 3 + 2]!;
+     const e1x = position[b * 3]! - ax,
+       e1y = position[b * 3 + 1]! - ay,
+       e1z = position[b * 3 + 2]! - az;
+     const e2x = position[c * 3]! - ax,
+       e2y = position[c * 3 + 1]! - ay,
+       e2z = position[c * 3 + 2]! - az;
+     const nx = e1y * e2z - e1z * e2y;
+     const ny = e1z * e2x - e1x * e2z;
+     const nz = e1x * e2y - e1y * e2x;
+     for (const v of [a, b, c]) {
+       out[v * 3] = out[v * 3]! + nx;
+       out[v * 3 + 1] = out[v * 3 + 1]! + ny;
+       out[v * 3 + 2] = out[v * 3 + 2]! + nz;
+     }
+   }
+   for (let v = 0; v < count; v++) {
+     const nx = out[v * 3]!,
+       ny = out[v * 3 + 1]!,
+       nz = out[v * 3 + 2]!;
+     const len = Math.hypot(nx, ny, nz) || 1;
+     out[v * 3] = nx / len;
+     out[v * 3 + 1] = ny / len;
+     out[v * 3 + 2] = nz / len;
+   }
+   return out;
+ }
 function build(
   neutral: ObjMesh,
   deltas: Map<string, Float32Array>,
@@ -459,6 +506,32 @@ function build(
     joints[v * 4] = joint;
     weights[v * 4] = 1;
   }
+ 
+   // Per-vertex partition category drives the later glTF split. glTF keeps
+   // morph-target counts per mesh, so the bust (which carries all 27 targets)
+   // must hold every morph-bearing primitive: 0 = bust (face/head/neck),
+   // 3 = mouth interior (gums + tongue), 4 = teeth. The eyes (1 = sclera,
+   // 2 = iris) ship with no morph targets, so they form a separate mesh.
+   // Each primitive groups both sides by material, keeping left + right verts.
+   const eyeCat = new Uint8Array(vcount);
+   const scleraMats = new Set<number>();
+   const irisMats = new Set<number>();
+   const mouthMats = new Set<number>();
+   const teethMats = new Set<number>();
+   neutral.materials.forEach((m, i) => {
+     if (m === 'M_ScleraLeft' || m === 'M_ScleraRight') scleraMats.add(i);
+     if (m === 'M_IrisLeft' || m === 'M_IrisRight') irisMats.add(i);
+     if (m === 'M_GumsTongue') mouthMats.add(i);
+     if (m === 'M_Teeth') teethMats.add(i);
+   });
+   for (let v = 0; v < vcount; v++) {
+     const mat = vertMat[v]!;
+     if (scleraMats.has(mat)) eyeCat[v] = 1;
+     else if (irisMats.has(mat)) eyeCat[v] = 2;
+     else if (mouthMats.has(mat)) eyeCat[v] = 3;
+     else if (teethMats.has(mat)) eyeCat[v] = 4;
+     else eyeCat[v] = 0;
+   }
 
   // After normalisation y spans exactly [-0.5, 0.5]; the neck pivot sits 15%
   // above the base so head rotation reads as a nod, not a base wobble.
@@ -476,83 +549,67 @@ function build(
   for (const name of wanted) {
     const out = new Float32Array(vcount * 3);
     const recipe = RECIPE[name] ?? (fullTargets ? { [name]: 1 } : {});
-    for (const [shape, w] of Object.entries(recipe)) {
-      const d = deltas.get(shape);
-      if (!d) {
-        if (Object.keys(recipe).length > 0) {
-          throw new Error(`morph ${name} needs delta ${shape} which was not loaded`);
-        }
-        continue;
-      }
-      for (let v = 0; v < vcount; v++) {
-        const pi = srcPos[v]!;
-        out[v * 3] = out[v * 3]! + d[pi * 3]! * w * scale * flip;
-        out[v * 3 + 1] = out[v * 3 + 1]! + d[pi * 3 + 1]! * w * scale;
-        out[v * 3 + 2] = out[v * 3 + 2]! + d[pi * 3 + 2]! * w * scale * flip;
-      }
-    }
-    targets[name] = out;
-  }
-  // Smooth, area-weighted vertex normals: face normals are cross products of
-  // triangle edges, accumulated per vertex, then normalised. Reused for the base
-  // pose and for every morph-displaced pose (targets ship NORMAL deltas so
-  // deformed lighting is correct, not lit with neutral normals).
-  const smoothNormals = (pos: Float32Array): Float32Array => {
-    const out = new Float32Array(vcount * 3);
-    for (let t = 0; t < indices.length; t += 3) {
-      const a = indices[t]!,
-        b = indices[t + 1]!,
-        c = indices[t + 2]!;
-      const ax = pos[a * 3]!,
-        ay = pos[a * 3 + 1]!,
-        az = pos[a * 3 + 2]!;
-      const e1x = pos[b * 3]! - ax,
-        e1y = pos[b * 3 + 1]! - ay,
-        e1z = pos[b * 3 + 2]! - az;
-      const e2x = pos[c * 3]! - ax,
-        e2y = pos[c * 3 + 1]! - ay,
-        e2z = pos[c * 3 + 2]! - az;
-      const nx = e1y * e2z - e1z * e2y;
-      const ny = e1z * e2x - e1x * e2z;
-      const nz = e1x * e2y - e1y * e2x;
-      for (const v of [a, b, c]) {
-        out[v * 3] = out[v * 3]! + nx;
-        out[v * 3 + 1] = out[v * 3 + 1]! + ny;
-        out[v * 3 + 2] = out[v * 3 + 2]! + nz;
-      }
-    }
-    for (let v = 0; v < vcount; v++) {
-      const nx = out[v * 3]!,
-        ny = out[v * 3 + 1]!,
-        nz = out[v * 3 + 2]!;
-      const len = Math.hypot(nx, ny, nz) || 1;
-      out[v * 3] = nx / len;
-      out[v * 3 + 1] = ny / len;
-      out[v * 3 + 2] = nz / len;
-    }
-    return out;
-  };
-
-  const normal = smoothNormals(position);
-
-  // Per-target normal deltas: recompute smooth normals on the displaced mesh and
-  // store the difference from the base normals (glTF morph NORMAL semantics).
-  const targetNormals: Record<string, Float32Array> = {};
-  const displaced = new Float32Array(vcount * 3);
-  for (const [name, delta] of Object.entries(targets)) {
-    let moved = false;
-    for (let i = 0; i < delta.length; i++) {
-      displaced[i] = position[i]! + delta[i]!;
-      if (delta[i] !== 0) moved = true;
-    }
-    if (!moved) {
-      targetNormals[name] = new Float32Array(vcount * 3);
-      continue;
-    }
-    const dn = smoothNormals(displaced);
-    for (let i = 0; i < dn.length; i++) dn[i] = dn[i]! - normal[i]!;
-    targetNormals[name] = dn;
-  }
+   for (const [shape, w] of Object.entries(recipe)) {
+     const d = deltas.get(shape);
+     if (!d) {
+       if (Object.keys(recipe).length > 0) {
+         throw new Error(`morph ${name} needs delta ${shape} which was not loaded`);
+       }
+       continue;
+     }
+     for (let v = 0; v < vcount; v++) {
+       const pi = srcPos[v]!;
+       out[v * 3] = out[v * 3]! + d[pi * 3]! * w * scale * flip;
+       out[v * 3 + 1] = out[v * 3 + 1]! + d[pi * 3 + 1]! * w * scale;
+       out[v * 3 + 2] = out[v * 3 + 2]! + d[pi * 3 + 2]! * w * scale * flip;
+     }
+   }
+   targets[name] = out;
+ }
+ 
+ // Smooth, area-weighted vertex normals: face normals are cross products of
+ // triangle edges, accumulated per vertex, then normalised. The displaced
+ // meshes reuse the same routine over the full index list.
+ const normal = computeSmoothNormals(position, indices, vcount);
+ 
+ // Design check: confirm whether any shipped morph displaces eyeball verts.
+ // Eyes ship with no morph targets (rigid, gaze via bone), so any eyeball
+ // delta is intentionally dropped; this is logged, not an error. Categories 1
+ // (sclera) and 2 (iris) are the eyeball verts; bust (0), mouth (3) and teeth
+ // (4) are excluded so the check proves something about the eyes specifically.
+ for (const name of wanted) {
+   const d = targets[name]!;
+   let maxEye = 0;
+   for (let v = 0; v < vcount; v++) {
+     if (eyeCat[v] !== 1 && eyeCat[v] !== 2) continue;
+     for (let c = 0; c < 3; c++) {
+       const a = Math.abs(d[v * 3 + c]!);
+       if (a > maxEye) maxEye = a;
+     }
+   }
+   if (maxEye > 1e-5) {
+     console.log(`[build-bust] note: morph ${name} displaces eyeball verts (max ${maxEye.toFixed(4)})`);
+   }
+ }
+ 
+ // Per-target normal deltas: recompute smooth normals on the displaced mesh and
+ // store the difference from the base normals (glTF morph NORMAL semantics).
+ const targetNormals: Record<string, Float32Array> = {};
+ const displaced = new Float32Array(vcount * 3);
+ for (const [name, delta] of Object.entries(targets)) {
+   let moved = false;
+   for (let i = 0; i < delta.length; i++) {
+     displaced[i] = position[i]! + delta[i]!;
+     if (delta[i] !== 0) moved = true;
+   }
+   if (!moved) {
+     targetNormals[name] = new Float32Array(vcount * 3);
+     continue;
+   }
+   const dn = computeSmoothNormals(displaced, indices, vcount);
+   for (let i = 0; i < dn.length; i++) dn[i] = dn[i]! - normal[i]!;
+   targetNormals[name] = dn;
+ }
 
 
   return {
@@ -565,6 +622,7 @@ function build(
     srcPos: new Uint32Array(srcPos),
     targets,
     targetNormals,
+    eyeCat,
     headPivot,
     leftEyePivot,
     rightEyePivot,
@@ -574,109 +632,233 @@ function build(
 // ---------------------------------------------------------------------------
 // glTF assembly
 // ---------------------------------------------------------------------------
-function toGltf(geo: BuiltGeometry, targetNames: string[]): Document {
-  const doc = new Document();
-  const buffer = doc.createBuffer();
-
-  const positionAcc = doc.createAccessor('POSITION').setType('VEC3').setArray(geo.position).setBuffer(buffer);
-  const normalAcc = doc.createAccessor('NORMAL').setType('VEC3').setArray(geo.normal).setBuffer(buffer);
-  const uvAcc = doc.createAccessor('TEXCOORD_0').setType('VEC2').setArray(geo.uv).setBuffer(buffer);
-  const jointsAcc = doc
-    .createAccessor('JOINTS_0')
-    .setType('VEC4')
-    .setArray(geo.joints)
-    .setBuffer(buffer);
-  const weightsAcc = doc
-    .createAccessor('WEIGHTS_0')
-    .setType('VEC4')
-    .setArray(geo.weights)
-    .setBuffer(buffer);
-  const indexAcc = doc.createAccessor('indices').setType('SCALAR').setArray(geo.indices).setBuffer(buffer);
-
-  const prim = doc
-    .createPrimitive()
-    .setAttribute('POSITION', positionAcc)
-    .setAttribute('NORMAL', normalAcc)
-    .setAttribute('TEXCOORD_0', uvAcc)
-    .setAttribute('JOINTS_0', jointsAcc)
-    .setAttribute('WEIGHTS_0', weightsAcc)
-    .setIndices(indexAcc);
-
-  const material = doc.createMaterial('bust').setBaseColorFactor([0.5, 0.55, 0.6, 1]).setRoughnessFactor(0.7);
-  prim.setMaterial(material);
-
-  for (const name of targetNames) {
-    const arr = geo.targets[name]!;
-    const target = doc.createPrimitiveTarget(name);
-    const acc = doc.createAccessor(name).setType('VEC3').setArray(arr).setBuffer(buffer);
-    target.setAttribute('POSITION', acc);
-    const normalDelta = geo.targetNormals[name]!;
-    const nAcc = doc
-      .createAccessor(`${name}.normal`)
-      .setType('VEC3')
-      .setArray(normalDelta)
-      .setBuffer(buffer);
-    target.setAttribute('NORMAL', nAcc);
-    prim.addTarget(target);
-  }
-
-  const mesh = doc.createMesh('bust');
-  mesh.addPrimitive(prim);
-  mesh.setExtras({ targetNames });
-  mesh.setWeights(new Array(targetNames.length).fill(0));
-
-  // Skeleton: root -> neck -> head -> (eye_l, eye_r).
-  const root = doc.createNode('root');
-  const neck = doc.createNode('neck');
-  const head = doc.createNode('head').setTranslation(geo.headPivot);
-  const eyeL = doc
-    .createNode('eye_l')
-    .setTranslation([
-      geo.leftEyePivot[0] - geo.headPivot[0],
-      geo.leftEyePivot[1] - geo.headPivot[1],
-      geo.leftEyePivot[2] - geo.headPivot[2],
-    ]);
-  const eyeR = doc
-    .createNode('eye_r')
-    .setTranslation([
-      geo.rightEyePivot[0] - geo.headPivot[0],
-      geo.rightEyePivot[1] - geo.headPivot[1],
-      geo.rightEyePivot[2] - geo.headPivot[2],
-    ]);
-  root.addChild(neck);
-  neck.addChild(head);
-  head.addChild(eyeL);
-  head.addChild(eyeR);
-
-  // Inverse bind matrices (column-major mat4): inverse of each joint's world
-  // translation, so the mesh is undeformed at bind and rotations pivot correctly.
-  const ibm = (t: [number, number, number]): number[] => [
-    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -t[0], -t[1], -t[2], 1,
-  ];
-  const jointWorld: Array<[number, number, number]> = [
-    [0, 0, 0], // root
-    [0, 0, 0], // neck
-    geo.headPivot, // head
-    geo.leftEyePivot, // eye_l
-    geo.rightEyePivot, // eye_r
-  ];
-  const ibmData = new Float32Array(jointWorld.flatMap((t) => ibm(t)));
-  const ibmAcc = doc.createAccessor('ibm').setType('MAT4').setArray(ibmData).setBuffer(buffer);
-
-  const skin = doc.createSkin('rig');
-  for (const j of [root, neck, head, eyeL, eyeR]) skin.addJoint(j);
-  skin.setSkeleton(root);
-  skin.setInverseBindMatrices(ibmAcc);
-
-  const meshNode = doc.createNode('bust-mesh').setMesh(mesh).setSkin(skin);
-
-  const scene = doc.createScene('bust');
-  scene.addChild(root);
-  scene.addChild(meshNode);
-  doc.getRoot().setDefaultScene(scene);
-
-  return doc;
-}
+ function toGltf(geo: BuiltGeometry, targetNames: string[]): Document {
+   const doc = new Document();
+   const buffer = doc.createBuffer();
+ 
+   // Partition vertices by category. glTF keeps morph-target counts per mesh,
+   // so every morph-bearing primitive (bust, mouth interior) lives in the
+   // same 'bust' mesh. Mouth and teeth share one dark cavity material.
+   // Vertices keep ascending source order, so the build stays deterministic.
+   //   0 = bust (face/head/neck), 1 = sclera, 2 = iris,
+   //   3/4 = mouth interior (gums, tongue, and teeth).
+   const vcount = geo.eyeCat.length;
+   const remapBust = new Int32Array(vcount).fill(-1);
+   const remapSclera = new Int32Array(vcount).fill(-1);
+   const remapIris = new Int32Array(vcount).fill(-1);
+   const remapMouth = new Int32Array(vcount).fill(-1);
+   const bustSrc: number[] = [];
+   const scleraSrc: number[] = [];
+   const irisSrc: number[] = [];
+   const mouthSrc: number[] = [];
+   for (let v = 0; v < vcount; v++) {
+     const cat = geo.eyeCat[v]!;
+     if (cat === 0) {
+       remapBust[v] = bustSrc.length;
+       bustSrc.push(v);
+     } else if (cat === 1) {
+       remapSclera[v] = scleraSrc.length;
+       scleraSrc.push(v);
+     } else if (cat === 2) {
+       remapIris[v] = irisSrc.length;
+       irisSrc.push(v);
+     } else {
+       remapMouth[v] = mouthSrc.length;
+       mouthSrc.push(v);
+     }
+   }
+ 
+   const extract = (
+     src: number[],
+     remap: Int32Array,
+   ): {
+     position: Float32Array;
+     normal: Float32Array;
+     uv: Float32Array;
+     joints: Uint8Array;
+     weights: Float32Array;
+     indices: Uint32Array;
+   } => {
+     const n = src.length;
+     const position = new Float32Array(n * 3);
+     const uv = new Float32Array(n * 2);
+     const joints = new Uint8Array(n * 4);
+     const weights = new Float32Array(n * 4);
+     for (let i = 0; i < n; i++) {
+       const v = src[i]!;
+       position[i * 3] = geo.position[v * 3]!;
+       position[i * 3 + 1] = geo.position[v * 3 + 1]!;
+       position[i * 3 + 2] = geo.position[v * 3 + 2]!;
+       uv[i * 2] = geo.uv[v * 2]!;
+       uv[i * 2 + 1] = geo.uv[v * 2 + 1]!;
+       joints[i * 4] = geo.joints[v * 4]!;
+       joints[i * 4 + 1] = geo.joints[v * 4 + 1]!;
+       joints[i * 4 + 2] = geo.joints[v * 4 + 2]!;
+       joints[i * 4 + 3] = geo.joints[v * 4 + 3]!;
+       weights[i * 4] = geo.weights[v * 4]!;
+       weights[i * 4 + 1] = geo.weights[v * 4 + 1]!;
+       weights[i * 4 + 2] = geo.weights[v * 4 + 2]!;
+       weights[i * 4 + 3] = geo.weights[v * 4 + 3]!;
+     }
+     const idx: number[] = [];
+     for (let t = 0; t < geo.indices.length; t++) {
+       const nv = remap[geo.indices[t]!]!;
+       if (nv < 0) continue;
+       idx.push(nv);
+     }
+     const indices = new Uint32Array(idx);
+     const normal = computeSmoothNormals(position, indices, n);
+     return { position, normal, uv, joints, weights, indices };
+   };
+ 
+   const bust = extract(bustSrc, remapBust);
+   const mouth = extract(mouthSrc, remapMouth);
+   const sclera = extract(scleraSrc, remapSclera);
+   const iris = extract(irisSrc, remapIris);
+ 
+   const makePrim = (
+     part: { position: Float32Array; normal: Float32Array; uv: Float32Array; joints: Uint8Array; weights: Float32Array; indices: Uint32Array },
+   ) => {
+     const positionAcc = doc.createAccessor().setType('VEC3').setArray(part.position).setBuffer(buffer);
+     const normalAcc = doc.createAccessor().setType('VEC3').setArray(part.normal).setBuffer(buffer);
+     const uvAcc = doc.createAccessor().setType('VEC2').setArray(part.uv).setBuffer(buffer);
+     const jointsAcc = doc.createAccessor().setType('VEC4').setArray(part.joints).setBuffer(buffer);
+     const weightsAcc = doc.createAccessor().setType('VEC4').setArray(part.weights).setBuffer(buffer);
+     const indexAcc = doc.createAccessor().setType('SCALAR').setArray(part.indices).setBuffer(buffer);
+     return doc
+       .createPrimitive()
+       .setAttribute('POSITION', positionAcc)
+       .setAttribute('NORMAL', normalAcc)
+       .setAttribute('TEXCOORD_0', uvAcc)
+       .setAttribute('JOINTS_0', jointsAcc)
+       .setAttribute('WEIGHTS_0', weightsAcc)
+       .setIndices(indexAcc);
+   };
+ 
+   // Add all 27 canonical morph targets to a primitive, remapped to its verts.
+   const addMorphs = (prim: Primitive, src: number[]): void => {
+     for (const name of targetNames) {
+       const arr = geo.targets[name]!;
+       const out = new Float32Array(src.length * 3);
+       for (let i = 0; i < src.length; i++) {
+         const v = src[i]!;
+         out[i * 3] = arr[v * 3]!;
+         out[i * 3 + 1] = arr[v * 3 + 1]!;
+         out[i * 3 + 2] = arr[v * 3 + 2]!;
+       }
+       const target = doc.createPrimitiveTarget(name);
+       const acc = doc.createAccessor().setType('VEC3').setArray(out).setBuffer(buffer);
+       target.setAttribute('POSITION', acc);
+       const nd = geo.targetNormals[name]!;
+       const nOut = new Float32Array(src.length * 3);
+       for (let i = 0; i < src.length; i++) {
+         const v = src[i]!;
+         nOut[i * 3] = nd[v * 3]!;
+         nOut[i * 3 + 1] = nd[v * 3 + 1]!;
+         nOut[i * 3 + 2] = nd[v * 3 + 2]!;
+       }
+       const nAcc = doc.createAccessor().setType('VEC3').setArray(nOut).setBuffer(buffer);
+       target.setAttribute('NORMAL', nAcc);
+       prim.addTarget(target);
+     }
+   };
+ 
+   const bustPrim = makePrim(bust);
+   addMorphs(bustPrim, bustSrc);
+   const mouthPrim = makePrim(mouth);
+   addMorphs(mouthPrim, mouthSrc);
+   const material = doc
+     .createMaterial('bust')
+     .setBaseColorFactor([0.5, 0.55, 0.6, 1])
+     .setRoughnessFactor(0.7);
+   const mouthMaterial = doc
+     .createMaterial('mouth_interior')
+     .setBaseColorFactor([0.04, 0.03, 0.035, 1])
+     .setRoughnessFactor(0.9);
+   bustPrim.setMaterial(material);
+   mouthPrim.setMaterial(mouthMaterial);
+ 
+   const bustMesh = doc.createMesh('bust');
+   bustMesh.addPrimitive(bustPrim);
+   bustMesh.addPrimitive(mouthPrim);
+   bustMesh.setExtras({ targetNames });
+   bustMesh.setWeights(new Array(targetNames.length).fill(0));
+ 
+   // Eyes mesh: two primitives (sclera, iris), no morph targets. It shares the
+   // bust's skin, so gaze-bone rotation still moves the eyeballs; the eyeball
+   // verts skin to eye_l / eye_r. glTF keeps morph counts per mesh, hence the
+   // separate mesh (the bust's 27 targets would be incompatible with 0 targets).
+   const scleraPrim = makePrim(sclera);
+   const irisPrim = makePrim(iris);
+   const scleraMat = doc
+     .createMaterial('eye_sclera')
+     .setBaseColorFactor([0.85, 0.87, 0.9, 1])
+     .setRoughnessFactor(0.35)
+     .setEmissiveFactor([0.06, 0.07, 0.08]);
+   const irisMat = doc
+     .createMaterial('eye_iris')
+     .setBaseColorFactor([0.07, 0.08, 0.1, 1])
+     .setRoughnessFactor(0.25);
+   scleraPrim.setMaterial(scleraMat);
+   irisPrim.setMaterial(irisMat);
+   const eyesMesh = doc.createMesh('eyes');
+   eyesMesh.addPrimitive(scleraPrim);
+   eyesMesh.addPrimitive(irisPrim);
+ 
+   // Skeleton: root -> neck -> head -> (eye_l, eye_r).
+   const root = doc.createNode('root');
+   const neck = doc.createNode('neck');
+   const head = doc.createNode('head').setTranslation(geo.headPivot);
+   const eyeL = doc
+     .createNode('eye_l')
+     .setTranslation([
+       geo.leftEyePivot[0] - geo.headPivot[0],
+       geo.leftEyePivot[1] - geo.headPivot[1],
+       geo.leftEyePivot[2] - geo.headPivot[2],
+     ]);
+   const eyeR = doc
+     .createNode('eye_r')
+     .setTranslation([
+       geo.rightEyePivot[0] - geo.headPivot[0],
+       geo.rightEyePivot[1] - geo.headPivot[1],
+       geo.rightEyePivot[2] - geo.headPivot[2],
+     ]);
+   root.addChild(neck);
+   neck.addChild(head);
+   head.addChild(eyeL);
+   head.addChild(eyeR);
+ 
+   // Inverse bind matrices (column-major mat4): inverse of each joint's world
+   // translation, so the mesh is undeformed at bind and rotations pivot correctly.
+   const ibm = (t: [number, number, number]): number[] => [
+     1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -t[0], -t[1], -t[2], 1,
+   ];
+   const jointWorld: Array<[number, number, number]> = [
+     [0, 0, 0], // root
+     [0, 0, 0], // neck
+     geo.headPivot, // head
+     geo.leftEyePivot, // eye_l
+     geo.rightEyePivot, // eye_r
+   ];
+   const ibmData = new Float32Array(jointWorld.flatMap((t) => ibm(t)));
+   const ibmAcc = doc.createAccessor('ibm').setType('MAT4').setArray(ibmData).setBuffer(buffer);
+ 
+   const skin = doc.createSkin('rig');
+   for (const j of [root, neck, head, eyeL, eyeR]) skin.addJoint(j);
+   skin.setSkeleton(root);
+   skin.setInverseBindMatrices(ibmAcc);
+ 
+   const bustNode = doc.createNode('bust-mesh').setMesh(bustMesh).setSkin(skin);
+   const eyesNode = doc.createNode('eyes').setMesh(eyesMesh).setSkin(skin);
+ 
+   const scene = doc.createScene('bust');
+   scene.addChild(root);
+   scene.addChild(bustNode);
+   scene.addChild(eyesNode);
+   doc.getRoot().setDefaultScene(scene);
+ 
+   return doc;
+ }
 
 // ---------------------------------------------------------------------------
 // Main
@@ -743,7 +925,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(`[build-bust] failed: ${(err as Error).message}`);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(`[build-bust] failed: ${(err as Error).message}`);
+    process.exit(1);
+  });
+}

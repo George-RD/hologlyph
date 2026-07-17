@@ -97,12 +97,35 @@ export function wrapText(text: string, cols: number): string[] {
 }
 
 /**
+ * Normalise `text` into the repeating character stream that fills the grid.
+ *
+ * Whitespace (including newlines) collapses to single spaces and the text is
+ * repeated with a space separator. Spaces are padded onto the repeat unit
+ * until its length no longer divides `cols`, so each row starts at a
+ * different phase of the stream: otherwise word gaps would stack into
+ * continuous dark vertical channels across the skin. Pure: depends only on
+ * its arguments.
+ */
+export function textStream(text: string, cols: number, cells: number): string {
+  const src = text.replace(/\s+/g, ' ').trim();
+  if (src.length === 0) return '';
+  let unit = `${src} `;
+  if (cols > 1) {
+    while (cols % unit.length === 0) unit += ' ';
+  }
+  let out = unit;
+  while (out.length < cells) out += unit;
+  return out.slice(0, cells);
+}
+
+/**
  * Draw `text` onto `ctx` as a monospace character grid.
  *
- * The backdrop is filled with the dim base colour, then the wrapped glyphs are
- * painted cell-by-cell in the brighter glyph colour. To keep the skin reading
- * as a dense texture (dec.text-skin), the wrapped lines are cycled so that EVERY
- * grid row is filled rather than leaving the lower 99% of a short text black.
+ * The backdrop is filled with the dim base colour, then the glyphs are painted
+ * cell-by-cell in the brighter glyph colour. To keep the skin reading as a
+ * dense continuous texture (dec.text-skin), every cell is filled from one
+ * repeating character stream: rows break at arbitrary character positions, so
+ * the grid stays full width and word gaps never align into vertical channels.
  * No scroll/animation work happens here; that is the shader's job.
  */
 export function drawText(ctx: CanvasLike, text: string, config: GridConfig): void {
@@ -122,16 +145,12 @@ export function drawText(ctx: CanvasLike, text: string, config: GridConfig): voi
   ctx.textAlign = 'left';
   ctx.fillStyle = glyph;
 
-  const wrapped = wrapText(text, cols);
-  // Guard against an empty document: one blank line so the base still paints.
-  const lines = wrapped.length > 0 ? wrapped : [''];
-  for (let r = 0; r < rows; r++) {
-    const line = lines[r % lines.length]!;
-    const y = padding + r * cellHeight;
-    for (let c = 0; c < line.length; c++) {
-      const ch = line[c]!;
-      const x = padding + c * cellWidth;
-      ctx.fillText(ch, x, y);
-    }
+  const stream = textStream(text, cols, cols * rows);
+  for (let i = 0; i < stream.length; i++) {
+    const ch = stream[i]!;
+    if (ch === ' ') continue;
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    ctx.fillText(ch, padding + c * cellWidth, padding + r * cellHeight);
   }
 }
