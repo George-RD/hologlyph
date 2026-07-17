@@ -2,7 +2,7 @@
 
 A web-native, text-skinned talking head for interactive pages.
 
-Three.js is externalised from the hologlyph bundles and should be provided by the consuming app as a peer dependency. By default, `createEngine()` (or the `<hologlyph-head>` element with no `src`) loads a packaged realistic head bust lazy-loaded as a ~521 kB gzip chunk; the main bundle stays at ~10.8 kB gzip. The bust is built from ICT-FaceKit (USC-ICT, MIT) -- the licence survives sublicensing of the derived binary. Pass `avatarUrl` to override with your own GLB. Set `avatarUrl: ''` to force the lightweight procedural placeholder. Load failures degrade gracefully to the placeholder with a console warning.
+Three.js is externalised from the hologlyph bundles and should be provided by the consuming app as a peer dependency. By default, `createEngine()` (or the `<hologlyph-head>` element with no `src`) loads a packaged realistic head bust lazy-loaded as a ~720 kB gzip chunk; the main bundle stays at ~10.8 kB gzip. The bust is built from ICT-FaceKit (USC-ICT, MIT) -- the licence survives sublicensing of the derived binary. Pass `avatarUrl` to override with your own GLB. Set `avatarUrl: ''` to force the lightweight procedural placeholder. Load failures degrade gracefully to the placeholder with a console warning.
 
 ## Declarative web component
 

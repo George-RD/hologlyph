@@ -22,7 +22,7 @@ Running log per skill://implementation-notes. Keep entries to 2-3 lines.
 - **viseme_pp recipe tuned** (mouthClose 1.0 -> 0.25): ICT's mouthClose delta
   assumes jaw-open compensation; full weight with a closed jaw folded the lips
   into a lump, caught by the keyframe render comparison.
-- **Shipped GLB is decimated at --simplify 0.5** (654 KB vs 1.30 MB full): chosen
+- **Shipped GLB is decimated at --simplify 0.5** (887 KB with morph normal deltas vs ~2 MB full): chosen
   by a 4-ratio x 7-keyframe visual comparison; r0.5 was indistinguishable from
   full at review size, answering the owner's size concern with no quality loss.
 - **Delivery is Option A via a lazy inlined chunk** (owner-ratified): Vite lib
@@ -32,6 +32,9 @@ Running log per skill://implementation-notes. Keep entries to 2-3 lines.
 - **Text-skin V orientation fixed in the asset UVs**, not the shader: CanvasTexture
   flipY puts the canvas top at v=1, the original mapping rendered text upside
   down (caught in the variants render).
+- **viseme_nn adds mouthDimple_L** (spec table 5.2 lists only mouthDimpleRight):
+  the left dimple is included for a symmetric articulation; flagged by the
+  decision-conformance review and kept deliberately.
 
 ## Discovered edge cases
 
@@ -55,7 +58,7 @@ Running log per skill://implementation-notes. Keep entries to 2-3 lines.
 - Text-skin look: DEFAULT_GRID (cyan, 96 cols) kept after a 4-variant pass;
   demo/textskin-variants.html renders the alternatives (dense, sparse, warm
   amber) if the owner wants a different skin personality.
-- The default-avatar chunk weighs ~521 kB gzip; acceptable per Option A, but a
+- The default-avatar chunk weighs ~720 kB gzip; acceptable per Option A, but a
   future dec could add a "no-default" build flavour if consumers ask.
 
 ## Summary

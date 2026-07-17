@@ -238,15 +238,25 @@ class EngineImpl implements Engine {
       // resolves to the packaged bust; an empty string explicitly requests the
       // placeholder; load failures degrade to the placeholder with a warning.
       // Dynamic import on purpose: the library build inlines the default head
-      // (~650 kB) into this module's chunk, and the lazy boundary keeps it out
+      // (~890 kB) into this module's chunk, and the lazy boundary keeps it out
       // of consumers who pass their own avatarUrl.
       let candidates: string[];
       if (this.options.avatarUrl === undefined) {
-        const { defaultAvatarUrls } = await import('./default-avatar.js');
-        candidates = defaultAvatarUrls();
+        try {
+          const { defaultAvatarUrls } = await import('./default-avatar.js');
+          candidates = defaultAvatarUrls();
+        } catch (err) {
+          // A failed chunk load is an avatar-delivery failure, not a mount
+          // failure: degrade to the placeholder like any other candidate miss.
+          console.warn('[hologlyph] default avatar chunk failed to load.', err);
+          candidates = [];
+        }
       } else {
         candidates = this.options.avatarUrl ? [this.options.avatarUrl] : [];
       }
+      // Mount/dispose race: disposed while awaiting the chunk import. Stop
+      // before starting any asset fetch/decode on a torn-down engine.
+      if (this.disposed) return;
       this.avatar = null;
       for (const url of candidates) {
         try {

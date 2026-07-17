@@ -12,7 +12,7 @@ informed_by: [res.head-asset-alternatives]
 
 ## Context
 
-The v2 head bust ships as an optimised GLB (654 KB post Meshopt + 0.5 decimation,
+The v2 head bust ships as an optimised GLB (887 KB post Meshopt + 0.5 decimation, incl. morph normal deltas,
 within the 1.5 MB target of dec.performance-budget). The design flagged one open
 choice: commit the binary versus fetch-on-build, and the owner ratified that the
 package IS a digital head, so the engine must load a real bust by default rather
@@ -32,7 +32,7 @@ Three-part delivery:
    it via dynamic import). An engine created without avatarUrl loads the real
    head in every environment with zero runtime path resolution; consumers who
    pass their own avatarUrl never download the default chunk (main chunk stays
-   ~10.8 kB gzip; the default-avatar chunk is ~521 kB gzip, fetched on use).
+   ~10.8 kB gzip; the default-avatar chunk is ~720 kB gzip, fetched on use).
 3. avatarUrl semantics: undefined loads the packaged bust; an empty string
    explicitly requests the procedural placeholder; any load failure degrades to
    the placeholder with a console warning.
@@ -52,7 +52,8 @@ hosting concern, and the pinned source manifest already covers regeneration.
 - Regenerate with `bun tools/asset-pipeline/build-bust.ts` then
   `bun tools/asset-pipeline/optimize.ts <raw> assets/hologlyph-bust.glb
   --simplify 0.5`, and rebuild the library so the inlined chunk refreshes.
-- The npm tarball carries the head inside dist/ (~893 kB chunk); package
-  files stays ["dist"].
+- The npm tarball carries the head inside dist/ (~1.2 MB chunk); package files
+  is ["dist", "THIRD-PARTY-NOTICES.md"], the notice being required because the
+  ICT-derived bust ships inside the package.
 - test/asset-bust.test.ts is the acceptance oracle for the committed GLB;
   test/core.test.ts covers the three avatarUrl delivery semantics.

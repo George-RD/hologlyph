@@ -126,31 +126,33 @@ describe('shipped head bust', () => {
 });
 
 /**
- * Regenerate-from-source guard (res.morph-authoring / design retention): proves
- * the shipped GLB's canonical rig is reproducible from the pinned ICT sources.
- * Skipped in CI where the (gitignored) source cache is absent; run locally after
- * `bun tools/asset-pipeline/build-bust.ts` has populated tools/asset-pipeline/.cache.
+ * Regenerate-from-source guard (res.morph-authoring / design retention): the
+ * full two-step pipeline (build-bust + optimize --simplify 0.5) is
+ * byte-deterministic, so the strongest oracle holds: regenerating from the
+ * pinned ICT sources must reproduce the committed GLB EXACTLY. Skipped in CI
+ * where the (gitignored) source cache is absent.
  */
 const CACHE_NEUTRAL = resolve(CWD, 'tools/asset-pipeline/.cache/generic_neutral_mesh.obj');
 describe.skipIf(!existsSync(CACHE_NEUTRAL))('bust regenerates from pinned source', () => {
-  it('rebuilds the identical 27-target conformant rig', async () => {
-    const tmp = join(mkdtempSync(join(tmpdir(), 'holo-regen-')), 'bust.glb');
-    const run = spawnSync('bun', ['tools/asset-pipeline/build-bust.ts', tmp], {
+  it('rebuilds the committed GLB byte-for-byte', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'holo-regen-'));
+    const raw = join(dir, 'bust.raw.glb');
+    const opt = join(dir, 'bust.glb');
+    const build = spawnSync('bun', ['tools/asset-pipeline/build-bust.ts', raw], {
       cwd: CWD,
       encoding: 'utf8',
     });
-    expect(run.status, run.stderr).toBe(0);
+    expect(build.status, build.stderr).toBe(0);
+    const optimize = spawnSync(
+      'bun',
+      ['tools/asset-pipeline/optimize.ts', raw, opt, '--simplify', '0.5'],
+      { cwd: CWD, encoding: 'utf8' },
+    );
+    expect(optimize.status, optimize.stderr).toBe(0);
 
-    const bytes = readFileSync(tmp);
-    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const loader = new GLTFLoader();
-    loader.setMeshoptDecoder(MeshoptDecoder);
-    await MeshoptDecoder.ready;
-    const scene = await new Promise<THREE.Group>((res, rej) => {
-      loader.parse(ab as ArrayBuffer, '', (g) => res(g.scene), rej);
-    });
-    const report = validateRig(scene);
-    expect(report.conformant).toBe(true);
-    expect(report.missingMorphs).toEqual([]);
+    const regenerated = readFileSync(opt);
+    const shipped = readFileSync(BUST_PATH);
+    expect(regenerated.length).toBe(shipped.length);
+    expect(regenerated.equals(shipped)).toBe(true);
   });
 });

@@ -76,12 +76,19 @@ const VISEME_RECIPE: Recipe = {
   // mouthClose kept light: ICT's delta assumes jaw-open compensation, so a full
   // weight with a closed jaw folds the lips into a lump (seen in keyframe render).
   viseme_pp: { mouthPress_L: 1.0, mouthPress_R: 1.0, mouthClose: 0.25 },
-  viseme_ff: { mouthLowerDown_L: 0.4, mouthLowerDown_R: 0.4, mouthFunnel: 0.3 },
+  viseme_ff: {
+    mouthFrown_L: 1.0,
+    mouthFrown_R: 1.0,
+    mouthLowerDown_L: 0.4,
+    mouthLowerDown_R: 0.4,
+  },
   viseme_th: { jawOpen: 0.6, mouthShrugLower: 0.6 },
   viseme_dd: { jawOpen: 0.5, mouthDimple_L: 0.5, mouthDimple_R: 0.5 },
   viseme_kk: { jawOpen: 0.5, mouthStretch_L: 0.4, mouthStretch_R: 0.4 },
   viseme_ch: { mouthFunnel: 0.7, mouthPucker: 0.7 },
   viseme_ss: { mouthSmile_L: 0.8, mouthSmile_R: 0.8, jawOpen: 0.15 },
+  // Spec table 5.2 lists only mouthDimpleRight for nn; the left dimple is added
+  // for a symmetric articulation (recorded deviation in implementation-notes).
   viseme_nn: { jawOpen: 0.3, mouthDimple_L: 0.5, mouthDimple_R: 0.5 },
   viseme_rr: { mouthPucker: 0.8, jawOpen: 0.3 },
 };
@@ -241,6 +248,7 @@ interface BuiltGeometry {
   /** Original ICT position index per glTF vertex, for morph delta lookup. */
   srcPos: Uint32Array;
   targets: Record<string, Float32Array>; // canonical name -> 3 per vertex deltas
+  targetNormals: Record<string, Float32Array>; // canonical name -> normal deltas
   headPivot: [number, number, number];
   leftEyePivot: [number, number, number];
   rightEyePivot: [number, number, number];
@@ -485,41 +493,65 @@ function build(
     }
     targets[name] = out;
   }
-  // Smooth, area-weighted vertex normals from the final (transformed) mesh so
-  // MeshStandardNodeMaterial lights the bust. Face normals are cross products of
-  // triangle edges, accumulated per vertex, then normalised.
-  const idx = indices;
-  const normal = new Float32Array(vcount * 3);
-  for (let t = 0; t < idx.length; t += 3) {
-    const a = idx[t]!,
-      b = idx[t + 1]!,
-      c = idx[t + 2]!;
-    const ax = position[a * 3]!,
-      ay = position[a * 3 + 1]!,
-      az = position[a * 3 + 2]!;
-    const e1x = position[b * 3]! - ax,
-      e1y = position[b * 3 + 1]! - ay,
-      e1z = position[b * 3 + 2]! - az;
-    const e2x = position[c * 3]! - ax,
-      e2y = position[c * 3 + 1]! - ay,
-      e2z = position[c * 3 + 2]! - az;
-    const nx = e1y * e2z - e1z * e2y;
-    const ny = e1z * e2x - e1x * e2z;
-    const nz = e1x * e2y - e1y * e2x;
-    for (const v of [a, b, c]) {
-      normal[v * 3] = normal[v * 3]! + nx;
-      normal[v * 3 + 1] = normal[v * 3 + 1]! + ny;
-      normal[v * 3 + 2] = normal[v * 3 + 2]! + nz;
+  // Smooth, area-weighted vertex normals: face normals are cross products of
+  // triangle edges, accumulated per vertex, then normalised. Reused for the base
+  // pose and for every morph-displaced pose (targets ship NORMAL deltas so
+  // deformed lighting is correct, not lit with neutral normals).
+  const smoothNormals = (pos: Float32Array): Float32Array => {
+    const out = new Float32Array(vcount * 3);
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t]!,
+        b = indices[t + 1]!,
+        c = indices[t + 2]!;
+      const ax = pos[a * 3]!,
+        ay = pos[a * 3 + 1]!,
+        az = pos[a * 3 + 2]!;
+      const e1x = pos[b * 3]! - ax,
+        e1y = pos[b * 3 + 1]! - ay,
+        e1z = pos[b * 3 + 2]! - az;
+      const e2x = pos[c * 3]! - ax,
+        e2y = pos[c * 3 + 1]! - ay,
+        e2z = pos[c * 3 + 2]! - az;
+      const nx = e1y * e2z - e1z * e2y;
+      const ny = e1z * e2x - e1x * e2z;
+      const nz = e1x * e2y - e1y * e2x;
+      for (const v of [a, b, c]) {
+        out[v * 3] = out[v * 3]! + nx;
+        out[v * 3 + 1] = out[v * 3 + 1]! + ny;
+        out[v * 3 + 2] = out[v * 3 + 2]! + nz;
+      }
     }
-  }
-  for (let v = 0; v < vcount; v++) {
-    const nx = normal[v * 3]!,
-      ny = normal[v * 3 + 1]!,
-      nz = normal[v * 3 + 2]!;
-    const len = Math.hypot(nx, ny, nz) || 1;
-    normal[v * 3] = nx / len;
-    normal[v * 3 + 1] = ny / len;
-    normal[v * 3 + 2] = nz / len;
+    for (let v = 0; v < vcount; v++) {
+      const nx = out[v * 3]!,
+        ny = out[v * 3 + 1]!,
+        nz = out[v * 3 + 2]!;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      out[v * 3] = nx / len;
+      out[v * 3 + 1] = ny / len;
+      out[v * 3 + 2] = nz / len;
+    }
+    return out;
+  };
+
+  const normal = smoothNormals(position);
+
+  // Per-target normal deltas: recompute smooth normals on the displaced mesh and
+  // store the difference from the base normals (glTF morph NORMAL semantics).
+  const targetNormals: Record<string, Float32Array> = {};
+  const displaced = new Float32Array(vcount * 3);
+  for (const [name, delta] of Object.entries(targets)) {
+    let moved = false;
+    for (let i = 0; i < delta.length; i++) {
+      displaced[i] = position[i]! + delta[i]!;
+      if (delta[i] !== 0) moved = true;
+    }
+    if (!moved) {
+      targetNormals[name] = new Float32Array(vcount * 3);
+      continue;
+    }
+    const dn = smoothNormals(displaced);
+    for (let i = 0; i < dn.length; i++) dn[i] = dn[i]! - normal[i]!;
+    targetNormals[name] = dn;
   }
 
 
@@ -532,6 +564,7 @@ function build(
     indices: new Uint32Array(indices),
     srcPos: new Uint32Array(srcPos),
     targets,
+    targetNormals,
     headPivot,
     leftEyePivot,
     rightEyePivot,
@@ -577,6 +610,13 @@ function toGltf(geo: BuiltGeometry, targetNames: string[]): Document {
     const target = doc.createPrimitiveTarget(name);
     const acc = doc.createAccessor(name).setType('VEC3').setArray(arr).setBuffer(buffer);
     target.setAttribute('POSITION', acc);
+    const normalDelta = geo.targetNormals[name]!;
+    const nAcc = doc
+      .createAccessor(`${name}.normal`)
+      .setType('VEC3')
+      .setArray(normalDelta)
+      .setBuffer(buffer);
+    target.setAttribute('NORMAL', nAcc);
     prim.addTarget(target);
   }
 

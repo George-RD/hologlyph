@@ -1,7 +1,7 @@
 # Tasks: v2-embodiment
 
 - [x] Export ICT-FaceKit Light head-bust (MIT, primary per res.head-asset-alternatives; backup: MPFB2 bundled CC0 data only); record licence and provenance
-- [x] Canonicalise the 27 rig-schema morphs (15 visemes, 12 expressions) via a committed glTF-Transform script; Blender donor transfer plus sculpt for donor-less morphs; validateRig passes with zero warnings (res.morph-authoring, specs/morph-authoring-detail.md)
+- [x] Canonicalise the 27 rig-schema morphs (15 visemes, 12 expressions) via a committed glTF-Transform script; donor-less morphs (viseme_sil, exp_relaxed) shipped as zero-delta targets via the Node composite route, no Blender pass needed (recorded deviation in implementation-notes.md); validateRig passes with zero warnings (res.morph-authoring, specs/morph-authoring-detail.md)
 - [x] Run the asset pipeline (Meshopt + KTX2); document the exact invocation; GLB under the accepted 1.5 MB delivery target (dec.performance-budget)
 - [x] Record dec.default-asset-delivery (commit binary vs fetch-on-build) and wire the chosen delivery path
 - [x] Demo loads the real bust by default with placeholder as fallback; speak round-trip shows viseme motion

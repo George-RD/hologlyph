@@ -84,7 +84,7 @@ function diff(a, b) {
   return d / n;
 }
 
-console.log(JSON.stringify({
+const results = {
   stateEarly,
   stateAfterScroll: state,
   speakState,
@@ -92,7 +92,23 @@ console.log(JSON.stringify({
   mouthMotion_beforeVsMid1: diff(beforeSpeak, midSpeak1),
   mouthMotion_mid1VsMid2: diff(midSpeak1, midSpeak2),
   pageErrors: errors,
-}, null, 2));
+};
+console.log(JSON.stringify(results, null, 2));
 
 await page.screenshot({ path: '/tmp/holo-demo.png' });
 await browser.close();
+
+// Hard oracles: fail non-zero when the bust or viseme motion regresses.
+const failures = [];
+if (state !== 'state: idle') failures.push(`expected idle after scroll, got ${state}`);
+if (speakState !== 'state: speaking') failures.push(`expected speaking after click, got ${speakState}`);
+if (emerged.contentFraction < 0.08) failures.push(`bust content fraction too low: ${emerged.contentFraction}`);
+if (results.mouthMotion_beforeVsMid1 < 0.05 && results.mouthMotion_mid1VsMid2 < 0.05) {
+  failures.push('no visible viseme motion during speech');
+}
+if (errors.length > 0) failures.push(`page errors: ${errors.join('; ')}`);
+if (failures.length > 0) {
+  console.error('SMOKE FAILED:\n- ' + failures.join('\n- '));
+  process.exit(1);
+}
+console.log('SMOKE PASSED');

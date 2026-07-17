@@ -83,7 +83,7 @@ smooth.
 ## Optimisation choice (`--simplify 0.5`)
 
 The `--simplify 0.5` flag to `optimize.ts` was chosen after a visual keyframe
-comparison: the simplified bust (654 KB) is indistinguishable from the full
+comparison: the simplified bust (887 KB with morph normal deltas) is indistinguishable from the full
 intermediate (1.30 MB) at review size. The full intermediate is retained via
 `--full` for any future recipe work.
 

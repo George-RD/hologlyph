@@ -33,3 +33,15 @@ const stats = await page.evaluate(async (src) => {
 await page.screenshot({ path: '/tmp/holo-consumer.png' });
 console.log(JSON.stringify({ state, stats, lazyChunkRequests: requests, pageErrors: errors }, null, 2));
 await browser.close();
+
+// Hard oracles: the BUILT dist must load the packaged default head.
+const failures = [];
+if (state !== 'state: idle') failures.push(`expected idle, got ${state}`);
+if (stats.contentFraction < 0.08) failures.push(`bust content fraction too low: ${stats.contentFraction}`);
+if (!requests.some((u) => u.includes('default-avatar'))) failures.push('lazy default-avatar chunk was never requested');
+if (errors.length > 0) failures.push(`page errors: ${errors.join('; ')}`);
+if (failures.length > 0) {
+  console.error('SMOKE FAILED:\n- ' + failures.join('\n- '));
+  process.exit(1);
+}
+console.log('SMOKE PASSED');
