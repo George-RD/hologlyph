@@ -44,3 +44,5 @@
 - scan: nodes=16, findings=33, errors=0
 - scan: nodes=16, findings=34, errors=0
 - scan: nodes=16, findings=34, errors=0
+- scan: nodes=16, findings=33, errors=0
+- archive: lipsync-skin-projection merged; no operations
