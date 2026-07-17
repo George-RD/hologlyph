@@ -33,10 +33,11 @@ The architecture is declared and enforced by cairn (see below).
 
 Cairn keeps `cairn.blueprint` and the code in sync and gates drift at commit.
 Read `.cairn/AGENTS.md` for the full agent guide (orientation, artefact formats,
-the dev-loop skills in `.claude/skills/`). Caveat: that file was scaffolded
-before the cairn 0.2.0 CLI rename and is not regenerated on upgrade; where its
-commands disagree with this file (e.g. `cairn changes` vs `cairn change list`),
-this file wins. This section covers the essentials you must not skip.
+the dev-loop skills in `.claude/skills/`). Caveat: that file is auto-scaffolded
+and is not regenerated on cairn upgrades, so it can lag the live CLI (it once
+said `cairn changes` where 0.3.0 says `cairn change list`); where its commands
+disagree with this file, this file wins. This section covers the essentials you
+must not skip.
 
 ### Orientation
 
@@ -53,10 +54,13 @@ Work flows through typed changes, not ad-hoc edits:
 1. `cairn change new <change-id>` - scaffold the change.
 2. Implement under a feature branch; run the gates as you go.
 3. `cairn change show <change-id>` - review before landing.
-4. `cairn change accept <change-id>` - pass the acceptance gate. Known
-   limitation: acceptance gates were cargo-hardcoded through 0.1.x (upstream
-   issue #234); verify against this TypeScript repo before relying on it, and
-   fall back to the Gate commands below if it misfires.
+4. `cairn change accept <change-id>` - pass the acceptance gate. In 0.3.0,
+   the gate is language-aware via the `gates:` block in `cairn.config.yaml`;
+   `cairn change accept` now runs `bunx tsc --noEmit`, `bunx vitest run`, and
+   `bun run build`. One remaining wrinkle is that its `cairn lint --strict`
+   sub-step still fails on 12 pre-existing advisory
+   `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings. `cairn hook all`, not acceptance,
+   remains the authoritative commit gate.
 5. `cairn change archive <change-id>` - archive once merged.
 
 ### Gate
@@ -64,6 +68,9 @@ Work flows through typed changes, not ad-hoc edits:
 `cairn hook all` is the strict boundary. It must exit 0 before a commit lands.
 Run it (and `cairn scan`) before committing; zero findings is the target.
 Tension findings are advisory and do not fail the hook.
+The language battery is configured in `cairn.config.yaml` under `gates:`:
+`bunx tsc --noEmit`, `bunx vitest run`, and `bun run build`. The config also
+sets `ignore: [dist]`.
 
 ### Blueprint changes need decisions
 
@@ -77,8 +84,10 @@ structure and interface promises; an undeclared structural change is caught.
 
 To pick up the next unit of work, run `cairn brief` (no arguments): it selects
 the next open todo and fuses the task, binding decisions, contract, and gates.
-Caveat: its gate list is cargo-hardcoded and wrong for this repo; the Build and
-test section below is authoritative. Then, per unit:
+In 0.3.0 its gate section is generic and correct: it points to `cairn hook all`
+and `cairn scan`, and says language and build gates belong in
+`cairn.config.yaml` and this `AGENTS.md`. The Build and test section below
+remains authoritative for the exact commands. Then, per unit:
 
 1. Identify the active change: the todo's `satisfies:` frontmatter names it,
    and its directory is `meta/changes/<name>/` (verify with `cairn change list`,

@@ -35,7 +35,7 @@ I'll guide you through implementing the tasks in a change directory.
 
    For each unchecked task in tasks.md:
    a. Implement the task
-   b. Run relevant tests: `cargo test` or language-specific tests
+   b. Run relevant tests: `vitest run` (or the repo's test command)
    c. Mark the task complete in tasks.md
    d. Commit: `gt modify -m "feat(...): ..."` or `git commit`
 
@@ -43,19 +43,18 @@ I'll guide you through implementing the tasks in a change directory.
 
    Before marking complete, run:
    ```bash
-   cargo build          # zero warnings
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo fmt --check
-   cargo test
+   tsc --noEmit                          # type-check (zero errors)
+   vitest run                            # unit tests
+   vite build                            # production build
    ```
 
 5. **Run acceptance**
 
    ```bash
-   cairn accept <change-id>
+   cairn change accept <change-id>
    ```
 
-   This runs the accept-time gates (e.g., CC002 for suggested edges).
+   This runs the accept-time gates (e.g., CC002 for suggested edges). On this TypeScript repo the battery comes from the `gates:` block in `cairn.config.yaml`, not a cargo fallback.
 
 6. **Mark complete**
 
