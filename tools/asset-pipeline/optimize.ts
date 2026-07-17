@@ -42,13 +42,13 @@ declare const Bun: {
 declare const process: { exit(code?: number): never };
 
 import { WebIO, type Document } from '@gltf-transform/core';
-import { dedup, prune, meshopt, textureCompress } from '@gltf-transform/functions';
+import { dedup, prune, meshopt, simplify, textureCompress } from '@gltf-transform/functions';
 import {
   EXTMeshoptCompression,
   KHRMeshQuantization,
   KHRTextureBasisu,
 } from '@gltf-transform/extensions';
-import { MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer';
+import { MeshoptEncoder, MeshoptDecoder, MeshoptSimplifier } from 'meshoptimizer';
 
 /** GLB delivery budget from dec.performance-budget (< 1.5 MB). */
 const DELIVERY_BUDGET_BYTES = 1.5 * 1024 * 1024;
@@ -129,10 +129,23 @@ async function compressTexturesKTX2(doc: Document, logger: Logger): Promise<void
 }
 async function main(): Promise<void> {
   const logger = makeLogger();
-  const args = Bun.argv.slice(2);
+  const rawArgs = Bun.argv.slice(2);
+  // --simplify <ratio>: meshopt decimation before compression. Morph deltas are
+  // remapped onto the simplified vertices; visual keyframe checks pick the ratio.
+  let simplifyRatio = 0;
+  const simplifyIdx = rawArgs.indexOf('--simplify');
+  if (simplifyIdx !== -1) {
+    simplifyRatio = Number(rawArgs[simplifyIdx + 1] ?? '');
+    rawArgs.splice(simplifyIdx, 2);
+    if (!(simplifyRatio > 0 && simplifyRatio < 1)) {
+      logger.warn('--simplify expects a ratio in (0, 1)');
+      process.exit(1);
+    }
+  }
+  const args = rawArgs;
   const input = args[0];
   if (!input) {
-    logger.warn('Usage: optimize-asset <input.glb> [output.glb]');
+    logger.warn('Usage: optimize-asset <input.glb> [output.glb] [--simplify <ratio>]');
     process.exit(1);
   }
   const io = new WebIO()
@@ -153,7 +166,23 @@ async function main(): Promise<void> {
   logger.info(`Input size: ${formatBytes(inputBytes.byteLength)}`);
   const doc = await io.readBinary(inputBytes);
 
-  await doc.transform(dedup(), prune(), meshopt({ encoder: MeshoptEncoder, level: 'high' }));
+  // keepAttributes: retain NORMAL/TEXCOORD_0 even though the shipped material
+  // binds no map (the runtime swaps in the text-skin material, which samples uv()
+  // and needs normals for lighting). keepLeaves: retain the skeleton joint nodes.
+  if (simplifyRatio > 0) {
+    await MeshoptSimplifier.ready;
+    await doc.transform(
+      simplify({ simplifier: MeshoptSimplifier, ratio: simplifyRatio, error: 0.001 }),
+    );
+    const prim = doc.getRoot().listMeshes()[0]?.listPrimitives()[0];
+    const count = prim?.getAttribute('POSITION')?.getCount() ?? 0;
+    logger.info(`Simplify: ratio ${simplifyRatio} -> ${count} vertices.`);
+  }
+  await doc.transform(
+    dedup(),
+    prune({ keepAttributes: true, keepLeaves: true }),
+    meshopt({ encoder: MeshoptEncoder, level: 'high' }),
+  );
 
   // Best-effort texture resize. Requires an image backend (sharp); without it
   // glTF-Transform cannot resize, so we skip with a clear message.
