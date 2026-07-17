@@ -141,7 +141,7 @@ const h = vi.hoisted(() => {
     asset: [],
   };
 
-  return { makeEmitter, buildAdapter, registry, demoAdapter: undefined as TTSAdapter | undefined };
+   return { makeEmitter, buildAdapter, registry, demoAdapter: undefined as TTSAdapter | undefined, avatarOverride: undefined as LoadedAvatar | undefined, skinMaterialOverride: null as THREE.Material | null };
 });
 
 // --- Mocks for sibling modules ---------------------------------------------
@@ -298,9 +298,9 @@ vi.mock('../src/shaders', () => ({
       clippingPlane: new THREE.Plane(),
       createSkinMaterial() {
         // The engine assigns this as mesh.material, so it must carry dispose().
-        return { isSkin: true, dispose() {} } as unknown as THREE.Material;
-      },
-      setEmergence(p: number) {
+         return h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
+       },
+       setEmergence(p: number) {
         this.emergenceValue = p;
       },
       setReducedMotion(reduce: boolean) {
@@ -354,17 +354,19 @@ vi.mock('../src/asset', () => ({
         this.loadUrls.push(url);
         // Failure injection for delivery tests: fail: URLs reject.
         if (url.startsWith('fail:')) throw new Error('injected load failure');
-        return {
-          root: new THREE.Group(),
-          morphMeshes: [],
-          bones: {},
-          animations: [],
-          setMorph() {},
-          getMorph() {
-            return 0;
-          },
-          dispose() {},
-        };
+         if (h.avatarOverride) return h.avatarOverride;
+         // Default lightweight avatar: no morph meshes, unnamed material.
+         return {
+           root: new THREE.Group(),
+           morphMeshes: [],
+           bones: {},
+           animations: [],
+           setMorph() {},
+           getMorph() {
+             return 0;
+           },
+           dispose() {},
+         };
       },
       disposeCount: 0,
       dispose() {
@@ -418,26 +420,28 @@ beforeEach(() => {
   stubMatchMedia();
 });
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+ afterEach(() => {
+   vi.unstubAllGlobals();
+   h.avatarOverride = undefined;
+   h.skinMaterialOverride = null;
+ });
 
 // --- Tests -----------------------------------------------------------------
 
-describe('engine state wiring', () => {
-  it('emits statechange on behaviour transition', () => {
-    const engine = createEngine();
-    const behavior = h.registry.behavior.at(-1)!;
-    const transitions: Array<{ from: string; to: string }> = [];
-    engine.on('statechange', (s) => transitions.push(s));
-    behavior.emit('transition', {
-      from: 'hidden',
-      to: 'emerging',
-      event: { type: 'enter-viewport' },
-    });
-    expect(transitions).toEqual([{ from: 'hidden', to: 'emerging' }]);
-    engine.dispose();
-  });
+ describe('engine state wiring', () => {
+   it('emits statechange on behaviour transition', () => {
+     const engine = createEngine();
+     const behavior = h.registry.behavior.at(-1)!;
+     const transitions: Array<{ from: string; to: string }> = [];
+     engine.on('statechange', (s) => transitions.push(s));
+     behavior.emit('transition', {
+       from: 'hidden',
+       to: 'emerging',
+       event: { type: 'enter-viewport' },
+     });
+     expect(transitions).toEqual([{ from: 'hidden', to: 'emerging' }]);
+     engine.dispose();
+   });
 
   it('maps listening/speaking/thinking to motion gaze and expression', () => {
     const engine = createEngine();
@@ -733,3 +737,43 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
     engine.dispose();
   });
 });
+ 
+ describe('text-skin material application (mouth interior)', () => {
+   it('keeps mouth material but skins teeth, ordinary, and unnamed meshes', async () => {
+     const keepMaterials = { isKept: true } as unknown as THREE.Material;
+     const teethMaterials = { isTeeth: true } as unknown as THREE.Material;
+     const skinnedMaterial = { isSkin: false } as unknown as THREE.Material;
+     const unnamedMaterial = { isUnnamed: true } as unknown as THREE.Material;
+     const keptMesh = new THREE.Mesh(new THREE.BufferGeometry(), keepMaterials);
+     const teethMesh = new THREE.Mesh(new THREE.BufferGeometry(), teethMaterials);
+     const ordinaryMesh = new THREE.Mesh(new THREE.BufferGeometry(), skinnedMaterial);
+     const unnamedMesh = new THREE.Mesh(new THREE.BufferGeometry(), unnamedMaterial);
+     const skinMeshMaterial = { name: 'skin', dispose() {} } as unknown as THREE.Material;
+     h.skinMaterialOverride = skinMeshMaterial;
+ 
+     h.avatarOverride = {
+       root: new THREE.Group(),
+       morphMeshes: [keptMesh, teethMesh, ordinaryMesh, unnamedMesh],
+       bones: {},
+       animations: [],
+       setMorph() {},
+       getMorph() {
+         return 0;
+       },
+       dispose() {},
+     };
+     (keptMesh.material as THREE.Material).name = 'mouth_interior';
+     (teethMesh.material as THREE.Material).name = 'teeth';
+     (ordinaryMesh.material as THREE.Material).name = 'bust';
+ 
+     const engine = createEngine({ avatarUrl: 'fake.glb' });
+     await engine.mount(document.createElement('canvas'), document.createElement('div'));
+ 
+     expect(keptMesh.material).toBe(keepMaterials);
+     expect((keptMesh.material as THREE.Material).name).toBe('mouth_interior');
+     expect(teethMesh.material).toBe(skinMeshMaterial);
+     expect(ordinaryMesh.material).toBe(skinMeshMaterial);
+     expect(unnamedMesh.material).toBe(skinMeshMaterial);
+     engine.dispose();
+   });
+ });

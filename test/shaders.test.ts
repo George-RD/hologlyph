@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { createVFXEngine } from '../src/shaders';
 import {
   BUST_HEIGHT,
@@ -7,6 +8,16 @@ import {
   easeEmergence,
   visibleFraction,
 } from '../src/shaders/emergence';
+import {
+  BASE_OPACITY,
+  buildSkinMaterial,
+  GLOW_GAIN,
+  planarUV,
+  RIM_GAIN,
+  U_SCALE,
+  V_SCALE,
+} from '../src/shaders/materials';
+import type { TextSkinEngine } from '../src/contracts';
 
 describe('emergence mapping maths (pure)', () => {
   it('easeEmergence is monotonic, bounded, and pinned at the ends', () => {
@@ -114,5 +125,56 @@ describe('VFX reduced motion', () => {
     // Single small step from 1 -> 0; ramp tau is 0.3 so still near 1.
     expect(vfx.emergence).toBeGreaterThan(0.9);
     expect(vfx.emergence).toBeLessThan(1);
+  });
+});
+
+describe('planar skin projection (pure)', () => {
+  it('centres the grid on x=0 at u=0.5', () => {
+    expect(planarUV(0, 0).u).toBeCloseTo(0.5, 6);
+    expect(planarUV(0, 0).v).toBeCloseTo(0, 6);
+  });
+
+  it('is symmetric in x sign around u=0.5', () => {
+    const right = planarUV(0.2, 0);
+    const left = planarUV(-0.2, 0);
+    expect(right.u + left.u).toBeCloseTo(1, 6);
+    expect(right.u).toBeGreaterThan(0.5);
+  });
+
+  it('advances u and v linearly by the exported scales', () => {
+    expect(planarUV(1, 0).u).toBeCloseTo(0.5 + U_SCALE, 6);
+    expect(planarUV(0, 1).v).toBeCloseTo(V_SCALE, 6);
+    expect(planarUV(0, 0.5).v).toBeCloseTo(V_SCALE / 2, 6);
+  });
+
+  it('keeps glyph cells square: equal world-space cell density on both axes', () => {
+    // 96 columns per u unit and 64 rows per v unit; equal cells per world
+    // unit on x and y means U_SCALE * 96 === V_SCALE * 64.
+    expect(U_SCALE * 96).toBeCloseTo(V_SCALE * 64, 6);
+  });
+});
+
+describe('buildSkinMaterial (no GPU objects)', () => {
+  it('is translucent with a base opacity floor below full glyph luma', () => {
+    expect(BASE_OPACITY).toBeGreaterThan(0);
+    expect(BASE_OPACITY).toBeLessThan(1);
+
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material } = buildSkinMaterial(skin);
+
+    expect(material.transparent).toBe(true);
+  });
+
+  it('sets RepeatWrapping on both texture axes so the grid tiles under scroll', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    buildSkinMaterial(skin);
+
+    expect(skin.texture.wrapS).toBe(THREE.RepeatWrapping);
+    expect(skin.texture.wrapT).toBe(THREE.RepeatWrapping);
+  });
+
+  it('exports positive glow and rim gains for the holographic emissive term', () => {
+    expect(GLOW_GAIN).toBeGreaterThan(0);
+    expect(RIM_GAIN).toBeGreaterThan(0);
   });
 });

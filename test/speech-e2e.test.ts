@@ -162,6 +162,38 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
+/**
+ * Play `frames` through the seam at their REAL timestamps: each frame is
+ * applied, then motion advances in 16 ms steps only until the next frame's
+ * timestamp (final frame gets a defined `finalHold`). Mouth weights are
+ * attack/release smoothed (tau_attack 0.05 s), so peaks reflect what real
+ * playback would show, not an instant snap. Returns the per-morph peak.
+ */
+function playFrames(
+  seam: Pick<Seam, 'avatar' | 'motion' | 'scheduler'>,
+  frames: VisemeFrame[],
+  audio: { currentTime: number },
+  finalHold = 0.1,
+): Record<string, number> {
+  const maxWeight: Record<string, number> = {};
+  const DT = 0.016;
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i]!;
+    audio.currentTime = frame.time;
+    seam.scheduler.tick();
+    const windowEnd = i + 1 < frames.length ? frames[i + 1]!.time : frame.time + finalHold;
+    for (let t = frame.time; t < windowEnd; ) {
+      const stepDt = Math.min(DT, windowEnd - t);
+      seam.motion.update(stepDt, t);
+      t += stepDt;
+      for (const name of RIG_VISEME_MORPHS) {
+        maxWeight[name] = Math.max(maxWeight[name] ?? 0, seam.avatar.getMorph(name));
+      }
+    }
+  }
+  return maxWeight;
+}
+
 describe('viseme end-to-end (speech -> motion)', () => {
   beforeEach(() => {
     lastAudio = null;
@@ -188,21 +220,17 @@ describe('viseme end-to-end (speech -> motion)', () => {
     await flushMicrotasks();
     expect(lastAudio).not.toBeNull();
 
-    const maxWeight: Record<string, number> = {};
-    for (const frame of frames) {
-      lastAudio!.currentTime = frame.time;
-      scheduler.tick();
-      motion.update(0.016, frame.time);
-      for (const name of RIG_VISEME_MORPHS) {
-        maxWeight[name] = Math.max(maxWeight[name] ?? 0, avatar.getMorph(name));
-      }
-    }
+    // Real Polly timings include phones as short as ~33 ms; with attack
+    // smoothing such a phone honestly peaks well below 1. The contract here
+    // is that every reachable canonical morph visibly activates at real
+    // timing, and the unreachable one never does.
+    const maxWeight = playFrames({ avatar, motion, scheduler }, frames, lastAudio!);
 
     lastAudio!.emit('ended');
     await done;
 
     for (const canonical of REACHABLE_CANONICAL) {
-      expect(maxWeight[canonical] ?? 0).toBeCloseTo(1, 2);
+      expect(maxWeight[canonical] ?? 0).toBeGreaterThan(0.3);
     }
     // Polly has no nn symbol, so this path must never drive it.
     expect(maxWeight['viseme_nn'] ?? 0).toBe(0);
@@ -219,23 +247,17 @@ describe('viseme end-to-end (speech -> motion)', () => {
     await flushMicrotasks();
     expect(lastAudio).not.toBeNull();
 
-    const maxWeight: Record<string, number> = {};
-    for (const frame of frames) {
-      lastAudio!.currentTime = frame.time;
-      scheduler.tick();
-      motion.update(0.016, frame.time);
-      for (const name of RIG_VISEME_MORPHS) {
-        maxWeight[name] = Math.max(maxWeight[name] ?? 0, avatar.getMorph(name));
-      }
-    }
+    // 100 ms per viseme at real playback stepping converges to ~0.85 under
+    // attack smoothing (1 - exp(-0.096/0.05)); assert a strong activation.
+    const maxWeight = playFrames({ avatar, motion, scheduler }, frames, lastAudio!);
 
     lastAudio!.emit('ended');
     await done;
 
-    for (const morph of RIG_VISEME_MORPHS) {
-      expect(maxWeight[morph] ?? 0).toBeCloseTo(1, 2);
+    for (const morph of RIG_VISEME_MORPHS.filter((m) => m !== 'viseme_nn')) {
+      expect(maxWeight[morph] ?? 0).toBeGreaterThan(0.8);
     }
     // The gap closes: viseme_nn is reachable through the canonical timeline.
-    expect(maxWeight['viseme_nn'] ?? 0).toBeCloseTo(1, 2);
+    expect(maxWeight['viseme_nn'] ?? 0).toBeGreaterThan(0.8);
   });
 });

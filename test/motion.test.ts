@@ -79,16 +79,28 @@ describe('viseme priority over expression on the mouth', () => {
     m.setExpression('happy', 0.01);
     for (let i = 0; i < 5; i++) m.update(0.05, i * 0.05);
 
+    // Mouth morphs settle onto the happy expression (jaw_open 0.2).
+    expect(a.getMorph('exp_happy')).toBeCloseTo(0.8, 2);
+
     m.applyVisemeFrame({ time: 0, weights: { jaw_open: 0.9, viseme_aa: 0.8 } });
     m.update(0.05, 1);
-    expect(a.getMorph('jaw_open')).toBeCloseTo(0.9, 2);
-    expect(a.getMorph('viseme_aa')).toBeCloseTo(0.8, 2);
+    // A single frame moves part way, it never snaps to the viseme target.
+    const jaw = a.getMorph('jaw_open');
+    expect(jaw).toBeGreaterThan(0.2);
+    expect(jaw).toBeLessThan(0.9);
     expect(a.getMorph('exp_happy')).toBeCloseTo(0.8, 2); // expression untouched
 
+    // The mouth converges to the viseme target over time.
+    for (let i = 0; i < 20; i++) m.update(0.05, 1 + (i + 1) * 0.05);
+    expect(a.getMorph('jaw_open')).toBeCloseTo(0.9, 2);
+    expect(a.getMorph('viseme_aa')).toBeCloseTo(0.8, 2);
+
+    // Clearing the frame releases smoothly back toward the expression value.
     m.clearVisemes();
-    m.update(0.05, 2);
-    expect(a.getMorph('jaw_open')).toBeCloseTo(0.2, 2); // back to expression
-    expect(a.getMorph('viseme_aa')).toBeCloseTo(0, 2);
+    m.update(0.05, 3);
+    const afterClear = a.getMorph('jaw_open');
+    expect(afterClear).toBeLessThan(0.9);
+    expect(afterClear).toBeGreaterThan(0.2);
   });
 
   it('clamps viseme weights to [0,1]', () => {
@@ -99,6 +111,82 @@ describe('viseme priority over expression on the mouth', () => {
     m.update(0.05, 1);
     expect(a.getMorph('viseme_aa')).toBe(1);
     expect(a.getMorph('jaw_open')).toBe(0);
+  });
+});
+describe('mouth smoothing', () => {
+  it('moves part way toward an applied viseme frame', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.applyVisemeFrame({ time: 0, weights: { jaw_open: 1 } });
+
+    m.update(0.016, 0.016);
+
+    expect(a.getMorph('jaw_open')).toBeGreaterThan(0);
+    expect(a.getMorph('jaw_open')).toBeLessThan(1);
+  });
+
+  it('converges toward the target over simulated updates', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.applyVisemeFrame({ time: 0, weights: { jaw_open: 1 } });
+
+    for (let i = 0; i < 19; i++) m.update(0.016, (i + 1) * 0.016);
+
+    expect(a.getMorph('jaw_open')).toBeGreaterThan(0.95);
+  });
+
+  it('releases toward the expression value without snapping', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.applyVisemeFrame({ time: 0, weights: { jaw_open: 1 } });
+    for (let i = 0; i < 19; i++) m.update(0.016, (i + 1) * 0.016);
+    const beforeClear = a.getMorph('jaw_open');
+
+    m.clearVisemes();
+    m.update(0.016, 0.32);
+
+    const afterClear = a.getMorph('jaw_open');
+    expect(afterClear).toBeGreaterThan(0);
+    expect(afterClear).toBeLessThan(beforeClear);
+  });
+
+  it('attacks faster than it releases for equal time steps', () => {
+    const rising = createMotionEngine();
+    const risingAvatar = makeAvatar();
+    rising.attach(risingAvatar);
+    rising.applyVisemeFrame({ time: 0, weights: { jaw_open: 1 } });
+    rising.update(0.016, 0.016);
+    const rise = risingAvatar.getMorph('jaw_open');
+
+    const falling = createMotionEngine();
+    const fallingAvatar = makeAvatar();
+    falling.attach(fallingAvatar);
+    falling.applyVisemeFrame({ time: 0, weights: { jaw_open: 1 } });
+    for (let i = 0; i < 200; i++) falling.update(0.016, (i + 1) * 0.016);
+    const beforeClear = fallingAvatar.getMorph('jaw_open');
+    falling.clearVisemes();
+    falling.update(0.016, 3.216);
+    const fall = beforeClear - fallingAvatar.getMorph('jaw_open');
+
+    expect(rise).toBeGreaterThan(fall);
+  });
+  it('resets mouth state for a freshly attached avatar', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.applyVisemeFrame({ time: 0, weights: { jaw_open: 1 } });
+    for (let i = 0; i < 50; i++) m.update(0.016, (i + 1) * 0.016);
+    expect(a.getMorph('jaw_open')).toBeGreaterThan(0.95); // avatar A converged
+
+    const b = makeAvatar();
+    m.attach(b); // new avatar: smoothed mouth state must reset to 0
+    m.update(0.016, 1);
+    const bJaw = b.getMorph('jaw_open');
+    expect(bJaw).toBeGreaterThan(0);
+    expect(bJaw).toBeLessThan(0.9); // first-step attack, not A's converged value
   });
 });
 

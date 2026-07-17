@@ -30,8 +30,19 @@ interface Vec3 {
 }
 
 /** Mouth region: all viseme morphs plus jaw_open. */
+const MOUTH_NAMES = [...RIG_VISEME_MORPHS, 'jaw_open'];
 const MOUTH: Record<string, true> = {};
-for (const m of [...RIG_VISEME_MORPHS, 'jaw_open']) MOUTH[m] = true;
+for (const m of MOUTH_NAMES) MOUTH[m] = true;
+
+/** Attack/release time constants (seconds) for mouth-region smoothing. */
+const TAU_ATTACK = 0.05;
+const TAU_RELEASE = 0.12;
+
+function emptyMouthWeights(): Record<string, number> {
+  const w: Record<string, number> = {};
+  for (const name of MOUTH_NAMES) w[name] = 0;
+  return w;
+}
 
 export interface MotionEngineOptions {
   /** Deterministic randomness source (defaults to Math.random). */
@@ -49,6 +60,9 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   let baseEyeR: Vec3 | null = null;
   let baseHead: Vec3 | null = null;
 
+  // Persistent smoothed weights for the mouth region. A new frame only
+  // changes the target; the value eases toward it each update.
+  let mouthCurrent = emptyMouthWeights();
   let fromWeights = emptyExpressionWeights();
   let toWeights = weightsFor('neutral');
   let displayWeights = weightsFor('neutral');
@@ -65,6 +79,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
 
   function attach(a: LoadedAvatar): void {
     avatar = a;
+    mouthCurrent = emptyMouthWeights();
     const bones = a.bones;
     baseEyeL = bones.eyeL
       ? { x: bones.eyeL.rotation.x, y: bones.eyeL.rotation.y, z: bones.eyeL.rotation.z }
@@ -138,19 +153,33 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
       avatar.bones.head.rotation.x = baseHead.x + nodPitch;
     }
 
-    // 4. Visemes override the mouth region; expression drives the rest.
+    // 4. Visemes override the mouth region with attack/release smoothing;
+    //    expression drives the rest. The mouth value eases toward its target
+    //    (the viseme weight while a frame is active, otherwise the
+    //    expression-derived weight) so speech never snaps frame to frame.
     const visemeActive = visemeFrame !== null;
     const vw = visemeFrame ? visemeFrame.weights : null;
 
     if (avatar) {
       for (const name of RIG_EXPRESSION_MORPHS) {
-        const w =
-          MOUTH[name] === true && visemeActive && vw ? (vw[name] ?? 0) : (displayWeights[name] ?? 0);
-        avatar.setMorph(name, clamp01(w));
+        if (MOUTH[name] === true) {
+          const target = visemeActive && vw ? (vw[name] ?? 0) : (displayWeights[name] ?? 0);
+          const current = mouthCurrent[name] ?? 0;
+          const tau = target > current ? TAU_ATTACK : TAU_RELEASE;
+          const next = current + (target - current) * (1 - Math.exp(-dt / tau));
+          mouthCurrent[name] = next;
+          avatar.setMorph(name, clamp01(next));
+        } else {
+          avatar.setMorph(name, clamp01(displayWeights[name] ?? 0));
+        }
       }
       for (const name of RIG_VISEME_MORPHS) {
-        const w = visemeActive && vw ? (vw[name] ?? 0) : 0;
-        avatar.setMorph(name, clamp01(w));
+        const target = visemeActive && vw ? (vw[name] ?? 0) : 0;
+        const current = mouthCurrent[name] ?? 0;
+        const tau = target > current ? TAU_ATTACK : TAU_RELEASE;
+        const next = current + (target - current) * (1 - Math.exp(-dt / tau));
+        mouthCurrent[name] = next;
+        avatar.setMorph(name, clamp01(next));
       }
     }
   }
@@ -158,6 +187,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   function dispose(): void {
     avatar = null;
     visemeFrame = null;
+    mouthCurrent = emptyMouthWeights();
     nod = null;
     baseEyeL = null;
     baseEyeR = null;

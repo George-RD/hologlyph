@@ -43,6 +43,11 @@ import { createTextSkinEngine } from '../text-skin';
 import { createVFXEngine } from '../shaders';
 import { createEmitter } from './emitter.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
+ 
+// Materials the engine must not replace with the text skin. The mouth cavity
+// keeps its authored dark material. All other morph meshes receive the glyph
+// grid, including any teeth-named or unnamed placeholder material.
+const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior']);
 
 const DEFAULT_TEXT =
   'hologlyph — a web-native, text-skinned talking head. Scroll to emerge, speak to converse.';
@@ -284,6 +289,8 @@ class EngineImpl implements Engine {
 
       this.skinMaterial = this.sysVfx.createSkinMaterial(this.sysTextSkin);
       for (const mesh of this.avatar.morphMeshes) {
+        const name = (mesh.material as THREE.Material | undefined)?.name;
+        if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
         mesh.material = this.skinMaterial;
       }
 
