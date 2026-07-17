@@ -33,10 +33,10 @@ The architecture is declared and enforced by cairn (see below).
 
 Cairn keeps `cairn.blueprint` and the code in sync and gates drift at commit.
 Read `.cairn/AGENTS.md` for the full agent guide (orientation, artefact formats,
-the dev-loop skills in `.claude/skills/`). Caveat: that file was scaffolded
-before the cairn 0.3.0 upgrade and remains stale, as it is not regenerated on
-upgrade; where its commands disagree with this file (e.g. `cairn changes` vs
-`cairn change list`), this file wins. This section covers the essentials you
+the dev-loop skills in `.claude/skills/`). Caveat: that file is auto-scaffolded
+and is not regenerated on cairn upgrades, so it can lag the live CLI (it once
+said `cairn changes` where 0.3.0 says `cairn change list`); where its commands
+disagree with this file, this file wins. This section covers the essentials you
 must not skip.
 
 ### Orientation
