@@ -1,6 +1,11 @@
 context: ""
 rules: {}
 
+# NOTE: the committed binary asset dir (assets/, claimed by hologlyph.asset.loader)
+# surfaces an advisory CAIRN_RECONCILE_LANGUAGE_UNKNOWN warning. 0.3.0's `targets:`
+# override cannot express a non-code language (only rust/typescript/python/go) and
+# matches per node id, so the warning is accepted and logged as upstream friction.
+
 # Keep build output and deps out of TypeScript reconciliation (cairn 0.3.0).
 # node_modules/.git/.DS_Store are ignored by default; dist is our Vite output.
 ignore:

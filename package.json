@@ -4,24 +4,39 @@
   "description": "Web-native text-skinned talking-head library",
   "type": "module",
   "license": "MIT",
+  "sideEffects": false,
   "main": "./dist/hologlyph.js",
   "module": "./dist/hologlyph.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/hologlyph.js",
-    "./react": "./dist/adapters/react.js",
-    "./vue": "./dist/adapters/vue.js",
-    "./svelte": "./dist/adapters/svelte.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/hologlyph.js"
+    },
+    "./react": {
+      "types": "./dist/adapters/react.d.ts",
+      "default": "./dist/adapters/react.js"
+    },
+    "./vue": {
+      "types": "./dist/adapters/vue.d.ts",
+      "default": "./dist/adapters/vue.js"
+    },
+    "./svelte": {
+      "types": "./dist/adapters/svelte.d.ts",
+      "default": "./dist/adapters/svelte.js"
+    }
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD-PARTY-NOTICES.md"
   ],
   "scripts": {
     "dev": "vite demo",
-    "build": "vite build",
+    "build": "vite build && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify": "tsc --noEmit && vitest run",
+    "build-asset": "bun tools/asset-pipeline/build-bust.ts",
     "optimize-asset": "bun tools/asset-pipeline/optimize.ts"
   },
   "dependencies": {

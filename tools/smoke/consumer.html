@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><style>body{background:#000;margin:0}canvas{width:640px;height:480px}</style></head>
+<body>
+<div id="host" style="height:480px"><canvas id="c" width="640" height="480"></canvas></div>
+<div id="state" style="color:#fff;font:14px monospace">state: ?</div>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/webgpu": "/node_modules/three/build/three.webgpu.js",
+  "three/tsl": "/node_modules/three/build/three.tsl.js",
+  "three/examples/jsm/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+<script type="module">
+import { createEngine } from '/dist/hologlyph.js';
+const engine = createEngine(); // NO avatarUrl: must load the packaged default head
+engine.on('statechange', (e) => { document.getElementById('state').textContent = 'state: ' + e.to; });
+engine.on('ready', () => { document.getElementById('state').dataset.ready = '1'; });
+engine.on('error', (e) => { document.getElementById('state').textContent = 'error: ' + e.message; });
+await engine.mount(document.getElementById('c'), document.getElementById('host'));
+engine.setScrollProgress(1);
+</script>
+</body>
+</html>

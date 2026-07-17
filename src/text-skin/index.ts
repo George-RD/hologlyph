@@ -20,13 +20,9 @@ import { type CanvasLike, DEFAULT_GRID, drawText, type GridConfig } from './grid
 export type { CanvasLike, GridConfig } from './grid';
 
 /** Optional factory for the backing canvas + 2D context (test seam). */
-export interface TextSkinEngineOptions {
+export interface TextSkinEngineOptions extends Partial<GridConfig> {
   /** Inject a stub canvas/context for headless testing. */
   canvasFactory?: () => { canvas: unknown; ctx: CanvasLike };
-  cols?: number;
-  rows?: number;
-  cellWidth?: number;
-  cellHeight?: number;
 }
 
 /** Minimal typing for the canvas the engine uploads as a texture. */
@@ -66,15 +62,20 @@ function defaultCanvasFactory(
  * exactly once per content change (initial source set and every `onChange`).
  */
 export function createTextSkinEngine(options: TextSkinEngineOptions = {}): TextSkinEngine {
+  const { canvasFactory } = options;
   const config: GridConfig = {
-    ...DEFAULT_GRID,
     cols: options.cols ?? DEFAULT_GRID.cols,
     rows: options.rows ?? DEFAULT_GRID.rows,
     cellWidth: options.cellWidth ?? DEFAULT_GRID.cellWidth,
     cellHeight: options.cellHeight ?? DEFAULT_GRID.cellHeight,
+    fontFamily: options.fontFamily ?? DEFAULT_GRID.fontFamily,
+    fontSize: options.fontSize ?? DEFAULT_GRID.fontSize,
+    background: options.background ?? DEFAULT_GRID.background,
+    glyph: options.glyph ?? DEFAULT_GRID.glyph,
+    padding: options.padding ?? DEFAULT_GRID.padding,
   };
 
-  const factory = options.canvasFactory ?? defaultCanvasFactory(config.cols, config.rows, config.cellWidth, config.cellHeight);
+  const factory = canvasFactory ?? defaultCanvasFactory(config.cols, config.rows, config.cellWidth, config.cellHeight);
   const { canvas, ctx } = factory();
 
   const texture = new CanvasTexture(canvas as AnyCanvas);

@@ -234,9 +234,44 @@ class EngineImpl implements Engine {
       // support can be detected (dec.asset-rig-schema) before any load.
       this.sysAsset.attachRenderer?.(this.sysRenderer.gpuRenderer);
 
-      this.avatar = this.options.avatarUrl
-        ? await this.sysAsset.load(this.options.avatarUrl)
-        : createPlaceholderAvatar();
+      // Avatar delivery (dec.default-asset-delivery): an undefined avatarUrl
+      // resolves to the packaged bust; an empty string explicitly requests the
+      // placeholder; load failures degrade to the placeholder with a warning.
+      // Dynamic import on purpose: the library build inlines the default head
+      // (~890 kB) into this module's chunk, and the lazy boundary keeps it out
+      // of consumers who pass their own avatarUrl.
+      let candidates: string[];
+      if (this.options.avatarUrl === undefined) {
+        try {
+          const { defaultAvatarUrls } = await import('./default-avatar.js');
+          candidates = defaultAvatarUrls();
+        } catch (err) {
+          // A failed chunk load is an avatar-delivery failure, not a mount
+          // failure: degrade to the placeholder like any other candidate miss.
+          console.warn('[hologlyph] default avatar chunk failed to load.', err);
+          candidates = [];
+        }
+      } else {
+        candidates = this.options.avatarUrl ? [this.options.avatarUrl] : [];
+      }
+      // Mount/dispose race: disposed while awaiting the chunk import. Stop
+      // before starting any asset fetch/decode on a torn-down engine.
+      if (this.disposed) return;
+      this.avatar = null;
+      for (const url of candidates) {
+        try {
+          this.avatar = await this.sysAsset.load(url);
+          break;
+        } catch (err) {
+          console.warn(`[hologlyph] avatar load failed for ${url}.`, err);
+        }
+      }
+      if (!this.avatar) {
+        if (candidates.length > 0) {
+          console.warn('[hologlyph] no avatar candidate loaded; using placeholder.');
+        }
+        this.avatar = createPlaceholderAvatar();
+      }
       // Mount/dispose race: disposed while awaiting asset load. Tear down the
       // partially constructed avatar and skip all observers/loop/ready.
       if (this.disposed) {

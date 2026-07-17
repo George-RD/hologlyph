@@ -34,6 +34,7 @@ System Library "Web-native text-skinned talking-head library" id "hologlyph" {
     Container Asset "Asset loading and optimization" id "hologlyph.asset" {
         Module Loader "GLB loader, Draco/Meshopt/KTX2, shared rig schema" id "hologlyph.asset.loader" {
             path "./src/asset"
+            path "./assets"
         }
         Module Pipeline "Offline glTF-Transform/Meshopt optimization tooling" id "hologlyph.asset.pipeline" {
             path "./tools/asset-pipeline"
