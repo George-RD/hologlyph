@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>hologlyph text-skin variants</title>
+<style>
+  body { background:#0a0c10; color:#dde; font:12px monospace; margin:12px; }
+  .grid { display:flex; flex-wrap:wrap; gap:8px; }
+  .cell h3 { margin:2px 0; font-size:12px; font-weight:normal; }
+  canvas { width:420px; height:420px; background:#05070d; }
+</style>
+</head>
+<body>
+<h2>Text-skin fit variants on the real bust (todo.v2-textskin-fit)</h2>
+<div class="grid" id="grid"></div>
+<div id="status">loading…</div>
+<script type="module">
+import * as THREE from 'three/webgpu';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { createTextSkinEngine, createStaticTextSource } from '../src/text-skin/index.ts';
+import { buildSkinMaterial } from '../src/shaders/materials.ts';
+
+const TEXT = 'hologlyph is a web native text skinned talking head. '.repeat(40);
+
+const VARIANTS = [
+  { name: 'A current: 96 cols, glyph #9fe7ff, bg #05070a, emissive 0.8', opts: {}, emissive: 1 },
+  { name: 'B dense: 128 cols, font 11', opts: { cols: 128, cellWidth: 12, fontSize: 11 }, emissive: 1 },
+  { name: 'C sparse: 64 cols, font 15', opts: { cols: 64, cellWidth: 24, fontSize: 15 }, emissive: 1 },
+  { name: 'D warm base: bg #0a0605, glyph #ffd9a0, emissive x1.4', opts: { background: '#0a0605', glyph: '#ffd9a0' }, emissive: 1.4 },
+];
+
+const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
+const gltf = await loader.loadAsync('/@fs/Users/george/repos/hologlyph/assets/hologlyph-bust.glb');
+
+const grid = document.getElementById('grid');
+for (const variant of VARIANTS) {
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  const h = document.createElement('h3');
+  h.textContent = variant.name;
+  cell.appendChild(h);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 840; canvas.height = 840;
+  cell.appendChild(canvas);
+  grid.appendChild(cell);
+
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: true, forceWebGL: true });
+  await renderer.init();
+  renderer.setSize(840, 840, false);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05070d);
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+  camera.position.set(0, 0.1, 1.2);
+  camera.lookAt(0, 0.03, 0);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.position.set(1, 1.4, 2);
+  scene.add(key);
+
+  const clone = gltf.scene.clone(true);
+  const skin = createTextSkinEngine(variant.opts);
+  skin.setSource(createStaticTextSource(TEXT));
+  const built = buildSkinMaterial(skin);
+  if (variant.emissive !== 1) {
+    built.material.emissiveNode = built.material.emissiveNode.mul(variant.emissive);
+  }
+  clone.traverse((o) => { if (o.isMesh) o.material = built.material; });
+  scene.add(clone);
+  await renderer.renderAsync(scene, camera);
+}
+document.getElementById('status').textContent = 'DONE';
+</script>
+</body>
+</html>
