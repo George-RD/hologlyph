@@ -42,3 +42,47 @@ function updateScroll(): void {
 
 window.addEventListener('scroll', updateScroll, { passive: true });
 updateScroll();
+
+// Pointer-drag head control: drag the head to rotate it. The canvas owns the
+// gesture (touch-action: none below) so page scroll still works elsewhere.
+const YAW_GAIN = 0.005;
+const PITCH_GAIN = 0.004;
+const YAW_LIMIT = 0.5;
+const PITCH_LIMIT = 0.35;
+
+let activePointerId = -1;
+let lastX = 0;
+let lastY = 0;
+let dragYaw = 0;
+let dragPitch = 0;
+
+canvas.style.touchAction = 'none';
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (activePointerId !== -1) return;
+  activePointerId = e.pointerId;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== activePointerId) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  dragYaw = Math.max(-YAW_LIMIT, Math.min(YAW_LIMIT, dragYaw + dx * YAW_GAIN));
+  dragPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, dragPitch + dy * PITCH_GAIN));
+  engine.motion.setHeadTarget(dragYaw, dragPitch);
+});
+
+function endDrag(e: PointerEvent): void {
+  if (e.pointerId !== activePointerId) return;
+  activePointerId = -1;
+  if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+}
+
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('lostpointercapture', endDrag);

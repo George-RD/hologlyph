@@ -37,6 +37,13 @@ for (const m of MOUTH_NAMES) MOUTH[m] = true;
 /** Attack/release time constants (seconds) for mouth-region smoothing. */
 const TAU_ATTACK = 0.05;
 const TAU_RELEASE = 0.12;
+/** Head-drag target limits (radians), kept within a natural look range. */
+const DRAG_YAW_LIMIT = 0.5;
+const DRAG_PITCH_LIMIT = 0.35;
+/** Fraction of the drag pose fed into the neck bone for articulation. */
+const NECK_DRAG_FRACTION = 0.35;
+/** Smoothed head-drag time constant: 1 - exp(-dt * DRAG_TAU). */
+const DRAG_SMOOTH_TAU = 8;
 
 function emptyMouthWeights(): Record<string, number> {
   const w: Record<string, number> = {};
@@ -59,6 +66,13 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   let baseEyeL: Vec3 | null = null;
   let baseEyeR: Vec3 | null = null;
   let baseHead: Vec3 | null = null;
+  // Head-drag target (additive over nods/gaze). The target is clamped on
+  // input; cur eases toward it each update unless reduced motion snaps it.
+  let targetYaw = 0;
+  let targetPitch = 0;
+  let curYaw = 0;
+  let curPitch = 0;
+  let baseNeck: Vec3 | null = null;
 
   // Persistent smoothed weights for the mouth region. A new frame only
   // changes the target; the value eases toward it each update.
@@ -73,7 +87,6 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
 
   const gaze = new GazeController(rng, clockOpt);
   let reduced = false;
-
   let nod: { kind: NodClass; start: number } | null = null;
   let lastNow = 0;
 
@@ -89,6 +102,9 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
       : null;
     baseHead = bones.head
       ? { x: bones.head.rotation.x, y: bones.head.rotation.y, z: bones.head.rotation.z }
+      : null;
+    baseNeck = bones.neck
+      ? { x: bones.neck.rotation.x, y: bones.neck.rotation.y, z: bones.neck.rotation.z }
       : null;
   }
 
@@ -120,6 +136,10 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     reduced = r;
     gaze.setReduced(r);
   }
+  function setHeadTarget(yaw: number, pitch: number): void {
+    targetYaw = Math.max(-DRAG_YAW_LIMIT, Math.min(DRAG_YAW_LIMIT, yaw));
+    targetPitch = Math.max(-DRAG_PITCH_LIMIT, Math.min(DRAG_PITCH_LIMIT, pitch));
+  }
 
   function update(dt: number, elapsed: number): void {
     const now = clockOpt ? clockOpt() : elapsed;
@@ -149,8 +169,19 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
         nodPitch = spec.evaluate(phase) * amp;
       }
     }
+    // 3b. Head-drag target: ease cur toward the clamped target each update, or
+    // snap under reduced motion so the pose is honoured without drift.
+    const dragK = reduced ? 1 : 1 - Math.exp(-dt * DRAG_SMOOTH_TAU);
+    curYaw += (targetYaw - curYaw) * dragK;
+    curPitch += (targetPitch - curPitch) * dragK;
+
     if (avatar && avatar.bones.head && baseHead) {
-      avatar.bones.head.rotation.x = baseHead.x + nodPitch;
+      avatar.bones.head.rotation.x = baseHead.x + nodPitch + curPitch;
+      avatar.bones.head.rotation.y = baseHead.y + curYaw;
+    }
+    if (avatar && avatar.bones.neck && baseNeck) {
+      avatar.bones.neck.rotation.x = baseNeck.x + curPitch * NECK_DRAG_FRACTION;
+      avatar.bones.neck.rotation.y = baseNeck.y + curYaw * NECK_DRAG_FRACTION;
     }
 
     // 4. Visemes override the mouth region with attack/release smoothing;
@@ -192,6 +223,11 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     baseEyeL = null;
     baseEyeR = null;
     baseHead = null;
+    baseNeck = null;
+    targetYaw = 0;
+    targetPitch = 0;
+    curYaw = 0;
+    curPitch = 0;
   }
 
   return {
@@ -204,6 +240,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     setGazeMode,
     setReducedMotion,
     dispose,
+    setHeadTarget,
   };
 }
 

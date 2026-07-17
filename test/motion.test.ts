@@ -10,6 +10,8 @@ function makeAvatar(opts: { eyes?: boolean } = {}): LoadedAvatar {
   const root = new THREE.Group();
   const head = new THREE.Bone();
   head.name = 'head';
+  const neck = new THREE.Bone();
+  neck.name = 'neck';
   const eyeL = new THREE.Bone();
   eyeL.name = 'eye_l';
   const eyeR = new THREE.Bone();
@@ -19,7 +21,7 @@ function makeAvatar(opts: { eyes?: boolean } = {}): LoadedAvatar {
     root,
     morphMeshes: [],
     animations: [],
-    bones: withEyes ? { head, eyeL, eyeR } : { head },
+    bones: withEyes ? { head, neck, eyeL, eyeR } : { head, neck },
     setMorph(name: string, w: number) {
       morphStore[name] = clamp01(w);
     },
@@ -313,5 +315,63 @@ describe('gaze resample on setMode', () => {
     const g = gaze.update(0.2, 0); // no mode change: stays on the contact target
     const magDeg = Math.hypot(g.pitch, g.yaw) / DEG;
     expect(magDeg).toBeLessThan(5); // contact jitter, not the aversion cone
+  });
+});
+
+describe('head target drag', () => {
+  it('smoothed toward the target and clamps out-of-range input', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+
+    // Out-of-range input must be clamped to the sane limits.
+    m.setHeadTarget(5, -5);
+    const head = a.bones.head!;
+    for (let i = 0; i < 40; i++) m.update(1 / 60, (i + 1) / 60);
+    expect(head.rotation.y).toBeLessThanOrEqual(0.5 + 1e-9);
+    expect(head.rotation.y).toBeGreaterThan(0.45);
+    expect(head.rotation.x).toBeGreaterThanOrEqual(-0.35 - 1e-9);
+    expect(head.rotation.x).toBeLessThan(-0.3);
+  });
+
+  it('moves the head bone toward the target over updates', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.setHeadTarget(0.3, 0.2);
+
+    // First update moves only part way (exponential smoothing).
+    m.update(1 / 60, 1 / 60);
+    const head = a.bones.head!;
+    expect(head.rotation.y).toBeGreaterThan(0);
+    expect(head.rotation.y).toBeLessThan(0.3);
+
+    // Converges to the target over many updates.
+    for (let i = 0; i < 60; i++) m.update(1 / 60, (i + 2) / 60);
+    expect(head.rotation.y).toBeCloseTo(0.3, 2);
+    expect(head.rotation.x).toBeCloseTo(0.2, 2);
+  });
+
+  it('snaps to the pose under reduced motion without drift', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.setReducedMotion(true);
+    m.setHeadTarget(0.3, 0.2);
+    m.update(1 / 60, 1 / 60);
+    const head = a.bones.head!;
+    expect(head.rotation.y).toBeCloseTo(0.3, 6);
+    expect(head.rotation.x).toBeCloseTo(0.2, 6);
+  });
+
+  it('applies a fraction of the drag to the neck bone', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+    m.setHeadTarget(0.3, 0.2);
+    for (let i = 0; i < 60; i++) m.update(1 / 60, (i + 1) / 60);
+    const neck = a.bones.neck!;
+    expect(neck.rotation.y).toBeCloseTo(0.3 * 0.35, 3);
+    expect(neck.rotation.x).toBeCloseTo(0.2 * 0.35, 3);
   });
 });
