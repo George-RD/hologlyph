@@ -13,6 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
+import { FrontSide } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -48,6 +49,12 @@ import { createPlaceholderAvatar } from './placeholder-avatar.js';
 // keeps its authored dark material. All other morph meshes receive the glyph
 // grid, including any teeth-named or unnamed placeholder material.
 const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior']);
+function isEyeMesh(mesh: THREE.Mesh): boolean {
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return materials.some(
+    (material) => material?.name === "eye_sclera" || material?.name === "eye_iris",
+  );
+}
 
 const DEFAULT_TEXT =
   'hologlyph — a web-native, text-skinned talking head. Scroll to emerge, speak to converse.';
@@ -287,6 +294,20 @@ class EngineImpl implements Engine {
       this.sysRenderer.scene.add(this.avatar.root);
       this.sysMotion.attach(this.avatar);
 
+      // Place the translucent shell in front of transparent eye materials.
+      for (const mesh of this.avatar.morphMeshes) mesh.renderOrder = 1;
+      this.avatar.root.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh || !isEyeMesh(mesh)) return;
+        mesh.renderOrder = 2;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) {
+          material.transparent = true;
+          material.side = FrontSide;
+          material.depthTest = true;
+          material.depthWrite = true;
+        }
+      });
       this.skinMaterial = this.sysVfx.createSkinMaterial(this.sysTextSkin);
       for (const mesh of this.avatar.morphMeshes) {
         const name = (mesh.material as THREE.Material | undefined)?.name;

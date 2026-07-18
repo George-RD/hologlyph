@@ -1,26 +1,26 @@
 /**
  * Single-source TSL text-skin material (dec.renderer-posture).
  *
- * One NodeMaterial serves both WebGPU and WebGL2 backends. It projects a
- * frontal planar glyph grid straight from object space (so the grid is one
- * continuous constant-scale matrix across the face, neck, and chest;
- * authored UV islands are no longer in the sample path) and derives a
- * translucent holo look from the sampled glyph colour.
+ * bind-space triplanar glyph sampling (so side surfaces keep readable
+ * character density) and derives a translucent holo look from sampled colour.
  *
  * No GPU resources are constructed at module load: the material and its node
  * graph are built lazily inside `buildSkinMaterial`, so importing this module
  * under happy-dom is safe.
  */
 
-import { RepeatWrapping } from 'three';
+import { LinearFilter, RepeatWrapping } from 'three';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   dot,
   float,
+  floor,
+  fract,
   luminance,
+  normalGeometry,
   normalView,
   normalWorld,
-  positionLocal,
+  positionGeometry,
   positionViewDirection,
   pow,
   saturate,
@@ -37,7 +37,7 @@ const GRID_COLS = 96;
 const GRID_ROWS = 64;
 
 /** Glyph cells per world unit for the planar projection (tuned in the demo). */
-export const PLANAR_DENSITY = 92;
+export const PLANAR_DENSITY = 20;
 
 /** Horizontal projection scale: u advances this much per world unit of x. */
 export const U_SCALE = PLANAR_DENSITY / GRID_COLS;
@@ -46,10 +46,10 @@ export const U_SCALE = PLANAR_DENSITY / GRID_COLS;
 export const V_SCALE = PLANAR_DENSITY / GRID_ROWS;
 
 /** Opacity floor for unlit backdrop pixels; lit glyphs approach full opacity. */
-export const BASE_OPACITY = 0.35;
+export const BASE_OPACITY = 0.02;
 
 /** Multiplier on the sampled glyph colour that drives the emissive glow. */
-export const GLOW_GAIN = 1.4;
+export const GLOW_GAIN = 1.9;
 
 /** Strength of the cool fresnel rim added to the emissive for the holo edge. */
 export const RIM_GAIN = 0.12;
@@ -82,11 +82,40 @@ export interface BuiltSkinMaterial {
  * so the visible front carries one continuous constant-scale grid: identical
  * columns and rows across face, neck, and chest. `U_SCALE`/`V_SCALE` are
  * aspect-corrected so cells stay square for the default 96x64 grid. u is
- * centred on x=0; v is unbounded so callers may add a scroll phase. Mirrors
- * the maths used inside `buildSkinMaterial`.
+ * centred on x=0 and v stays anchored to bind-pose y; row flow advances u.
+ * Mirrors the maths used inside `buildSkinMaterial`.
  */
 export function planarUV(x: number, y: number): { u: number; v: number } {
   return { u: x * U_SCALE + 0.5, v: y * V_SCALE };
+}
+
+/** Pure row-staggered flow UVs, mirroring the shader's bind-pose mapping. */
+export function rowFlowUV(
+  x: number,
+  y: number,
+  scroll: number,
+): { u: number; v: number; rowRate: number } {
+  const row = Math.floor(y * PLANAR_DENSITY);
+  const phase = ((row * 0.618) % 1 + 1) % 1;
+  const rowRate = 0.75 + phase * 0.5;
+  return {
+    u: x * U_SCALE + 0.5 + scroll * rowRate,
+    v: y * V_SCALE,
+    rowRate,
+  };
+}
+
+/** Pure squared normal weights used by bind-space triplanar sampling. */
+export function triplanarWeights(
+  nx: number,
+  ny: number,
+  nz: number,
+): { x: number; y: number; z: number } {
+  const x = nx * nx;
+  const y = ny * ny;
+  const z = nz * nz;
+  const sum = x + y + z || 1;
+  return { x: x / sum, y: y / sum, z: z / sum };
 }
 
 /**
@@ -100,30 +129,55 @@ export function buildSkinMaterial(skin: TextSkinEngine): BuiltSkinMaterial {
   material.metalness = 0;
   material.roughness = 0.4;
 
-  // Frontal planar object-space projection: one continuous constant-scale
-  // grid across the whole visible front (the demo's canonical view), plus
-  // the GPU scroll phase on v. RepeatWrapping lets the grid tile across
-  // texture edges and under scroll without a manual fract. Glyphs stretch
-  // along the silhouette at grazing angles, which reads as intentional for
-  // a projected hologram, unlike UV-island seams or cylindrical crown
-  // pinching.
+  // Project one continuous grid across the visible front. Each bind-pose row
+  // advances horizontally at its own GPU scroll rate. RepeatWrapping tiles
+  // content without breaking surface anchoring; grazing-angle stretching is
+  // intentional for this projected hologram.
   material.transparent = true;
+  material.depthTest = true;
+  material.depthWrite = true;
 
   const skinTexture = skin.texture;
   skinTexture.wrapS = RepeatWrapping;
   skinTexture.wrapT = RepeatWrapping;
-
+  skinTexture.generateMipmaps = false;
+  skinTexture.minFilter = LinearFilter;
+  skinTexture.magFilter = LinearFilter;
+  skinTexture.anisotropy = Math.max(skinTexture.anisotropy, 4);
   const scroll = uniform(0);
-  const projected = vec2(
-    positionLocal.x.mul(U_SCALE).add(0.5),
-    positionLocal.y.mul(V_SCALE).add(scroll),
+  // Sample XY, ZY, and XZ planes in bind space. Squared normal weights make
+  // the dominant surface axis win while softening transitions at corners.
+  const bindNormal = normalGeometry.normalize();
+  const axisWeights = bindNormal.abs().pow(2);
+  const weights = axisWeights.div(axisWeights.dot(vec3(1)));
+  const rowY = floor(positionGeometry.y.mul(PLANAR_DENSITY));
+  const rowZ = floor(positionGeometry.z.mul(PLANAR_DENSITY));
+  const rateY = float(0.75).add(fract(rowY.mul(0.618)).mul(0.5));
+  const rateZ = float(0.75).add(fract(rowZ.mul(0.618)).mul(0.5));
+  const sampleXY = texture(
+    skinTexture,
+    vec2(
+      positionGeometry.x.mul(U_SCALE).add(0.5).add(scroll.mul(rateY)),
+      positionGeometry.y.mul(V_SCALE),
+    ),
   );
-  const sampled = texture(skinTexture, projected);
+  const sampleZY = texture(
+    skinTexture,
+    vec2(
+      positionGeometry.z.mul(U_SCALE).add(0.5).add(scroll.mul(rateY)),
+      positionGeometry.y.mul(V_SCALE),
+    ),
+  );
+  const sampleXZ = texture(
+    skinTexture,
+    vec2(
+      positionGeometry.x.mul(U_SCALE).add(0.5).add(scroll.mul(rateZ)),
+      positionGeometry.z.mul(V_SCALE),
+    ),
+  );
+  const sampled = sampleXY.mul(weights.z).add(sampleZY.mul(weights.x)).add(sampleXZ.mul(weights.y));
 
-  // Matte skin shading: treat the bust as plain skin lit by the scene's two
-  // directional lights so glyph brightness follows the 3D facial topography.
-  // Half-lambert diffuse from world-space light directions against the world
-  // normal, plus a small ambient floor, clamped to a readable minimum.
+  // Matte skin shading: the glyphs encode the bust's key/fill illumination.
   const keyDir = vec3(1.2, 1.6, 2.0).normalize();
   const fillDir = vec3(-1.5, 0.4, 1.0).normalize();
   const shade = saturate(dot(normalWorld, keyDir)).mul(SHADE_KEY_WEIGHT)
@@ -131,12 +185,9 @@ export function buildSkinMaterial(skin: TextSkinEngine): BuiltSkinMaterial {
     .add(SHADE_AMBIENT)
     .clamp(SHADE_FLOOR, 1);
 
-  // Glyph colour straight from the texture. The renderer's real lights shade
-  // colorNode already; applying the analytic term here would double-shade it.
-  material.colorNode = sampled.rgb;
-
-  // Translucency: unlit backdrop at BASE_OPACITY, lit glyphs approach opaque.
+  // The unlit surface disappears between glyphs; characters carry luminance.
   const luma = luminance(sampled.rgb);
+  material.colorNode = sampled.rgb.mul(shade);
   material.opacityNode = luma.mul(1 - BASE_OPACITY).add(BASE_OPACITY);
 
   // Emissive glow (also shaded by the skin term) plus a subtle cool fresnel
