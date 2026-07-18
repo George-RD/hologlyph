@@ -17,3 +17,6 @@ map.md
 
 # Logs
 *.log
+
+# Visual eval generated output
+tools/evals/out/
