@@ -72,3 +72,9 @@
 - scan: nodes=16, findings=37, errors=0
 - archive: 2026-07-18-idle-motion merged; no operations
 - scan: nodes=16, findings=42, errors=0
+- scan: nodes=16, findings=41, errors=0
+- archive: 2026-07-18-lifecycle-repair merged; no operations
+- scan: nodes=16, findings=40, errors=0
+- archive: 2026-07-18-adapter-repair merged; no operations
+- scan: nodes=16, findings=39, errors=0
+- archive: 2026-07-18-eval-textskin-repair merged; no operations
