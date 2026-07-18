@@ -1,5 +1,11 @@
 # Implementation notes: 2026-07-18-visual-eval-harness
 
+- TDD deviation: the harness was implemented before the typed change was
+  scaffolded and without a failing test first. The deliverable is tooling
+  (browser capture plus image scoring) whose behaviour is exercised end to
+  end by the eval run itself rather than by unit tests; the negative
+  control now serves as the harness's own regression test. Recorded per
+  the AGENTS.md requirement that deviations from test-first get a note.
 - Requested +/-0.6 rad side views could not use head yaw: the motion API
   clamps drag yaw to +/-0.5 rad (`DRAG_YAW_LIMIT` in `src/motion/index.ts`).
   The capture orbits the camera around the origin instead; documented in
