@@ -31,6 +31,7 @@ export function createRendererHost(): RendererHost {
 
 class RendererHostImpl implements RendererHost {
   private renderer: WebGPURenderer | null = null;
+  private rendererInit: Promise<void> | null = null;
   private disposed = false;
 
   readonly scene = new THREE.Scene();
@@ -55,11 +56,28 @@ class RendererHostImpl implements RendererHost {
   }
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
+    if (this.disposed) return;
     if (this.renderer) return;
+    if (this.rendererInit) return this.rendererInit;
+
     const renderer = new WebGPURenderer({ canvas, antialias: true });
-    await renderer.init();
-    this.renderer = renderer;
-    this.backend = detectBackend();
+    const init = (async () => {
+      await renderer.init();
+      if (this.disposed) {
+        renderer.dispose();
+        return;
+      }
+      this.renderer = renderer;
+      this.backend = detectBackend();
+    })();
+    this.rendererInit = init;
+    try {
+      await init;
+    } finally {
+      if (this.rendererInit === init) {
+        this.rendererInit = null;
+      }
+    }
   }
 
   setSize(width: number, height: number, pixelRatio?: number): void {
@@ -88,6 +106,7 @@ class RendererHostImpl implements RendererHost {
       (result as Promise<void>).catch(() => {});
     }
   }
+
   /**
    * Raw WebGPURenderer instance once `init()` resolves; null before init
    * (dec.renderer-posture). The engine wires it into the asset loader for KTX2
@@ -104,6 +123,9 @@ class RendererHostImpl implements RendererHost {
       this.traverseAndDispose(this.scene);
       this.renderer.dispose();
       this.renderer = null;
+    }
+    if (this.rendererInit) {
+      this.rendererInit = null;
     }
   }
 

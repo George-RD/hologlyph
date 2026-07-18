@@ -53,6 +53,10 @@ export function createAssetLoader(options: AssetLoaderOptions = {}): AssetLoader
   const dispose = (): void => {
     if (disposed) return;
     disposed = true;
+    if (ktx2) {
+      ktx2.dispose();
+      ktx2 = null;
+    }
     rawLoader.dispose?.();
   };
 

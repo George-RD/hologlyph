@@ -251,6 +251,8 @@ export interface TextSkinEngine extends Disposable {
   update(dt: number): void;
   /** Elapsed scroll phase for the shader uniform. */
   readonly scrollOffset: number;
+  /** Pause the row flow under a reduced-motion preference. */
+  setReducedMotion(reduced: boolean): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,11 +311,16 @@ export interface EngineEvents extends Record<string, unknown> {
 
 export interface Engine extends Emitter<EngineEvents>, Disposable {
   mount(canvas: HTMLCanvasElement, host: Element): Promise<void>;
+  resize(width: number, height: number): void;
   speak(text: string): Promise<void>;
   setEmotion(expression: Expression): void;
   setScrollProgress(progress: number): void;
   setTextSkinSource(source: TextSkinSource): void;
   setVoiceAdapter(adapter: TTSAdapter): void;
+  /** Freeze or unfreeze all procedural motion (idle, gaze, nods) so
+   * successive frames hold an identical pose; used by deterministic
+   * captures. Rendering and text-skin flow continue. */
+  setMotionFrozen(frozen: boolean): void;
   readonly state: BehaviorState;
   /** Advanced hooks (documented, non-primary). */
   readonly motion: MotionEngine;

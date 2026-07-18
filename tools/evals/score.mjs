@@ -320,15 +320,47 @@ export function duplicateAndOffset(img, offset, lumThreshold) {
 // ---------------------------------------------------------------------------
 // Status helpers
 // ---------------------------------------------------------------------------
+const REQUIRED_BASELINE_KEYS = [
+  'glyphLegibility',
+  'coverageFront',
+  'coverageYawPlus',
+  'coverageYawMinus',
+  'flow',
+  'yawLegibilityPlus',
+  'yawLegibilityMinus',
+  'blendZoneGhosting',
+];
+
+export function validateBaseline(payload) {
+  const base = payload?.baseline;
+  if (!base || typeof base !== 'object') {
+    throw new Error(`baseline-missing: baseline block is absent in baseline data`);
+  }
+  const missing = [];
+  for (const key of REQUIRED_BASELINE_KEYS) {
+    const value = base[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      missing.push(key);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`baseline-missing: missing or invalid keys: ${missing.join(', ')}`);
+  }
+}
+
+function isNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function ratioStatus(value, baseline, passRatio, warnRatio) {
-  if (baseline == null || baseline <= 0) return { status: 'baseline-missing' };
+  if (!isNumber(value) || baseline == null || baseline <= 0) return { status: 'baseline-missing' };
   if (value >= baseline * passRatio) return { status: 'pass' };
   if (value >= baseline * warnRatio) return { status: 'warn' };
   return { status: 'fail' };
 }
 
 function flowStatus(value, baseline, min, warnRatio, failRatio) {
-  if (baseline == null || baseline <= 0) return { status: 'baseline-missing' };
+  if (!isNumber(value) || baseline == null || baseline <= 0) return { status: 'baseline-missing' };
   if (value <= min) return { status: 'fail', reason: 'no visible flow (static frame)' };
   if (value >= baseline * failRatio) return { status: 'fail', reason: 'flow exceeds strobing ceiling' };
   if (value < baseline * warnRatio) return { status: 'warn', reason: 'weak flow' };
@@ -358,6 +390,8 @@ function main() {
   const BASELINE_PATH = fileURLToPath(new URL('./baseline.json', import.meta.url));
   const REPORT_PATH = join(OUTPUT_DIR, 'report.json');
   const baseline = loadBaseline(BASELINE_PATH);
+  validateBaseline(baseline);
+
   const cfg = baseline.silhouette ?? {};
   const clear = cfg.clearColor ?? [5, 7, 13];
   const tolerance = cfg.clearTolerance ?? 30;
@@ -391,7 +425,13 @@ function main() {
   }
 
   const closeUpGrad = meanGradient(closeUp);
-  const legibility = { value: round(closeUpGrad), baseline: b.glyphLegibility, passCutoff: b.glyphLegibility != null ? round(b.glyphLegibility * (t.glyphLegibility?.passRatio ?? 0.8)) : null, warnCutoff: b.glyphLegibility != null ? round(b.glyphLegibility * (t.glyphLegibility?.warnRatio ?? 0.5)) : null, ...ratioStatus(closeUpGrad, b.glyphLegibility, t.glyphLegibility?.passRatio ?? 0.8, t.glyphLegibility?.warnRatio ?? 0.5) };
+  const legibility = {
+    value: round(closeUpGrad),
+    baseline: b.glyphLegibility,
+    passCutoff: b.glyphLegibility != null ? round(b.glyphLegibility * (t.glyphLegibility?.passRatio ?? 0.8)) : null,
+    warnCutoff: b.glyphLegibility != null ? round(b.glyphLegibility * (t.glyphLegibility?.warnRatio ?? 0.5)) : null,
+    ...ratioStatus(closeUpGrad, b.glyphLegibility, t.glyphLegibility?.passRatio ?? 0.8, t.glyphLegibility?.warnRatio ?? 0.5),
+  };
 
   const yawLegibility = {};
   for (const [key, img, base] of [
@@ -414,15 +454,48 @@ function main() {
   const covYawPlus = glyphCoverage(yawPlus, clear, tolerance, minAlpha, lumThreshold);
   const covYawMinus = glyphCoverage(yawMinus, clear, tolerance, minAlpha, lumThreshold);
   const coverage = {
-    front: { path: join(OUTPUT_DIR, 'front.png'), silhouettePixels: covFront.silhouette, glyphPixels: covFront.glyph, coverage: round(covFront.coverage), baseline: b.coverageFront, passCutoff: b.coverageFront != null ? round(b.coverageFront * (t.coverage?.passRatio ?? 0.8)) : null, warnCutoff: b.coverageFront != null ? round(b.coverageFront * (t.coverage?.warnRatio ?? 0.5)) : null, status: ratioStatus(covFront.coverage, b.coverageFront, t.coverage?.passRatio ?? 0.8, t.coverage?.warnRatio ?? 0.5).status },
-    yawPlus: { path: join(OUTPUT_DIR, 'yaw-plus-0.6.png'), silhouettePixels: covYawPlus.silhouette, glyphPixels: covYawPlus.glyph, coverage: round(covYawPlus.coverage), baseline: b.coverageYawPlus, passCutoff: b.coverageYawPlus != null ? round(b.coverageYawPlus * (t.coverage?.passRatio ?? 0.8)) : null, warnCutoff: b.coverageYawPlus != null ? round(b.coverageYawPlus * (t.coverage?.warnRatio ?? 0.5)) : null, status: ratioStatus(covYawPlus.coverage, b.coverageYawPlus, t.coverage?.passRatio ?? 0.8, t.coverage?.warnRatio ?? 0.5).status },
-    yawMinus: { path: join(OUTPUT_DIR, 'yaw-minus-0.6.png'), silhouettePixels: covYawMinus.silhouette, glyphPixels: covYawMinus.glyph, coverage: round(covYawMinus.coverage), baseline: b.coverageYawMinus, passCutoff: b.coverageYawMinus != null ? round(b.coverageYawMinus * (t.coverage?.passRatio ?? 0.8)) : null, warnCutoff: b.coverageYawMinus != null ? round(b.coverageYawMinus * (t.coverage?.warnRatio ?? 0.5)) : null, status: ratioStatus(covYawMinus.coverage, b.coverageYawMinus, t.coverage?.passRatio ?? 0.8, t.coverage?.warnRatio ?? 0.5).status },
+    front: {
+      path: join(OUTPUT_DIR, 'front.png'),
+      silhouettePixels: covFront.silhouette,
+      glyphPixels: covFront.glyph,
+      coverage: round(covFront.coverage),
+      baseline: b.coverageFront,
+      passCutoff: b.coverageFront != null ? round(b.coverageFront * (t.coverage?.passRatio ?? 0.8)) : null,
+      warnCutoff: b.coverageFront != null ? round(b.coverageFront * (t.coverage?.warnRatio ?? 0.5)) : null,
+      status: ratioStatus(covFront.coverage, b.coverageFront, t.coverage?.passRatio ?? 0.8, t.coverage?.warnRatio ?? 0.5).status,
+    },
+    yawPlus: {
+      path: join(OUTPUT_DIR, 'yaw-plus-0.6.png'),
+      silhouettePixels: covYawPlus.silhouette,
+      glyphPixels: covYawPlus.glyph,
+      coverage: round(covYawPlus.coverage),
+      baseline: b.coverageYawPlus,
+      passCutoff: b.coverageYawPlus != null ? round(b.coverageYawPlus * (t.coverage?.passRatio ?? 0.8)) : null,
+      warnCutoff: b.coverageYawPlus != null ? round(b.coverageYawPlus * (t.coverage?.warnRatio ?? 0.5)) : null,
+      status: ratioStatus(covYawPlus.coverage, b.coverageYawPlus, t.coverage?.passRatio ?? 0.8, t.coverage?.warnRatio ?? 0.5).status,
+    },
+    yawMinus: {
+      path: join(OUTPUT_DIR, 'yaw-minus-0.6.png'),
+      silhouettePixels: covYawMinus.silhouette,
+      glyphPixels: covYawMinus.glyph,
+      coverage: round(covYawMinus.coverage),
+      baseline: b.coverageYawMinus,
+      passCutoff: b.coverageYawMinus != null ? round(b.coverageYawMinus * (t.coverage?.passRatio ?? 0.8)) : null,
+      warnCutoff: b.coverageYawMinus != null ? round(b.coverageYawMinus * (t.coverage?.warnRatio ?? 0.5)) : null,
+      status: ratioStatus(covYawMinus.coverage, b.coverageYawMinus, t.coverage?.passRatio ?? 0.8, t.coverage?.warnRatio ?? 0.5).status,
+    },
   };
   const coverageStatus = worst(coverage.front.status, coverage.yawPlus.status, coverage.yawMinus.status);
 
   const flowMask = silhouetteMask(flow0, clear, tolerance, minAlpha).mask;
   const flowValue = silhouetteMeanAbsDelta(flow0, flow1, flowMask);
-  const flow = { value: round(flowValue), baseline: b.flow, min: t.flow?.min ?? 0.0001, ceiling: b.flow != null ? round(b.flow * (t.flow?.failRatio ?? 3.0)) : null, ...flowStatus(flowValue, b.flow, t.flow?.min ?? 0.0001, t.flow?.warnRatio ?? 0.3, t.flow?.failRatio ?? 3.0) };
+  const flow = {
+    value: round(flowValue),
+    baseline: b.flow,
+    min: t.flow?.min ?? 0.0001,
+    ceiling: b.flow != null ? round(b.flow * (t.flow?.failRatio ?? 3.0)) : null,
+    ...flowStatus(flowValue, b.flow, t.flow?.min ?? 0.0001, t.flow?.warnRatio ?? 0.3, t.flow?.failRatio ?? 3.0),
+  };
   const gt = t.blendZoneGhosting ?? {};
   const ghostValue = blendZoneGhosting(ghostImg, ghostMask, lumThreshold);
   const ghosting = {
@@ -440,7 +513,6 @@ function main() {
   notes.push('A 45-degree (yaw 0.785 rad) camera-orbit view isolates the triplanar blend zone; the blend-zone ghosting metric scores doubled-edge energy there (higher is worse).');
 
   const overall = worst(legibility.status, yawLegibilityStatus, coverageStatus, flow.status, ghosting.status);
-
   const report = {
     generatedAt: new Date().toISOString(),
     baselinePath: BASELINE_PATH,
@@ -456,21 +528,22 @@ function main() {
     overall,
   };
 
-  const reportPath = negativeControl
-    ? join(OUTPUT_DIR, 'report-negative-control.json')
-    : REPORT_PATH;
+  const reportPath = negativeControl ? join(OUTPUT_DIR, 'report-negative-control.json') : REPORT_PATH;
   writeFileSync(reportPath, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 
   if (negativeControl) {
     const controlStatuses = [yawLegibility.yawPlus.status, yawLegibility.yawMinus.status, ghosting.status];
     if (!controlStatuses.every((s) => s === 'fail')) {
-      throw new Error(`Negative control FAILED to fail: views scored [${controlStatuses.join(', ')}]; yaw smear and 45-degree duplicate must all be fail. Harness is not protective.`);
+      throw new Error(
+        `Negative control FAILED to fail: views scored [${controlStatuses.join(', ')}]; yaw smear and 45-degree duplicate must all be fail. Harness is not protective.`,
+      );
     }
     console.log('Negative control OK: smeared yaw views and duplicated 45-degree view all score fail.');
     return;
   }
-  if (overall === 'fail') {
+
+  if (overall === 'fail' || overall === 'baseline-missing') {
     throw new Error('Eval report contains at least one failing metric.');
   }
 }

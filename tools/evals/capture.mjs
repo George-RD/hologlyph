@@ -56,6 +56,7 @@ async function captureCanvas(name) {
   await page.locator(CANVAS_SELECTOR).screenshot({ path });
   return path;
 }
+
 async function captureCloseUp(name) {
   const box = await canvasBox();
   if (!box) throw new Error('Could not locate the #holo canvas for close-up capture');
@@ -72,13 +73,35 @@ async function captureCloseUp(name) {
   return path;
 }
 
+async function setMotionFrozen(frozen) {
+  await page.evaluate((value) => {
+    const engine = window.__hologlyphEngine;
+    if (!engine || typeof engine.setMotionFrozen !== 'function') {
+      throw new Error('Demo engine missing setMotionFrozen; eval flow capture needs deterministic motion control.');
+    }
+    engine.setMotionFrozen(value);
+  }, frozen);
+}
+
+async function captureFlowPair(captures) {
+  await setMotionFrozen(true);
+  await page.waitForTimeout(SETTLE_AFTER_POSE_MS);
+  try {
+    captures.push(await captureCanvas('flow-0'));
+    await page.waitForTimeout(1000);
+    captures.push(await captureCanvas('flow-1'));
+  } finally {
+    await setMotionFrozen(false);
+  }
+}
+
 // Produce a true yaw view by orbiting the live renderer camera around the head
 // origin. The motion API clamps head yaw to +/-0.5 rad (src/motion/index.ts
 // DRAG_YAW_LIMIT), so the requested +/-0.6 rad view is achieved by orbiting the
 // camera (initial position (0, 0.05, 2.4)) instead of rotating the head. This
 // needs no src/ change: the engine exposes sysRenderer.camera at runtime via
 // the demo-only window.__hologlyphEngine hook. The engine never resets the
-// camera per frame, so the new pose persists until the next page reload.
+// camera per frame, so the pose persists until the next page reload.
 async function orbitCamera(yaw) {
   await page.evaluate((targetYaw) => {
     const engine = window.__hologlyphEngine;
@@ -109,9 +132,8 @@ try {
   captures.push(await captureCloseUp('close-up'));
 
   await settlePage();
-  captures.push(await captureCanvas('flow-0'));
-  await page.waitForTimeout(1000);
-  captures.push(await captureCanvas('flow-1'));
+  await captureFlowPair(captures);
+
   await settlePage();
   await orbitCamera(0.785);
   captures.push(await captureCanvas('yaw-0.785'));

@@ -132,13 +132,17 @@ class EngineImpl implements Engine {
 
   private avatar: LoadedAvatar | null = null;
   private skinMaterial: THREE.Material | null = null;
+  private readonly displacedMaterials = new Set<THREE.Material>();
+  private mountGeneration = 0;
+  private mountSerial: Promise<void> = Promise.resolve();
 
   private rafHandle: number | null = null;
   private running = false;
   private disposed = false;
   private lastTime = 0;
   private elapsed = 0;
-
+  private motionFrozen = false;
+  private observed = false;
   private reducedMotionMql: MediaQueryList | null = null;
 
   constructor(options: EngineOptions) {
@@ -227,113 +231,16 @@ class EngineImpl implements Engine {
   get vfx(): VFXEngine {
     return this.sysVfx;
   }
-
   // --- Lifecycle ------------------------------------------------------------
 
   async mount(canvas: HTMLCanvasElement, host: Element): Promise<void> {
-    if (this.disposed) return;
-    try {
-      await this.sysRenderer.init(canvas);
-      // Mount/dispose race: the engine may have been disposed while awaiting
-      // renderer initialisation. Bail before touching any further state.
-      if (this.disposed) return;
-
-      const width = canvas.clientWidth || canvas.width || 640;
-      const height = canvas.clientHeight || canvas.height || 480;
-      this.sysRenderer.setSize(width, height);
-
-      // Expose the live renderer to the asset loader so KTX2 transcoding
-      // support can be detected (dec.asset-rig-schema) before any load.
-      this.sysAsset.attachRenderer?.(this.sysRenderer.gpuRenderer);
-
-      // Avatar delivery (dec.default-asset-delivery): an undefined avatarUrl
-      // resolves to the packaged bust; an empty string explicitly requests the
-      // placeholder; load failures degrade to the placeholder with a warning.
-      // Dynamic import on purpose: the library build inlines the default head
-      // (~890 kB) into this module's chunk, and the lazy boundary keeps it out
-      // of consumers who pass their own avatarUrl.
-      let candidates: string[];
-      if (this.options.avatarUrl === undefined) {
-        try {
-          const { defaultAvatarUrls } = await import('./default-avatar.js');
-          candidates = defaultAvatarUrls();
-        } catch (err) {
-          // A failed chunk load is an avatar-delivery failure, not a mount
-          // failure: degrade to the placeholder like any other candidate miss.
-          console.warn('[hologlyph] default avatar chunk failed to load.', err);
-          candidates = [];
-        }
-      } else {
-        candidates = this.options.avatarUrl ? [this.options.avatarUrl] : [];
-      }
-      // Mount/dispose race: disposed while awaiting the chunk import. Stop
-      // before starting any asset fetch/decode on a torn-down engine.
-      if (this.disposed) return;
-      this.avatar = null;
-      for (const url of candidates) {
-        try {
-          this.avatar = await this.sysAsset.load(url);
-          break;
-        } catch (err) {
-          console.warn(`[hologlyph] avatar load failed for ${url}.`, err);
-        }
-      }
-      if (!this.avatar) {
-        if (candidates.length > 0) {
-          console.warn('[hologlyph] no avatar candidate loaded; using placeholder.');
-        }
-        this.avatar = createPlaceholderAvatar();
-      }
-      // Mount/dispose race: disposed while awaiting asset load. Tear down the
-      // partially constructed avatar and skip all observers/loop/ready.
-      if (this.disposed) {
-        this.avatar.dispose();
-        this.avatar = null;
-        return;
-      }
-      this.sysRenderer.scene.add(this.avatar.root);
-      this.sysMotion.attach(this.avatar);
-
-      // Place the translucent shell in front of transparent eye materials.
-      for (const mesh of this.avatar.morphMeshes) mesh.renderOrder = 1;
-      this.avatar.root.traverse((obj) => {
-        const mesh = obj as THREE.Mesh;
-        if (!mesh.isMesh || !isEyeMesh(mesh)) return;
-        mesh.renderOrder = 2;
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const material of materials) {
-          material.transparent = true;
-          material.side = FrontSide;
-          material.depthTest = true;
-          material.depthWrite = true;
-        }
-      });
-      this.skinMaterial = this.sysVfx.createSkinMaterial(this.sysTextSkin);
-      for (const mesh of this.avatar.morphMeshes) {
-        const name = (mesh.material as THREE.Material | undefined)?.name;
-        if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
-        mesh.material = this.skinMaterial;
-      }
-
-      this.sysBehavior.observe(host);
-
-      const reduced = this.options.reducedMotion ?? this.prefersReducedMotion();
-      this.sysMotion.setReducedMotion(reduced);
-      // Thread reduced motion into VFX as well as motion (dec.renderer-posture).
-      this.sysVfx.setReducedMotion(reduced);
-      if (typeof matchMedia !== 'undefined') {
-        this.reducedMotionMql = matchMedia('(prefers-reduced-motion: reduce)');
-        this.reducedMotionMql.addEventListener?.('change', this.onReducedMotion);
-      }
-
-      document.addEventListener('visibilitychange', this.onVisibility);
-
-      // Start or suspend the loop from tab visibility and behaviour state.
-      this.syncLoop();
-      this.emitter.emit('ready', undefined);
-    } catch (err) {
-      this.emitter.emit('error', err instanceof Error ? err : new Error(String(err)));
-    }
+    const generation = ++this.mountGeneration;
+    const next = this.mountSerial.then(
+      () => this.doMount(canvas, host, generation),
+      () => this.doMount(canvas, host, generation),
+    );
+    this.mountSerial = next.catch(() => {});
+    await next;
   }
 
   async speak(text: string): Promise<void> {
@@ -344,6 +251,15 @@ class EngineImpl implements Engine {
     } catch (err) {
       this.emitter.emit('error', err instanceof Error ? err : new Error(String(err)));
     }
+  }
+
+  resize(width: number, height: number): void {
+    if (this.disposed) return;
+    this.sysRenderer.setSize(width, height);
+  }
+
+  setMotionFrozen(frozen: boolean): void {
+    this.motionFrozen = frozen;
   }
 
   setEmotion(expression: Expression): void {
@@ -383,11 +299,183 @@ class EngineImpl implements Engine {
     this.sysMotion.dispose();
     this.sysSpeech.dispose();
     this.sysTextSkin.dispose();
-    if (this.avatar) this.avatar.dispose();
+    if (this.avatar) {
+      this.sysRenderer.scene.remove(this.avatar.root);
+      this.avatar.dispose();
+      this.avatar = null;
+    }
+    this.disposeDisplacedMaterials();
     this.sysVfx.dispose();
     this.sysRenderer.dispose();
     this.sysAudio.dispose();
     this.sysAsset.dispose();
+    this.mountSerial = Promise.resolve();
+  }
+
+  private async doMount(canvas: HTMLCanvasElement, host: Element, generation: number): Promise<void> {
+    if (this.disposed) return;
+    try {
+      await this.sysRenderer.init(canvas);
+      if (this.disposed || generation !== this.mountGeneration) return;
+
+      const width = canvas.clientWidth || canvas.width || 640;
+      const height = canvas.clientHeight || canvas.height || 480;
+      this.sysRenderer.setSize(width, height);
+
+      // Expose the live renderer to the asset loader so KTX2 transcoding
+      // support can be detected (dec.asset-rig-schema) before any load.
+      this.sysAsset.attachRenderer?.(this.sysRenderer.gpuRenderer);
+
+      // Avatar delivery (dec.default-asset-delivery): an undefined avatarUrl
+      // resolves to the packaged bust; an empty string explicitly requests the
+      // placeholder; load failures degrade to the placeholder with a warning.
+      // Dynamic import on purpose: the library build inlines the default head
+      // (~890 kB) into this module's chunk, and the lazy boundary keeps it out
+      // of consumers who pass their own avatarUrl.
+      let candidates: string[];
+      if (this.options.avatarUrl === undefined) {
+        try {
+          const { defaultAvatarUrls } = await import('./default-avatar.js');
+          candidates = defaultAvatarUrls();
+        } catch (err) {
+          // A failed chunk load is an avatar-delivery failure, not a mount
+          // failure: degrade to the placeholder like any other candidate miss.
+          console.warn('[hologlyph] default avatar chunk failed to load.', err);
+          candidates = [];
+        }
+      } else {
+        candidates = this.options.avatarUrl ? [this.options.avatarUrl] : [];
+      }
+      if (this.disposed || generation !== this.mountGeneration) return;
+
+      let candidateAvatar: LoadedAvatar | null = null;
+      for (const url of candidates) {
+        try {
+          candidateAvatar = await this.sysAsset.load(url);
+          if (this.disposed || generation !== this.mountGeneration) {
+            if (candidateAvatar) {
+              candidateAvatar.dispose();
+            }
+            return;
+          }
+          break;
+        } catch (err) {
+          console.warn(`[hologlyph] avatar load failed for ${url}.`, err);
+        }
+        if (this.disposed || generation !== this.mountGeneration) {
+          return;
+        }
+      }
+      if (!candidateAvatar) {
+        if (candidates.length > 0) {
+          console.warn('[hologlyph] no avatar candidate loaded; using placeholder.');
+        }
+        candidateAvatar = createPlaceholderAvatar();
+      }
+      if (this.disposed || generation !== this.mountGeneration) {
+        candidateAvatar.dispose();
+        return;
+      }
+
+      this.replaceAvatar(candidateAvatar);
+      this.applyMotionAndObservation(host);
+
+      // Start or suspend the loop from tab visibility and behaviour state.
+      this.syncLoop();
+      this.emitter.emit('ready', undefined);
+    } catch (err) {
+      if (generation !== this.mountGeneration) return;
+      this.emitter.emit('error', err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  private replaceAvatar(candidateAvatar: LoadedAvatar): void {
+    if (this.avatar) {
+      this.sysRenderer.scene.remove(this.avatar.root);
+      this.avatar.dispose();
+      this.avatar = null;
+      this.disposeDisplacedMaterials();
+    }
+    this.avatar = candidateAvatar;
+
+    this.sysRenderer.scene.add(this.avatar.root);
+    this.sysMotion.attach(this.avatar);
+
+    // Place the translucent shell in front of transparent eye materials.
+    for (const mesh of this.avatar.morphMeshes) mesh.renderOrder = 1;
+    this.avatar.root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !isEyeMesh(mesh)) return;
+      mesh.renderOrder = 2;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        material.transparent = true;
+        material.side = FrontSide;
+        material.depthTest = true;
+        material.depthWrite = true;
+      }
+    });
+    this.skinMaterial = this.sysVfx.createSkinMaterial(this.sysTextSkin);
+    this.displacedMaterials.clear();
+    for (const mesh of this.avatar.morphMeshes) {
+      const original = mesh.material;
+      const name = (Array.isArray(original) ? undefined : original?.name) as string | undefined;
+      if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
+      if (Array.isArray(original)) {
+        for (const material of original) {
+          if (material && material !== this.skinMaterial) {
+            this.displacedMaterials.add(material);
+          }
+        }
+        mesh.material = this.skinMaterial;
+      } else if (original) {
+        if (original !== this.skinMaterial) {
+          this.displacedMaterials.add(original);
+        }
+        mesh.material = this.skinMaterial;
+      }
+    }
+  }
+
+  private applyMotionAndObservation(host: Element): void {
+    const reduced = this.options.reducedMotion ?? this.prefersReducedMotion();
+    this.sysMotion.setReducedMotion(reduced);
+    // Thread reduced motion into VFX and the text skin as well as motion
+    // (dec.renderer-posture); the text skin pauses its row flow.
+    this.sysVfx.setReducedMotion(reduced);
+    this.sysTextSkin.setReducedMotion(reduced);
+    if (typeof matchMedia !== 'undefined' && !this.observed) {
+      this.reducedMotionMql = matchMedia('(prefers-reduced-motion: reduce)');
+      this.reducedMotionMql.addEventListener?.('change', this.onReducedMotion);
+    }
+    if (!this.observed) {
+      this.sysBehavior.observe(host);
+      this.observed = true;
+      document.addEventListener('visibilitychange', this.onVisibility);
+    }
+  }
+
+  private disposeDisplacedMaterials(): void {
+    const textures = new Set<THREE.Texture>();
+    for (const material of this.displacedMaterials) {
+      for (const key of Object.keys(material) as Array<keyof typeof material & string>) {
+        const value = (material as unknown as Record<string, unknown>)[key];
+        if (value && (value as THREE.Texture).isTexture) {
+          textures.add(value as THREE.Texture);
+        }
+      }
+    }
+    for (const texture of textures) {
+      if (typeof texture.dispose === 'function') {
+        texture.dispose();
+      }
+    }
+    for (const material of this.displacedMaterials) {
+      if (typeof material.dispose === 'function') {
+        material.dispose();
+      }
+    }
+    this.displacedMaterials.clear();
   }
 
   // --- Internals ------------------------------------------------------------
@@ -461,7 +549,9 @@ class EngineImpl implements Engine {
     }
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
-    this.sysMotion.update(dt, this.elapsed);
+    // While frozen, skip the motion update entirely: idle and gaze phase off
+    // wall-clock time, so even dt=0 would keep breathing between frames.
+    if (!this.motionFrozen) this.sysMotion.update(dt, this.elapsed);
     this.sysRenderer.render();
 
     if (this.running) this.rafHandle = requestAnimationFrame(this.frame);
@@ -491,8 +581,9 @@ class EngineImpl implements Engine {
 
   private readonly onReducedMotion = (event: MediaQueryListEvent): void => {
     this.sysMotion.setReducedMotion(event.matches);
-    // Mirror the reduced-motion preference into VFX alongside motion.
+    // Mirror the reduced-motion preference into VFX and the text skin.
     this.sysVfx.setReducedMotion(event.matches);
+    this.sysTextSkin.setReducedMotion(event.matches);
   };
 
   private prefersReducedMotion(): boolean {

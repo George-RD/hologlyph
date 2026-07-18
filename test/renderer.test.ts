@@ -6,25 +6,81 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRendererHost, detectBackend } from '../src/renderer';
 
-vi.mock('three/webgpu', () => {
-  return {
-    WebGPURenderer: class {
-      clippingPlanes: unknown[] = [];
-      async init() {}
-      setPixelRatio() {}
-      setSize() {}
-      render() {}
-      dispose() {}
-    },
-  };
-});
+type InitHandle = {
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
+type MockRenderer = {
+  initCalls: number;
+  init: () => Promise<void>;
+  disposeCalls: number;
+  dispose: () => void;
+  setPixelRatio: ReturnType<typeof vi.fn>;
+  setSize: ReturnType<typeof vi.fn>;
+  render: ReturnType<typeof vi.fn>;
+  clippingPlanes: unknown[];
+};
+
+const rendererInstances: MockRenderer[] = [];
+let initHandle: InitHandle = makeInitDeferred();
+
+function makeInitDeferred(): InitHandle {
+  let resolve = () => {};
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+vi.mock('three/webgpu', () => ({
+  WebGPURenderer: class {
+    clippingPlanes: unknown[] = [];
+    initCalls = 0;
+    disposeCalls = 0;
+    setPixelRatio = vi.fn();
+    setSize = vi.fn();
+    render = vi.fn();
+    init() {
+      this.initCalls += 1;
+      return initHandle.promise;
+    }
+    dispose() {
+      this.disposeCalls += 1;
+    }
+    constructor() {
+      rendererInstances.push(this);
+    }
+  },
+}));
+
+function resetInitHandle(): void {
+  initHandle = makeInitDeferred();
+}
+
+function resolveInitHandle(): void {
+  initHandle.resolve();
+}
 
 function setGpu(value: unknown): void {
   Object.defineProperty(navigator, 'gpu', { configurable: true, value });
 }
 
+function latestRenderer(): MockRenderer {
+  if (rendererInstances.length === 0) {
+    throw new Error('No renderer instance has been created');
+  }
+  const latest = rendererInstances[rendererInstances.length - 1];
+  if (latest === undefined) {
+    throw new Error('No renderer instance has been created');
+  }
+  return latest;
+}
+
 afterEach(() => {
   setGpu(undefined);
+  rendererInstances.length = 0;
+  resetInitHandle();
 });
 
 describe('backend detection', () => {
@@ -67,17 +123,22 @@ describe('backend after init', () => {
   it('resolves backend from navigator.gpu availability (mocked GPU)', async () => {
     setGpu(undefined);
     const host = createRendererHost();
+    resolveInitHandle();
     await host.init({} as HTMLCanvasElement);
     expect(host.backend).toBe('webgl2');
     host.dispose();
+    expect(latestRenderer().disposeCalls).toBe(1);
 
     setGpu({});
     const host2 = createRendererHost();
+    resolveInitHandle();
     await host2.init({} as HTMLCanvasElement);
     expect(host2.backend).toBe('webgpu');
     host2.dispose();
+    expect(latestRenderer().disposeCalls).toBe(1);
   });
 });
+
 describe('gpuRenderer accessor', () => {
   it('is null before init', () => {
     const host = createRendererHost();
@@ -88,8 +149,23 @@ describe('gpuRenderer accessor', () => {
   it('exposes the WebGPURenderer instance after init', async () => {
     setGpu({});
     const host = createRendererHost();
+    resolveInitHandle();
     await host.init({} as HTMLCanvasElement);
-    expect(host.gpuRenderer).not.toBeNull();
+    expect(host.gpuRenderer).toBe(latestRenderer() as unknown);
     host.dispose();
+  });
+});
+
+describe('renderer init race', () => {
+  it('disposes the created renderer when disposed while init is pending', async () => {
+    setGpu({});
+    resetInitHandle();
+    const host = createRendererHost();
+    const init = host.init({} as HTMLCanvasElement);
+    host.dispose();
+    resolveInitHandle();
+    await init;
+    expect(latestRenderer().disposeCalls).toBe(1);
+    expect(host.backend).toBe('uninitialized');
   });
 });

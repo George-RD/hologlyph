@@ -33,6 +33,7 @@ class FakeEngine implements Engine {
   scrollCalls: number[] = [];
   textSourceCalls: TextSkinSource[] = [];
   voiceAdapterCalls: TTSAdapter[] = [];
+  resizeCalls: Array<{ width: number; height: number }> = [];
   motionCalls: boolean[] = [];
 
   private listeners = new Map<keyof EngineEvents, Set<(p: unknown) => void>>();
@@ -150,12 +151,19 @@ class FakeEngine implements Engine {
     this.scrollCalls.push(progress);
   }
 
+  setMotionFrozen(_frozen: boolean): void {
+    return;
+  }
+
   setTextSkinSource(source: TextSkinSource): void {
     this.textSourceCalls.push(source);
   }
 
   setVoiceAdapter(adapter: TTSAdapter): void {
     this.voiceAdapterCalls.push(adapter);
+  }
+  resize(width: number, height: number): void {
+    this.resizeCalls.push({ width, height });
   }
 
   get state(): BehaviorState {
@@ -236,18 +244,26 @@ class FakeResizeObserver {
   static last: FakeResizeObserver | null = null;
   static instances: FakeResizeObserver[] = [];
   disconnected = false;
-  readonly callback: (entries: unknown[]) => void;
+  target: Element | null = null;
+  readonly callback: () => void;
 
-  constructor(callback: (entries: unknown[]) => void) {
+  constructor(callback: () => void) {
     this.callback = callback;
     FakeResizeObserver.last = this;
     FakeResizeObserver.instances.push(this);
   }
 
-  observe(): void {}
+  observe(target: Element): void {
+    this.target = target;
+  }
+
   unobserve(): void {}
   disconnect(): void {
     this.disconnected = true;
+  }
+
+  trigger(): void {
+    this.callback();
   }
 }
 
@@ -394,9 +410,8 @@ describe('attribute reflection', () => {
     el.src = 'a.glb';
     expect(el.getAttribute('src')).toBe('a.glb');
 
-    el.mode = 'manual';
-    expect(el.getAttribute('mode')).toBe('manual');
-
+    expect(HologlyphHeadElement.observedAttributes).not.toContain('mode');
+    expect('mode' in el).toBe(false);
     el.textSkin = 'hi';
     expect(el.getAttribute('text-skin')).toBe('hi');
 
@@ -556,8 +571,7 @@ describe('boot/disconnect race', () => {
 describe('ResizeObserver lifecycle', () => {
   it('disconnects the canvas ResizeObserver on teardown', async () => {
     const original = globalThis.ResizeObserver;
-    globalThis.ResizeObserver =
-      FakeResizeObserver as unknown as typeof ResizeObserver;
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
     FakeResizeObserver.instances = [];
     FakeResizeObserver.last = null;
     try {
@@ -574,6 +588,66 @@ describe('ResizeObserver lifecycle', () => {
       await flush();
 
       expect(FakeResizeObserver.last!.disconnected).toBe(true);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
+  });
+
+  it('reinstalls the ResizeObserver after reconnect', async () => {
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+    FakeResizeObserver.instances = [];
+    FakeResizeObserver.last = null;
+    try {
+      makeFactory();
+      defineHologlyphHead();
+      const el = document.createElement('hologlyph-head') as HologlyphHeadElement;
+      container.appendChild(el);
+      await flush();
+
+      expect(FakeResizeObserver.instances).toHaveLength(1);
+
+      el.remove();
+      await flush();
+      expect(FakeResizeObserver.instances).toHaveLength(1);
+      expect(FakeResizeObserver.instances.at(-1)!.disconnected).toBe(true);
+
+      container.appendChild(el);
+      await flush();
+      expect(FakeResizeObserver.instances).toHaveLength(2);
+      expect(FakeResizeObserver.instances.at(-1)!.disconnected).toBe(false);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
+  });
+
+  it('calls engine.resize when the element is resized', async () => {
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+    FakeResizeObserver.instances = [];
+    FakeResizeObserver.last = null;
+    try {
+      const { engines } = makeFactory();
+      defineHologlyphHead();
+      const el = document.createElement('hologlyph-head') as HologlyphHeadElement;
+      container.appendChild(el);
+      await flush();
+
+      const engine = engines[0]!;
+      const ro = FakeResizeObserver.last!;
+
+      Object.defineProperty(el, 'clientWidth', { value: 640, configurable: true });
+      Object.defineProperty(el, 'clientHeight', { value: 360, configurable: true });
+      ro.trigger();
+      expect(engine.resizeCalls).toEqual([{ width: 640, height: 360 }]);
+
+      Object.defineProperty(el, 'clientWidth', { value: 320, configurable: true });
+      Object.defineProperty(el, 'clientHeight', { value: 180, configurable: true });
+      ro.trigger();
+      expect(engine.resizeCalls).toEqual([
+        { width: 640, height: 360 },
+        { width: 320, height: 180 },
+      ]);
     } finally {
       globalThis.ResizeObserver = original;
     }

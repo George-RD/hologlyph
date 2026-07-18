@@ -177,3 +177,12 @@ describe('AssetLoader.attachRenderer', () => {
     spy.mockRestore();
   });
 });
+describe('AssetLoader.dispose', () => {
+  it('disposes KTX2Loader once', () => {
+    const spy = vi.spyOn(KTX2Loader.prototype, 'dispose');
+    const loader = createAssetLoader();
+    loader.dispose();
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});
