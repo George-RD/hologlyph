@@ -59,3 +59,5 @@
 - archive: 2026-07-18-lsp-and-lint-gate merged; no operations
 - scan: nodes=16, findings=34, errors=0
 - archive: 2026-07-18-text-skin-embodiment-fixes merged; no operations
+- scan: nodes=16, findings=34, errors=0
+- archive: 2026-07-18-visual-eval-harness merged; no operations
