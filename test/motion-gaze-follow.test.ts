@@ -246,6 +246,9 @@ describe('MotionEngine gaze follow', () => {
   });
 
   it('composes idle motion and pointer follow additively on the head', () => {
+    // Not confounded by shared rng: while a follow target is active the
+    // gaze update early-returns from deterministic smoothing without
+    // consuming rng draws, so idle is the only difference between runs.
     const run = (idle: boolean): number => {
       let now = 0;
       const m = createMotionEngine({ clock: () => now, idle, rng: seededRng() });
