@@ -49,7 +49,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
- import { Document, Primitive, WebIO } from '@gltf-transform/core';
+ import { Document, type Primitive, WebIO } from '@gltf-transform/core';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE = join(HERE, '.cache');
@@ -256,8 +256,8 @@ interface BuiltGeometry {
   eyeCat: Uint8Array;
 }
 
-const JOINT_ROOT = 0;
-const JOINT_NECK = 1;
+const _JOINT_ROOT = 0;
+const _JOINT_NECK = 1;
 const JOINT_HEAD = 2;
 const JOINT_EYE_L = 3;
 const JOINT_EYE_R = 4;

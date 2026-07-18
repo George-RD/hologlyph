@@ -26,7 +26,7 @@
  * ```
  */
 
-import { defineHologlyphHead, HologlyphHeadElement } from '../element';
+import { defineHologlyphHead, type HologlyphHeadElement } from '../element';
 
 /** Minimal structural view of the React surface we actually use. */
 export interface ReactLike {

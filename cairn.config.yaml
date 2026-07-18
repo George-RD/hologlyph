@@ -24,3 +24,5 @@ gates:
     command: bunx vitest run
   - name: build
     command: bun run build
+  - name: lint
+    command: bun run lint

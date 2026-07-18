@@ -436,10 +436,10 @@ describe('CustomEvent re-dispatch', () => {
     el.addEventListener('hologlyph-speechstart', () => events.push('speechstart'));
     el.addEventListener('hologlyph-speechend', () => events.push('speechend'));
     el.addEventListener('hologlyph-statechange', (e) =>
-      events.push('statechange:' + (e as CustomEvent).detail.to),
+      events.push(`statechange:${(e as CustomEvent).detail.to}`),
     );
     el.addEventListener('hologlyph-error', (e) =>
-      events.push('error:' + (e as CustomEvent).detail.error.message),
+      events.push(`error:${(e as CustomEvent).detail.error.message}`),
     );
 
     container.appendChild(el);

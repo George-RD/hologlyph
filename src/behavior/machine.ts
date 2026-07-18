@@ -59,9 +59,7 @@ export const TRANSITIONS: TransitionTable = {
   },
 };
 
-interface Listener<T> {
-  (payload: T): void;
-}
+type Listener<T> = (payload: T) => void
 
 class EmitterImpl<Events extends Record<string, unknown>> {
   private listeners: { [K in keyof Events]?: Set<Listener<Events[K]>> } = {};
@@ -130,7 +128,7 @@ export function createBehaviorMachine(options: BehaviorMachineOptions = {}): Beh
   let onVisibility: (() => void) | null = null;
   // Recomputed by the ResizeObserver; bounds the normalized progress derived in
   // JS (never a CSS scroll timeline, dec.scroll-timeline).
-  let scrollExtent = 0;
+  let _scrollExtent = 0;
   let disposed = false;
 
   function dispatch(event: BehaviorEvent): void {
@@ -167,7 +165,7 @@ export function createBehaviorMachine(options: BehaviorMachineOptions = {}): Beh
 
   function recomputeExtent(host: Element): void {
     const rect = host.getBoundingClientRect();
-    scrollExtent = Math.max(0, rect.height);
+    _scrollExtent = Math.max(0, rect.height);
   }
 
   function observe(host: Element): void {

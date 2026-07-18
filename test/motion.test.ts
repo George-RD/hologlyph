@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createMotionEngine } from '../src/motion';
 import { GazeController } from '../src/motion/gaze';
 import { clamp01 } from '../src/contracts';
-import type { LoadedAvatar, NodClass, MotionEngine } from '../src/contracts';
+import type { LoadedAvatar, NodClass, } from '../src/contracts';
 import * as THREE from 'three';
 
 function makeAvatar(opts: { eyes?: boolean } = {}): LoadedAvatar {

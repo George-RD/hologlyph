@@ -108,7 +108,7 @@ if (results.mouthMotion_beforeVsMid1 < 0.05 && results.mouthMotion_mid1VsMid2 < 
 }
 if (errors.length > 0) failures.push(`page errors: ${errors.join('; ')}`);
 if (failures.length > 0) {
-  console.error('SMOKE FAILED:\n- ' + failures.join('\n- '));
+  console.error(`SMOKE FAILED:\n- ${failures.join('\n- ')}`);
   process.exit(1);
 }
 console.log('SMOKE PASSED');

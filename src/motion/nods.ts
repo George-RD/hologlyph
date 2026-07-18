@@ -34,6 +34,6 @@ export const NOD_SPECS: Record<NodClass, NodSpec> = {
   emphasis: {
     duration: 0.3,
     amplitude: 0.18,
-    evaluate: (t) => -Math.exp(-Math.pow((t - 0.3) / 0.12, 2)),
+    evaluate: (t) => -Math.exp(-(((t - 0.3) / 0.12) ** 2)),
   },
 };

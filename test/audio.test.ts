@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, } from 'vitest';
 import { createAudioEngine } from '../src/audio';
-import type { AudioEngine } from '../src/contracts';
 
 // Lightweight fake of the Web Audio surface the engine touches.
 class FakeAnalyser {
@@ -35,7 +34,8 @@ class FakeAudioContext {
     return this._analyser;
   }
   createMediaElementSource(): MediaElementAudioSourceNode {
-    const analyser = this._analyser ??= new FakeAnalyser(this._fill);
+    const analyser = this._analyser ?? new FakeAnalyser(this._fill);
+    this._analyser = analyser;
     return {
       connect: () => analyser.setSourceConnected(true),
       disconnect: () => analyser.setSourceConnected(false),
