@@ -3,10 +3,11 @@
 Real-browser verification of the running engine; the numeric oracles here are
 the acceptance checks for todo.v2-demo-bust and todo.v2-textskin-fit.
 
-Prerequisites: Playwright at /Users/george/node_modules/playwright (or adjust
-the require path), system Google Chrome, and two local servers:
+Prerequisites: `bun install` (Playwright is a devDependency) and its managed
+Chromium (`bunx playwright install chromium`), or set `HOLOGLYPH_CHROME` to a
+real browser executable. Two local servers:
 
-```
+```shell
 bun run dev -- --port 5199 --strictPort        # vite demo server (source paths)
 python3 -m http.server 8932 --directory .      # repo root (dist consumer fixture)
 ```
