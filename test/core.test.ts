@@ -63,6 +63,7 @@ interface FakeSpeech extends SpeechEngine {
 interface FakeTextSkin extends TextSkinEngine {
   disposeCount: number;
   updateCalls: number;
+  reduced: boolean | undefined;
 }
 interface FakeVfx extends VFXEngine {
   disposeCount: number;
@@ -285,8 +286,11 @@ vi.mock('../src/text-skin', () => ({
       scrollOffset: 0,
       updateCalls: 0,
       setSource() {},
+      reduced: undefined,
+      setReducedMotion(r: boolean) {
+        this.reduced = r;
+      },
       setScrollSpeed() {},
-      setReducedMotion() {},
       update() {
         this.updateCalls++;
       },
@@ -807,24 +811,28 @@ describe('host-offscreen loop suspension', () => {
 });
 
 describe('reduced motion propagation', () => {
-  it('threads reduced motion into VFX on mount', async () => {
+  it('threads reduced motion into VFX and the text skin on mount', async () => {
     const engine = createEngine({ reducedMotion: true });
     const motion = h.registry.motion.at(-1)!;
     const vfx = h.registry.vfx.at(-1)!;
+    const skin = h.registry.textSkin.at(-1)!;
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
     expect(motion.reduced).toBe(true);
     expect(vfx.reduced).toBe(true);
+    expect(skin.reduced).toBe(true);
     engine.dispose();
   });
 
-  it('routes a media-query change into VFX as well as motion', async () => {
+  it('routes a media-query change into VFX and the text skin as well as motion', async () => {
     const engine = createEngine();
     const motion = h.registry.motion.at(-1)!;
     const vfx = h.registry.vfx.at(-1)!;
+    const skin = h.registry.textSkin.at(-1)!;
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
     mqlListeners.forEach((fn) => fn({ matches: true } as MediaQueryListEvent));
     expect(motion.reduced).toBe(true);
     expect(vfx.reduced).toBe(true);
+    expect(skin.reduced).toBe(true);
     engine.dispose();
   });
 });
