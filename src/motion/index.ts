@@ -19,7 +19,7 @@ import type {
 } from '../contracts';
 import { RIG_EXPRESSION_MORPHS, RIG_VISEME_MORPHS, clamp01 } from '../contracts';
 import { weightsFor, lerpWeights, emptyExpressionWeights } from './expressions';
-import { GazeController, type Rng, type Clock } from './gaze';
+import { GazeController, ndcToGazeOffset, type Rng, type Clock } from './gaze';
 import { NOD_SPECS } from './nods';
 
 type Bone = NonNullable<LoadedAvatar['bones']['eyeL']>;
@@ -44,6 +44,20 @@ const DRAG_PITCH_LIMIT = 0.35;
 const NECK_DRAG_FRACTION = 0.35;
 /** Smoothed head-drag time constant: 1 - exp(-dt * DRAG_TAU). */
 const DRAG_SMOOTH_TAU = 8;
+/** Subtle head-bone participation while the pointer is followed. */
+const HEAD_FOLLOW_FRACTION = 0.35;
+/** Clamp on the head follow offset, well below the drag limit (radians). */
+const FOLLOW_HEAD_YAW_LIMIT = 0.18;
+const FOLLOW_HEAD_PITCH_LIMIT = 0.12;
+/** Fraction of the head follow fed into the neck bone. */
+const NECK_FOLLOW_FRACTION = 0.2;
+/** Smoothing time constants (seconds) for the head follow offset. */
+const FOLLOW_HEAD_TAU = 6;
+const FOLLOW_HEAD_TAU_REDUCED = 12;
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
 
 function emptyMouthWeights(): Record<string, number> {
   const w: Record<string, number> = {};
@@ -56,8 +70,9 @@ export interface MotionEngineOptions {
   rng?: Rng;
   /** Time source in seconds; when omitted update()'s elapsed argument is used. */
   clock?: Clock;
+  /** Idle timeout (seconds) before the gaze eases back to forward after the last pointer target. */
+  gazeFollowTimeout?: number;
 }
-
 export function createMotionEngine(options: MotionEngineOptions = {}): MotionEngine {
   const rng: Rng = options.rng ?? Math.random;
   const clockOpt = options.clock;
@@ -72,6 +87,9 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   let targetPitch = 0;
   let curYaw = 0;
   let curPitch = 0;
+  // Smoothed head follow offset (subtle, eyes-only under reduced motion).
+  let curFollowYaw = 0;
+  let curFollowPitch = 0;
   let baseNeck: Vec3 | null = null;
 
   // Persistent smoothed weights for the mouth region. A new frame only
@@ -85,7 +103,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
 
   let visemeFrame: VisemeFrame | null = null;
 
-  const gaze = new GazeController(rng, clockOpt);
+  const gaze = new GazeController(rng, clockOpt, { followTimeout: options.gazeFollowTimeout });
   let reduced = false;
   let nod: { kind: NodClass; start: number } | null = null;
   let lastNow = 0;
@@ -141,6 +159,15 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     targetPitch = Math.max(-DRAG_PITCH_LIMIT, Math.min(DRAG_PITCH_LIMIT, pitch));
   }
 
+  function setGazeTarget(ndcX: number, ndcY: number): void {
+    const off = ndcToGazeOffset(ndcX, ndcY);
+    gaze.setFollowTarget(off.yaw, off.pitch, clockOpt ? clockOpt() : lastNow);
+  }
+
+  function clearGazeFollow(): void {
+    gaze.clearFollow();
+  }
+
   function update(dt: number, elapsed: number): void {
     const now = clockOpt ? clockOpt() : elapsed;
     lastNow = now;
@@ -175,13 +202,27 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     curYaw += (targetYaw - curYaw) * dragK;
     curPitch += (targetPitch - curPitch) * dragK;
 
+    // 3c. Pointer-follow head participation: a subtle fraction of the eye gaze,
+    // clamped well below the drag limit. Disabled entirely under reduced motion
+    // (eyes-only); eased with exponential smoothing so toggling reduced motion
+    // mid-follow never snaps an offset head back to centre.
+    let followTargetYaw = 0;
+    let followTargetPitch = 0;
+    if (gaze.isFollowing(now) && !reduced) {
+      followTargetYaw = clamp(g.yaw * HEAD_FOLLOW_FRACTION, -FOLLOW_HEAD_YAW_LIMIT, FOLLOW_HEAD_YAW_LIMIT);
+      followTargetPitch = clamp(g.pitch * HEAD_FOLLOW_FRACTION, -FOLLOW_HEAD_PITCH_LIMIT, FOLLOW_HEAD_PITCH_LIMIT);
+    }
+    const followK = 1 - Math.exp(-dt * (reduced ? FOLLOW_HEAD_TAU_REDUCED : FOLLOW_HEAD_TAU));
+    curFollowYaw += (followTargetYaw - curFollowYaw) * followK;
+    curFollowPitch += (followTargetPitch - curFollowPitch) * followK;
+
     if (avatar?.bones.head && baseHead) {
-      avatar.bones.head.rotation.x = baseHead.x + nodPitch + curPitch;
-      avatar.bones.head.rotation.y = baseHead.y + curYaw;
+      avatar.bones.head.rotation.x = baseHead.x + nodPitch + curPitch + curFollowPitch;
+      avatar.bones.head.rotation.y = baseHead.y + curYaw + curFollowYaw;
     }
     if (avatar?.bones.neck && baseNeck) {
-      avatar.bones.neck.rotation.x = baseNeck.x + curPitch * NECK_DRAG_FRACTION;
-      avatar.bones.neck.rotation.y = baseNeck.y + curYaw * NECK_DRAG_FRACTION;
+      avatar.bones.neck.rotation.x = baseNeck.x + curPitch * NECK_DRAG_FRACTION + curFollowPitch * NECK_FOLLOW_FRACTION;
+      avatar.bones.neck.rotation.y = baseNeck.y + curYaw * NECK_DRAG_FRACTION + curFollowYaw * NECK_FOLLOW_FRACTION;
     }
 
     // 4. Visemes override the mouth region with attack/release smoothing;
@@ -228,6 +269,8 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     targetPitch = 0;
     curYaw = 0;
     curPitch = 0;
+    curFollowYaw = 0;
+    curFollowPitch = 0;
   }
 
   return {
@@ -241,6 +284,8 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     setReducedMotion,
     dispose,
     setHeadTarget,
+    setGazeTarget,
+    clearGazeFollow,
   };
 }
 

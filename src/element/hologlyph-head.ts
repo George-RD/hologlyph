@@ -90,6 +90,10 @@ export class HologlyphHeadElement extends HTMLElement {
   private _bootGen = 0;
   private _needsRecreate = false;
   private _offs: Array<() => void> = [];
+  /** Latest normalised pointer position pending a throttled flush. */
+  private _latestGaze: { x: number; y: number } | null = null;
+  /** Handle for the rAF-throttled flush of the latest pointer position. */
+  private _gazeRaf: number | null = null;
   private _speakQueue: SpeakQueued[] = [];
   private _emotionQueue: Expression[] = [];
   private _textSource: TextSkinSource | null = null;
@@ -187,6 +191,7 @@ export class HologlyphHeadElement extends HTMLElement {
     // self-cleans instead of mounting a now-detached element.
     this._bootGen++;
     this._connecting = false;
+    this._resetGaze();
 
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
@@ -298,8 +303,44 @@ export class HologlyphHeadElement extends HTMLElement {
           new CustomEvent('hologlyph-error', { detail: { error: err } }),
         ),
       ),
+      () => this.removeEventListener('pointermove', this._onPointerMove),
+      () => this.removeEventListener('pointerleave', this._onPointerLeave),
     ];
+    // Follow the pointer with the gaze: observe passive pointer moves on the
+    // host and flush the latest position once per animation frame.
+    this.addEventListener('pointermove', this._onPointerMove, { passive: true });
+    this.addEventListener('pointerleave', this._onPointerLeave, { passive: true });
   }
+  private _resetGaze(): void {
+    if (this._gazeRaf !== null) {
+      cancelAnimationFrame(this._gazeRaf);
+      this._gazeRaf = null;
+    }
+    this._latestGaze = null;
+  }
+
+  private _onPointerMove = (ev: PointerEvent): void => {
+    const rect = this.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = ((ev.clientY - rect.top) / rect.height) * 2 - 1;
+    this._latestGaze = { x, y };
+    if (this._gazeRaf === null) {
+      this._gazeRaf = requestAnimationFrame(this._flushGaze);
+    }
+  };
+
+  private _flushGaze = (): void => {
+    this._gazeRaf = null;
+    if (this._latestGaze && this._engine?.motion) {
+      this._engine.motion.setGazeTarget(this._latestGaze.x, this._latestGaze.y);
+    }
+  };
+
+  private _onPointerLeave = (): void => {
+    this._resetGaze();
+    this._engine?.motion.clearGazeFollow();
+  };
 
   private _onReady(): void {
     this._ready = true;
