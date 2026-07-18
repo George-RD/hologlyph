@@ -21,9 +21,9 @@ checked against a calibrated baseline before merge.
   `demo/main.ts` for posing.
 - AGENTS.md: eval documented as part of the pre-merge verification chain
   for visual work.
+- CI workflow running checks and the eval (with negative control) on PRs.
 
 ## Out of scope
 
 - No src/ runtime changes.
-- No CI wiring (eval needs a live dev server; it stays a local gate).
 - Eye-occlusion metric (judged too fragile; documented in the README).

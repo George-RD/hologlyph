@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -35,10 +38,10 @@ jobs:
             curl -sf http://localhost:5173/ >/dev/null && break
             sleep 1
           done
-      - run: node tools/evals/capture.mjs http://localhost:5173/
-      - run: node tools/evals/score.mjs
+      - run: bun tools/evals/capture.mjs http://localhost:5173/
+      - run: bun tools/evals/score.mjs
       - name: Negative control (harness must catch smear)
-        run: node tools/evals/score.mjs --negative-control
+        run: bun run eval:control
       - uses: actions/upload-artifact@v4
         if: always()
         with:

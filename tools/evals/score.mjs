@@ -1,9 +1,10 @@
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 
-const OUTPUT_DIR = new URL('./out/', import.meta.url).pathname;
-const BASELINE_PATH = new URL('./baseline.json', import.meta.url).pathname;
+const OUTPUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
+const BASELINE_PATH = fileURLToPath(new URL('./baseline.json', import.meta.url));
 const REPORT_PATH = join(OUTPUT_DIR, 'report.json');
 
 // ---------------------------------------------------------------------------
@@ -361,10 +362,11 @@ function main() {
   console.log(JSON.stringify(report, null, 2));
 
   if (negativeControl) {
-    if (yawLegibilityStatus === 'pass') {
-      throw new Error('Negative control FAILED to fail: smeared yaw views still pass yaw legibility. Harness is not protective.');
+    const controlStatuses = [yawLegibility.yawPlus.status, yawLegibility.yawMinus.status];
+    if (!controlStatuses.every((s) => s === 'fail')) {
+      throw new Error(`Negative control FAILED to fail: smeared yaw views scored [${controlStatuses.join(', ')}]; both must be fail. Harness is not protective.`);
     }
-    console.log(`Negative control OK: smeared yaw views score ${yawLegibilityStatus}.`);
+    console.log('Negative control OK: both smeared yaw views score fail.');
     return;
   }
   if (overall === 'fail') {

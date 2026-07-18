@@ -5,4 +5,5 @@
 - [x] Calibrate baseline.json against the accepted triplanar build
 - [x] `bun run eval` script and tools/evals/README.md
 - [x] Document eval in the AGENTS.md verification chain
-- [x] Verify: `bun run eval` overall pass, biome and tsc clean
+- [x] Verify: `bun run eval` overall pass; full chain green (tsc, vitest,
+      build, lint, `cairn hook all`); CI checks and visual-eval jobs pass

@@ -10,13 +10,13 @@ code (no extra image dependencies).
 The harness drives the demo through a browser, so the Vite dev server must
 already be running before you invoke it:
 
-```
+```shell
 bun run dev
 ```
 
 Playwright is a devDependency; install its managed Chromium once with:
 
-```
+```shell
 bunx playwright install chromium
 ```
 
@@ -30,15 +30,15 @@ different host or port, pass the URL as the first argument to the capture step.
 
 Run both steps in order (capture then score):
 
-```
+```shell
 bun run eval
 ```
 
 Or run them separately:
 
-```
-node tools/evals/capture.mjs [url]
-node tools/evals/score.mjs
+```shell
+bun tools/evals/capture.mjs [url]
+bun tools/evals/score.mjs
 ```
 
 `capture.mjs` accepts an optional URL argument (default
@@ -81,7 +81,7 @@ non-zero if any metric fails.
 
 ## Negative control
 
-`node tools/evals/score.mjs --negative-control` horizontally smears the two
+`bun run eval:control` horizontally smears the two
 yaw captures in memory (simulating planar side-projection stretch) and
 requires the yaw legibility metric to fail on them. It exits non-zero if the
 smeared views still pass, proving the harness detects the regression it was

@@ -40,7 +40,8 @@
     "optimize-asset": "bun tools/asset-pipeline/optimize.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "eval": "node tools/evals/capture.mjs && node tools/evals/score.mjs"
+    "eval": "bun tools/evals/capture.mjs && bun tools/evals/score.mjs",
+    "eval:control": "bun tools/evals/score.mjs --negative-control"
   },
   "dependencies": {
     "three": "^0.178.0"

@@ -1,11 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 // Optional real-browser override, e.g. HOLOGLYPH_CHROME=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 const CHROME = process.env.HOLOGLYPH_CHROME;
 const DEFAULT_URL = 'http://localhost:5173';
-const OUTPUT_DIR = new URL('./out/', import.meta.url).pathname;
+const OUTPUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
 const VIEWPORT = { width: 1100, height: 800 };
 const CANVAS_SELECTOR = '#holo';
 const SETTLE_AFTER_LOAD_MS = 4000;
