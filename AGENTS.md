@@ -69,6 +69,8 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 - `bun run dev` - serve the demo app.
 - `bun run build-asset` / `bun run optimize-asset` - asset pipeline.
 - `bun run lint` - Biome lint (lint-only gate; formatter disabled).
+- `bun run eval` - visual-quality eval: deterministic captures + scored
+  report against `tools/evals/baseline.json` (dev server must be running).
 - `cairn hook all` - the authoritative commit gate; MUST exit 0 before any
   commit lands. Also runs the language battery from `cairn.config.yaml`
   (`gates:` block). `cairn scan` before committing; zero findings is the target.
@@ -151,8 +153,10 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 - `three` is a runtime dependency externalised from the library build; framework
   adapters take the framework namespace as a parameter (zero peer
   dependencies).
-- CI (`.github/workflows/pages.yml`) only builds and deploys the demo to GitHub
-  Pages; the verification battery runs locally via `cairn hook all`.
+- CI: `.github/workflows/ci.yml` runs type-check, lint, tests, build and the
+  visual eval (with negative control) on every PR; `pages.yml` deploys the
+  demo to GitHub Pages on main. `cairn hook all` remains the local
+  authoritative gate.
 - npm publish is deferred; do not publish without an explicit go-ahead.
 
 ## Testing & QA
@@ -165,9 +169,11 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
   regen-from-source byte equality; `test/speech-e2e.test.ts` drives the full
   viseme pipeline from a committed fixture.
 - Full verification chain before any merge: `bunx tsc --noEmit`,
-  `bunx vitest run`, `bun run build`, `bun run lint`, `cairn hook all`, plus a
-  live browser smoke test for anything visual (`bun run dev` + the
-  `tools/smoke/` Playwright scripts).
+  `bunx vitest run`, `bun run build`, `bun run lint`, `cairn hook all`, plus,
+  for anything visual, a live browser smoke test (`bun run dev` + the
+  `tools/smoke/` Playwright scripts) and `bun run eval` (must report overall
+  pass; recalibrate `tools/evals/baseline.json` only with an accepted visual
+  change).
 - Asset exports need pinned reproducible provenance: upstream SHA, acquisition
   command, consumed paths, licence copy at that SHA, and final asset hash.
 

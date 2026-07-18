@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - run: bunx tsc --noEmit
+      - run: bun run lint
+      - run: bunx vitest run
+      - run: bun run build
+
+  visual-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - run: bunx playwright install --with-deps chromium
+      - name: Start dev server
+        run: |
+          bun run dev &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:5173/ >/dev/null && break
+            sleep 1
+          done
+      - run: bun tools/evals/capture.mjs http://localhost:5173/
+      - run: bun tools/evals/score.mjs
+      - name: Negative control (harness must catch smear)
+        run: bun run eval:control
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-eval
+          path: tools/evals/out/

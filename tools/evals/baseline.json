@@ -1,0 +1,27 @@
+{
+  "viewYawRad": 0.6,
+  "viewMethod": "camera-orbit",
+  "silhouette": {
+    "clearColor": [5, 7, 13],
+    "clearTolerance": 30,
+    "minAlpha": 128
+  },
+  "glyph": {
+    "lumThreshold": 120
+  },
+  "baseline": {
+    "glyphLegibility": 7.579,
+    "coverageFront": 0.161,
+    "coverageYawPlus": 0.169,
+    "coverageYawMinus": 0.17,
+    "flow": 44.138,
+    "yawLegibilityPlus": 35.287,
+    "yawLegibilityMinus": 35.558
+  },
+  "thresholds": {
+    "glyphLegibility": { "warnRatio": 0.5, "passRatio": 0.8 },
+    "coverage": { "warnRatio": 0.5, "passRatio": 0.8 },
+    "flow": { "min": 0.0001, "warnRatio": 0.3, "failRatio": 3.0 },
+    "yawLegibility": { "warnRatio": 0.5, "passRatio": 0.8 }
+  }
+}

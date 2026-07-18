@@ -22,6 +22,11 @@ engine.on('error', (err) => {
 });
 
 void engine.mount(canvas, host);
+// Expose the live engine for headless eval harnesses (tools/evals). This is a
+// demo-only debug hook; the production library never sets window globals.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __hologlyphEngine?: typeof engine }).__hologlyphEngine = engine;
+}
 
 speakBtn.addEventListener('click', () => {
   void engine.speak('Hello, I am hologlyph, a text-skinned talking head.');

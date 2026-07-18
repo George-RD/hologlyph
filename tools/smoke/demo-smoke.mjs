@@ -1,9 +1,10 @@
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { chromium } = require('/Users/george/node_modules/playwright');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+import { chromium } from 'playwright';
 
-const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox', '--use-angle=metal'] });
+const CHROME = process.env.HOLOGLYPH_CHROME;
+const browser = await chromium.launch({
+  ...(CHROME ? { executablePath: CHROME } : {}),
+  args: ['--no-sandbox', '--use-angle=metal'],
+});
 const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
