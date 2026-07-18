@@ -20,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
       - run: bun install --frozen-lockfile
       - run: bunx vite build demo --config demo/vite.config.ts
       - uses: actions/upload-pages-artifact@v3
