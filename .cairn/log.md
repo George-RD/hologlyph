@@ -64,3 +64,4 @@
 - scan: nodes=16, findings=34, errors=0
 - scan: nodes=16, findings=34, errors=0
 - archive: 2026-07-18-eval-followups merged; no operations
+- scan: nodes=16, findings=38, errors=0

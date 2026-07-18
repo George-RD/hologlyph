@@ -21,6 +21,7 @@ import { RIG_EXPRESSION_MORPHS, RIG_VISEME_MORPHS, clamp01 } from '../contracts'
 import { weightsFor, lerpWeights, emptyExpressionWeights } from './expressions';
 import { GazeController, ndcToGazeOffset, type Rng, type Clock } from './gaze';
 import { NOD_SPECS } from './nods';
+import { IdleController } from './idle';
 
 type Bone = NonNullable<LoadedAvatar['bones']['eyeL']>;
 interface Vec3 {
@@ -33,6 +34,12 @@ interface Vec3 {
 const MOUTH_NAMES = [...RIG_VISEME_MORPHS, 'jaw_open'];
 const MOUTH: Record<string, true> = {};
 for (const m of MOUTH_NAMES) MOUTH[m] = true;
+/** Blink morphs idle may fill below expression priority (resting face only). */
+const BLINK_NAMES: Record<string, true> = {
+  exp_blink: true,
+  exp_blink_l: true,
+  exp_blink_r: true,
+};
 
 /** Attack/release time constants (seconds) for mouth-region smoothing. */
 const TAU_ATTACK = 0.05;
@@ -58,6 +65,8 @@ const FOLLOW_HEAD_TAU_REDUCED = 12;
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
+/** Idle head-motion return rate (per second) after explicit head control ends. */
+const IDLE_HEAD_BLEND_UP_K = 1;
 
 function emptyMouthWeights(): Record<string, number> {
   const w: Record<string, number> = {};
@@ -72,6 +81,11 @@ export interface MotionEngineOptions {
   clock?: Clock;
   /** Idle timeout (seconds) before the gaze eases back to forward after the last pointer target. */
   gazeFollowTimeout?: number;
+  /**
+   * Baseline idle motion (breathing, micro drift, weight-shift, blinks).
+   * Defaults on; pass false to disable or { intensity } to scale amplitudes.
+   */
+  idle?: boolean | { intensity?: number };
 }
 export function createMotionEngine(options: MotionEngineOptions = {}): MotionEngine {
   const rng: Rng = options.rng ?? Math.random;
@@ -90,6 +104,10 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   // Smoothed head follow offset (subtle, eyes-only under reduced motion).
   let curFollowYaw = 0;
   let curFollowPitch = 0;
+  // Continuous idle-head blend: 0 while explicit head control (nod/drag) is
+  // active, eased slowly back to 1 afterward so idle never snaps in/out and
+  // never hard-applies an accumulated random drift offset when control ends.
+  let idleHeadBlend = 1;
   let baseNeck: Vec3 | null = null;
 
   // Persistent smoothed weights for the mouth region. A new frame only
@@ -104,6 +122,10 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   let visemeFrame: VisemeFrame | null = null;
 
   const gaze = new GazeController(rng, clockOpt, { followTimeout: options.gazeFollowTimeout });
+  const idleOpt = options.idle;
+  const idleIntensity =
+    idleOpt === false ? 0 : idleOpt === true || idleOpt === undefined ? 1 : idleOpt.intensity ?? 1;
+  const idle = new IdleController({ rng, clock: clockOpt, intensity: idleIntensity });
   let reduced = false;
   let nod: { kind: NodClass; start: number } | null = null;
   let lastNow = 0;
@@ -153,6 +175,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   function setReducedMotion(r: boolean): void {
     reduced = r;
     gaze.setReduced(r);
+    idle.setReduced(r);
   }
   function setHeadTarget(yaw: number, pitch: number): void {
     targetYaw = Math.max(-DRAG_YAW_LIMIT, Math.min(DRAG_YAW_LIMIT, yaw));
@@ -183,6 +206,10 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
       applyEye(avatar.bones.eyeL, baseEyeL, g);
       applyEye(avatar.bones.eyeR, baseEyeR, g);
     }
+    // 2b. Idle layer: deterministic breathing/drift/blink, composed below
+    // expression and viseme priority. It blends out while speaking.
+    const speaking = visemeFrame !== null;
+    const idlePose = idle.update(dt, now, speaking);
 
     // 3. Procedural nod envelope on the head bone.
     let nodPitch = 0;
@@ -216,13 +243,26 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     curFollowYaw += (followTargetYaw - curFollowYaw) * followK;
     curFollowPitch += (followTargetPitch - curFollowPitch) * followK;
 
+    // Idle head motion yields to explicit head control: it is fully
+    // suppressed the moment a nod is active or the head is still posing
+    // (curYaw/curPitch non-zero), and eases slowly back in once control ends
+    // so idle never snaps in/out or hard-applies an accumulated drift offset.
+    const explicitHead = nod !== null || Math.hypot(curYaw, curPitch) > 1e-4;
+    if (explicitHead) {
+      idleHeadBlend = 0;
+    } else {
+      const blendK = Math.min(1, dt * IDLE_HEAD_BLEND_UP_K);
+      idleHeadBlend += (1 - idleHeadBlend) * blendK;
+    }
     if (avatar?.bones.head && baseHead) {
-      avatar.bones.head.rotation.x = baseHead.x + nodPitch + curPitch + curFollowPitch;
-      avatar.bones.head.rotation.y = baseHead.y + curYaw + curFollowYaw;
+      avatar.bones.head.rotation.x = baseHead.x + nodPitch + curPitch + curFollowPitch + idlePose.pitch * idleHeadBlend;
+      avatar.bones.head.rotation.y = baseHead.y + curYaw + curFollowYaw + idlePose.yaw * idleHeadBlend;
+      avatar.bones.head.rotation.z = baseHead.z + idlePose.roll * idleHeadBlend;
     }
     if (avatar?.bones.neck && baseNeck) {
-      avatar.bones.neck.rotation.x = baseNeck.x + curPitch * NECK_DRAG_FRACTION + curFollowPitch * NECK_FOLLOW_FRACTION;
-      avatar.bones.neck.rotation.y = baseNeck.y + curYaw * NECK_DRAG_FRACTION + curFollowYaw * NECK_FOLLOW_FRACTION;
+      avatar.bones.neck.rotation.x = baseNeck.x + curPitch * NECK_DRAG_FRACTION + curFollowPitch * NECK_FOLLOW_FRACTION + idlePose.pitch * idleHeadBlend * NECK_DRAG_FRACTION;
+      avatar.bones.neck.rotation.y = baseNeck.y + curYaw * NECK_DRAG_FRACTION + curFollowYaw * NECK_FOLLOW_FRACTION + idlePose.yaw * idleHeadBlend * NECK_DRAG_FRACTION;
+      avatar.bones.neck.rotation.z = baseNeck.z + idlePose.roll * idleHeadBlend * NECK_DRAG_FRACTION;
     }
 
     // 4. Visemes override the mouth region with attack/release smoothing;
@@ -242,7 +282,12 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
           mouthCurrent[name] = next;
           avatar.setMorph(name, clamp01(next));
         } else {
-          avatar.setMorph(name, clamp01(displayWeights[name] ?? 0));
+          const expr = clamp01(displayWeights[name] ?? 0);
+          // Idle composes below expression priority: it only fills the blink
+          // morphs when the explicit expression does not already drive them
+          // (resting face), so it never fights an explicit expression or viseme.
+          const idleBlinkVal = BLINK_NAMES[name] && expr < 1e-3 ? idlePose.blink : 0;
+          avatar.setMorph(name, clamp01(Math.max(expr, idleBlinkVal)));
         }
       }
       for (const name of RIG_VISEME_MORPHS) {
@@ -271,6 +316,8 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     curPitch = 0;
     curFollowYaw = 0;
     curFollowPitch = 0;
+    idleHeadBlend = 1;
+    idle.dispose();
   }
 
   return {
