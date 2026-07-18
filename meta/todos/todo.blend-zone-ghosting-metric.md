@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.shaders
-status: open
+status: done
 created: 2026-07-18
 ---
 

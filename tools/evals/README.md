@@ -52,6 +52,8 @@ emits `tools/evals/out/report.json`.
 - `front.png` - head facing forward
 - `yaw-plus-0.6.png` - camera orbited to the requested +0.6 rad view
 - `yaw-minus-0.6.png` - camera orbited to the requested -0.6 rad view
+- `yaw-0.785.png` - camera orbited to the requested 45-degree (0.785 rad)
+  view; isolates the triplanar blend zone for the ghosting metric
 - `close-up.png` - a tight crop used for the legibility proxy
 - `flow-0.png`, `flow-1.png` - two frames one second apart for the flow metric
 
@@ -78,6 +80,12 @@ non-zero if any metric fails.
 - **Eye occlusion** - skipped. Detecting a bright sphere cluster outside the
   face region proved too fragile to be a trustworthy gate, so it is documented
   here rather than scored.
+- **Blend-zone ghosting** - on the 45-degree view, the mean per-row fraction of
+  bright glyph pixels whose twin (another bright pixel of the head silhouette)
+  sits a few columns away (2-6 px) in a different glyph run. A clean stroke
+  contributes almost none; a ghosted copy repeats the pattern at a fixed offset
+  so nearly every pixel gains a twin. Higher is worse, so it fails above the
+  calibrated ratio band rather than below it.
 
 ## Negative control
 
@@ -86,6 +94,8 @@ yaw captures in memory (simulating planar side-projection stretch) and
 requires the yaw legibility metric to fail on them. It exits non-zero if the
 smeared views still pass, proving the harness detects the regression it was
 built for. CI runs it after every scored eval.
+The 45-degree blend-zone view is also duplicated and offset in memory (a
+synthetic ghosted copy), and the blend-zone ghosting metric must fail on it.
 
 ## Determinism
 

@@ -3,9 +3,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 
-const OUTPUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
-const BASELINE_PATH = fileURLToPath(new URL('./baseline.json', import.meta.url));
-const REPORT_PATH = join(OUTPUT_DIR, 'report.json');
 
 // ---------------------------------------------------------------------------
 // Dependency-free PNG decoder (truecolour / truecolour+alpha, 8-bit, filters
@@ -27,9 +24,10 @@ function crc32(buffer) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function decodePng(path) {
-  const data = readFileSync(path);
-  if (data.readUInt32BE(0) !== 0x89504e47) throw new Error(`not a PNG file: ${path}`);
+export function decodePng(input) {
+  const data = typeof input === 'string' ? readFileSync(input) : input;
+  const label = typeof input === 'string' ? input : '<buffer>';
+  if (data.readUInt32BE(0) !== 0x89504e47) throw new Error(`not a PNG file: ${typeof input === 'string' ? input : '<buffer>'}`);
   let pos = 8;
   let width = 0;
   let height = 0;
@@ -53,14 +51,14 @@ function decodePng(path) {
     }
     const stored = data.readUInt32BE(start + len);
     if (crc32(data.subarray(pos + 4, start + len)) !== stored) {
-      throw new Error(`CRC mismatch in ${type} chunk of ${path}`);
+      throw new Error(`CRC mismatch in ${type} chunk of ${label}`);
     }
     pos = start + len + 4;
   }
   if (colorType !== 2 && colorType !== 6) {
-    throw new Error(`unsupported PNG colorType ${colorType} in ${path}`);
+    throw new Error(`unsupported PNG colorType ${colorType} in ${label}`);
   }
-  if (bitDepth !== 8) throw new Error(`unsupported PNG bitDepth ${bitDepth} in ${path}`);
+  if (bitDepth !== 8) throw new Error(`unsupported PNG bitDepth ${bitDepth} in ${label}`);
   const channels = colorType === 6 ? 4 : 3;
   const raw = inflateSync(Buffer.concat(idat));
   const stride = width * channels;
@@ -91,7 +89,7 @@ function decodePng(path) {
           recon = v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
           break;
         }
-        default: throw new Error(`unsupported PNG filter type ${filter} in ${path}`);
+        default: throw new Error(`unsupported PNG filter type ${filter} in ${label}`);
       }
       cur[i] = recon & 0xff;
     }
@@ -105,11 +103,11 @@ function decodePng(path) {
 // Image helpers
 // ---------------------------------------------------------------------------
 const REC709 = [0.2126, 0.7152, 0.0722];
-function luminance(r, g, b) {
+export function luminance(r, g, b) {
   return REC709[0] * r + REC709[1] * g + REC709[2] * b;
 }
 
-function silhouetteMask(img, clear, tolerance, minAlpha) {
+export function silhouetteMask(img, clear, tolerance, minAlpha) {
   const { width, height, channels, data } = img;
   const mask = new Uint8Array(width * height);
   let count = 0;
@@ -235,6 +233,90 @@ function silhouetteMeanAbsDelta(imgA, imgB, mask) {
   return n > 0 ? sum / n : 0;
 }
 
+// Blend-zone ghosting estimator. Triplanar sampling cross-fades two glyph
+// sets near a 45-degree surface, which can read as faint doubled glyphs. This
+// measures self-similarity of the bright glyph signal at small horizontal
+// offsets (2-6 px): a clean stroke has few pixels whose twin (another bright
+// pixel) sits a few columns away, whereas a ghosted copy repeats the whole
+// pattern at a fixed offset so nearly every bright pixel gains a twin. The
+// score is the mean per-row twin fraction, so clean views trend toward zero
+// and ghosted views toward one. `lumThreshold` selects glyph pixels; `mask`
+// is the head-silhouette mask.
+
+// Status for metrics where a larger value is worse (e.g. ghosting). Pass when
+// at or below the baseline times passRatio, warn up to warnRatio, else fail.
+function highIsBadStatus(value, baseline, passRatio, warnRatio) {
+  if (baseline == null || baseline <= 0) return { status: 'baseline-missing' };
+  if (value <= baseline * passRatio) return { status: 'pass' };
+  if (value <= baseline * warnRatio) return { status: 'warn' };
+  return { status: 'fail' };
+}
+export function blendZoneGhosting(img, mask, lumThreshold) {
+  const { width, height, channels, data } = img;
+  const offsets = [2, 3, 4, 5, 6];
+  let twinSum = 0;
+  let rowsWithGlyph = 0;
+  for (let y = 0; y < height; y++) {
+    const bright = [];
+    for (let x = 0; x < width; x++) {
+      const m = y * width + x;
+      if (!mask[m]) continue;
+      const i = m * channels;
+      if (luminance(data[i], data[i + 1], data[i + 2]) > lumThreshold) bright.push(x);
+    }
+    if (bright.length === 0) continue;
+    rowsWithGlyph++;
+    // Partition bright pixels into contiguous runs. A twin must lie in a
+    // different run, so the width of a single stroke never registers as a
+    // ghost copy.
+    const isBright = new Uint8Array(width);
+    const runId = new Int16Array(width).fill(-1);
+    let run = 0;
+    let start = bright[0];
+    let prev = bright[0];
+    for (let k = 1; k < bright.length; k++) {
+      if (bright[k] === prev + 1) { prev = bright[k]; continue; }
+      for (let x = start; x <= prev; x++) { isBright[x] = 1; runId[x] = run; }
+      run++;
+      start = bright[k];
+      prev = bright[k];
+    }
+    for (let x = start; x <= prev; x++) { isBright[x] = 1; runId[x] = run; }
+    let twins = 0;
+    for (const x of bright) {
+      const r = runId[x];
+      let hasTwin = false;
+      for (const off of offsets) {
+        const right = x + off;
+        const left = x - off;
+        if (right < width && isBright[right] && runId[right] !== r) { hasTwin = true; break; }
+        if (left >= 0 && isBright[left] && runId[left] !== r) { hasTwin = true; break; }
+      }
+      if (hasTwin) twins++;
+    }
+    twinSum += twins / bright.length;
+  }
+  return rowsWithGlyph > 0 ? twinSum / rowsWithGlyph : 0;
+}
+// Negative-control transform: duplicate every bright glyph pixel and shift the
+// copy right by `offset` pixels, in place on a copy. This reproduces the
+// doubled-edge signature of blend-zone ghosting from an otherwise clean view,
+// so the ghosting metric must classify the result as fail.
+export function duplicateAndOffset(img, offset, lumThreshold) {
+  const { width, height, channels, data } = img;
+  const out = Buffer.from(data);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width - offset; x++) {
+      const i = (y * width + x) * channels;
+      if (luminance(data[i], data[i + 1], data[i + 2]) > lumThreshold) {
+        const j = (y * width + (x + offset)) * channels;
+        for (let c = 0; c < Math.min(channels, 3); c++) out[j + c] = data[i + c];
+      }
+    }
+  }
+  return { width, height, channels, data: out };
+}
+
 // ---------------------------------------------------------------------------
 // Status helpers
 // ---------------------------------------------------------------------------
@@ -263,16 +345,19 @@ function worst(...statuses) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-function loadBaseline() {
+function loadBaseline(path) {
   try {
-    return JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
+    return JSON.parse(readFileSync(path, 'utf8'));
   } catch (error) {
     throw new Error(`Could not read baseline.json: ${error.message}`);
   }
 }
 
 function main() {
-  const baseline = loadBaseline();
+  const OUTPUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
+  const BASELINE_PATH = fileURLToPath(new URL('./baseline.json', import.meta.url));
+  const REPORT_PATH = join(OUTPUT_DIR, 'report.json');
+  const baseline = loadBaseline(BASELINE_PATH);
   const cfg = baseline.silhouette ?? {};
   const clear = cfg.clearColor ?? [5, 7, 13];
   const tolerance = cfg.clearTolerance ?? 30;
@@ -282,7 +367,7 @@ function main() {
   const t = baseline.thresholds ?? {};
 
   const files = readdirSync(OUTPUT_DIR).filter((f) => f.endsWith('.png'));
-  const need = ['front.png', 'yaw-plus-0.6.png', 'yaw-minus-0.6.png', 'close-up.png', 'flow-0.png', 'flow-1.png'];
+  const need = ['front.png', 'yaw-plus-0.6.png', 'yaw-minus-0.6.png', 'yaw-0.785.png', 'close-up.png', 'flow-0.png', 'flow-1.png'];
   const missing = need.filter((f) => !files.includes(f));
   if (missing.length > 0) {
     throw new Error(`Missing capture PNGs in ${OUTPUT_DIR}: ${missing.join(', ')}`);
@@ -294,11 +379,15 @@ function main() {
   const closeUp = decodePng(join(OUTPUT_DIR, 'close-up.png'));
   const flow0 = decodePng(join(OUTPUT_DIR, 'flow-0.png'));
   const flow1 = decodePng(join(OUTPUT_DIR, 'flow-1.png'));
+  const yaw0785 = decodePng(join(OUTPUT_DIR, 'yaw-0.785.png'));
+  const ghostMask = silhouetteMask(yaw0785, clear, tolerance, minAlpha).mask;
 
   const negativeControl = process.argv.includes('--negative-control');
+  let ghostImg = yaw0785;
   if (negativeControl) {
     smearHorizontally(yawPlus, 6);
     smearHorizontally(yawMinus, 6);
+    ghostImg = duplicateAndOffset(yaw0785, 4, lumThreshold);
   }
 
   const closeUpGrad = meanGradient(closeUp);
@@ -334,12 +423,23 @@ function main() {
   const flowMask = silhouetteMask(flow0, clear, tolerance, minAlpha).mask;
   const flowValue = silhouetteMeanAbsDelta(flow0, flow1, flowMask);
   const flow = { value: round(flowValue), baseline: b.flow, min: t.flow?.min ?? 0.0001, ceiling: b.flow != null ? round(b.flow * (t.flow?.failRatio ?? 3.0)) : null, ...flowStatus(flowValue, b.flow, t.flow?.min ?? 0.0001, t.flow?.warnRatio ?? 0.3, t.flow?.failRatio ?? 3.0) };
+  const gt = t.blendZoneGhosting ?? {};
+  const ghostValue = blendZoneGhosting(ghostImg, ghostMask, lumThreshold);
+  const ghosting = {
+    value: round(ghostValue),
+    path: join(OUTPUT_DIR, 'yaw-0.785.png'),
+    baseline: b.blendZoneGhosting,
+    passCutoff: b.blendZoneGhosting != null ? round(b.blendZoneGhosting * (gt.passRatio ?? 1.5)) : null,
+    warnCutoff: b.blendZoneGhosting != null ? round(b.blendZoneGhosting * (gt.warnRatio ?? 2.0)) : null,
+    ...highIsBadStatus(ghostValue, b.blendZoneGhosting, gt.passRatio ?? 1.5, gt.warnRatio ?? 2.0),
+  };
 
   const notes = [];
   notes.push('Eye-occlusion metric skipped: measuring bright sphere clusters outside the face region proved too fragile (see README).');
   notes.push(`Side views use a true camera orbit of +/-${baseline.viewYawRad} rad around the head origin (renderer camera initial position (0, 0.05, 2.4)), not head rotation, so the requested yaw angle is honoured without changing src/.`);
+  notes.push('A 45-degree (yaw 0.785 rad) camera-orbit view isolates the triplanar blend zone; the blend-zone ghosting metric scores doubled-edge energy there (higher is worse).');
 
-  const overall = worst(legibility.status, yawLegibilityStatus, coverageStatus, flow.status);
+  const overall = worst(legibility.status, yawLegibilityStatus, coverageStatus, flow.status, ghosting.status);
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -350,6 +450,7 @@ function main() {
       yawLegibility,
       coverage,
       flow,
+      blendZoneGhosting: ghosting,
       eyeOcclusion: { status: 'skipped', reason: 'fragile; documented in README' },
     },
     overall,
@@ -362,11 +463,11 @@ function main() {
   console.log(JSON.stringify(report, null, 2));
 
   if (negativeControl) {
-    const controlStatuses = [yawLegibility.yawPlus.status, yawLegibility.yawMinus.status];
+    const controlStatuses = [yawLegibility.yawPlus.status, yawLegibility.yawMinus.status, ghosting.status];
     if (!controlStatuses.every((s) => s === 'fail')) {
-      throw new Error(`Negative control FAILED to fail: smeared yaw views scored [${controlStatuses.join(', ')}]; both must be fail. Harness is not protective.`);
+      throw new Error(`Negative control FAILED to fail: views scored [${controlStatuses.join(', ')}]; yaw smear and 45-degree duplicate must all be fail. Harness is not protective.`);
     }
-    console.log('Negative control OK: both smeared yaw views score fail.');
+    console.log('Negative control OK: smeared yaw views and duplicated 45-degree view all score fail.');
     return;
   }
   if (overall === 'fail') {
@@ -378,4 +479,4 @@ function round(value) {
   return Math.round(value * 1000) / 1000;
 }
 
-main();
+if (import.meta.main) main();

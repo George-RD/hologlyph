@@ -16,12 +16,14 @@
     "coverageYawMinus": 0.17,
     "flow": 44.138,
     "yawLegibilityPlus": 35.287,
-    "yawLegibilityMinus": 35.558
+    "yawLegibilityMinus": 35.558,
+    "blendZoneGhosting": 0.492
   },
   "thresholds": {
     "glyphLegibility": { "warnRatio": 0.5, "passRatio": 0.8 },
     "coverage": { "warnRatio": 0.5, "passRatio": 0.8 },
     "flow": { "min": 0.0001, "warnRatio": 0.3, "failRatio": 3.0 },
-    "yawLegibility": { "warnRatio": 0.5, "passRatio": 0.8 }
+    "yawLegibility": { "warnRatio": 0.5, "passRatio": 0.8 },
+    "blendZoneGhosting": { "warnRatio": 1.5, "passRatio": 1.25 }
   }
 }

@@ -112,6 +112,9 @@ try {
   captures.push(await captureCanvas('flow-0'));
   await page.waitForTimeout(1000);
   captures.push(await captureCanvas('flow-1'));
+  await settlePage();
+  await orbitCamera(0.785);
+  captures.push(await captureCanvas('yaw-0.785'));
 } finally {
   await browser.close();
 }
