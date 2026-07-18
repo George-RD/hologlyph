@@ -13,6 +13,8 @@ import {
   buildSkinMaterial,
   GLOW_GAIN,
   planarUV,
+  rowFlowUV,
+  triplanarWeights,
   PLANAR_DENSITY,
   RIM_GAIN,
   SHADE_AMBIENT,
@@ -151,10 +153,29 @@ describe('planar skin projection (pure)', () => {
     expect(planarUV(0, 1).v).toBeCloseTo(V_SCALE, 6);
     expect(planarUV(0, 0.5).v).toBeCloseTo(V_SCALE / 2, 6);
   });
+  it('flows content horizontally per row while keeping bind-pose v fixed', () => {
+    const first = rowFlowUV(0.1, 0.2, 0);
+    const moved = rowFlowUV(0.1, 0.2, 1);
+    const adjacent = rowFlowUV(0.1, 0.2 + 1 / PLANAR_DENSITY, 1);
+    expect(moved.v).toBeCloseTo(first.v, 6);
+    expect(moved.u).not.toBeCloseTo(first.u, 6);
+    expect(adjacent.v).toBeGreaterThan(moved.v);
+    expect(adjacent.u - rowFlowUV(0.1, 0.2 + 1 / PLANAR_DENSITY, 0).u).not.toBeCloseTo(
+      moved.u - first.u,
+      6,
+    );
+  });
+  it('normalises squared triplanar weights and favours the dominant axis', () => {
+    const weights = triplanarWeights(0.1, 0.2, 0.97);
+    expect(weights.x + weights.y + weights.z).toBeCloseTo(1, 6);
+    expect(weights.z).toBeGreaterThan(weights.x);
+    expect(weights.z).toBeGreaterThan(weights.y);
+    expect(triplanarWeights(0, 0, 0)).toEqual({ x: 0, y: 0, z: 0 });
+  });
 
   it('uses a low planar density so glyphs read large on the bust', () => {
-    // ~35% larger letters than the old 124: 92 cells per world unit.
-    expect(PLANAR_DENSITY).toBe(92);
+    // 20 cells per world unit keeps individual glyphs recognisable at demo size.
+    expect(PLANAR_DENSITY).toBe(20);
     // U_SCALE / V_SCALE must still derive from the density and stay square.
     expect(U_SCALE).toBeCloseTo(PLANAR_DENSITY / 96, 6);
     expect(V_SCALE).toBeCloseTo(PLANAR_DENSITY / 64, 6);
