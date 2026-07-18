@@ -1,0 +1,113 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "src/**",
+      "tools/**",
+      "demo/**",
+      "test/**",
+      "!**/*.d.ts",
+      "!tools/asset-pipeline/.cache",
+      "!tools/asset-pipeline/.build"
+    ]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "off"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/core/engine.ts",
+        "src/shaders/materials.ts",
+        "src/text-skin/grid.ts",
+        "src/text-skin/index.ts",
+        "test/shaders.test.ts"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/adapters/react.ts",
+        "src/adapters/svelte.ts",
+        "src/adapters/vue.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConfusingVoidType": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/contracts.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConfusingVoidType": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "test/speech-e2e.test.ts",
+        "test/core.test.ts",
+        "test/motion.test.ts",
+        "test/text-skin.test.ts",
+        "test/element.test.ts",
+        "test/speech.test.ts",
+        "src/speech/adapters/demo.ts",
+        "src/speech/adapters/provider.ts",
+        "tools/asset-pipeline/optimize.ts",
+        "tools/asset-pipeline/build-bust.ts",
+        "tools/asset-pipeline/gen-viseme-fixture.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          },
+          "suspicious": {
+            "useIterableCallbackReturn": "off",
+            "noConfusingVoidType": "off"
+          },
+          "correctness": {
+            "noUnsafeOptionalChaining": "off"
+          }
+        }
+      }
+    }
+  ]
+}

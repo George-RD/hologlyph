@@ -17,7 +17,6 @@
 import type {
   BehaviorState,
   Engine,
-  EngineEvents,
   EngineOptions,
   Expression,
   TextSkinSource,

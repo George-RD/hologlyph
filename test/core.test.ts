@@ -239,7 +239,7 @@ vi.mock('../src/speech', () => {
   h.demoAdapter = adapter;
   return {
     createSpeechEngine() {
-      const emitter = h.makeEmitter<{ start: void; end: void; stall: void }>();
+      const emitter = h.makeEmitter<{ start: undefined; end: undefined; stall: undefined }>();
       const speech: FakeSpeech = {
         adapter: undefined,
         speaking: false,
@@ -501,14 +501,14 @@ describe('engine lifecycle', () => {
     const engine = createEngine();
     engine.dispose();
     engine.dispose();
-    expect(h.registry.behavior.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.motion.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.speech.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.textSkin.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.vfx.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.renderer.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.audio.at(-1)!.disposeCount).toBe(1);
-    expect(h.registry.asset.at(-1)!.disposeCount).toBe(1);
+    expect(h.registry.behavior.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.motion.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.speech.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.textSkin.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.vfx.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.renderer.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.audio.at(-1)?.disposeCount).toBe(1);
+    expect(h.registry.asset.at(-1)?.disposeCount).toBe(1);
   });
 
   it('pauses the render loop when the tab is hidden and resumes on visible', () => {

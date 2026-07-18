@@ -233,7 +233,7 @@ describe('viseme end-to-end (speech -> motion)', () => {
       expect(maxWeight[canonical] ?? 0).toBeGreaterThan(0.3);
     }
     // Polly has no nn symbol, so this path must never drive it.
-    expect(maxWeight['viseme_nn'] ?? 0).toBe(0);
+    expect(maxWeight.viseme_nn ?? 0).toBe(0);
   });
 
   it('canonical VisemeFrame timeline drives all 15 visemes', async () => {
@@ -258,6 +258,6 @@ describe('viseme end-to-end (speech -> motion)', () => {
       expect(maxWeight[morph] ?? 0).toBeGreaterThan(0.8);
     }
     // The gap closes: viseme_nn is reachable through the canonical timeline.
-    expect(maxWeight['viseme_nn'] ?? 0).toBeGreaterThan(0.8);
+    expect(maxWeight.viseme_nn ?? 0).toBeGreaterThan(0.8);
   });
 });

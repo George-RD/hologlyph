@@ -17,7 +17,7 @@
  * ```
  */
 
-import { defineHologlyphHead, HologlyphHeadElement } from '../element';
+import { defineHologlyphHead, type HologlyphHeadElement } from '../element';
 
 export interface HologlyphHeadParams {
   src?: string;

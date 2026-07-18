@@ -175,11 +175,11 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     curYaw += (targetYaw - curYaw) * dragK;
     curPitch += (targetPitch - curPitch) * dragK;
 
-    if (avatar && avatar.bones.head && baseHead) {
+    if (avatar?.bones.head && baseHead) {
       avatar.bones.head.rotation.x = baseHead.x + nodPitch + curPitch;
       avatar.bones.head.rotation.y = baseHead.y + curYaw;
     }
-    if (avatar && avatar.bones.neck && baseNeck) {
+    if (avatar?.bones.neck && baseNeck) {
       avatar.bones.neck.rotation.x = baseNeck.x + curPitch * NECK_DRAG_FRACTION;
       avatar.bones.neck.rotation.y = baseNeck.y + curYaw * NECK_DRAG_FRACTION;
     }

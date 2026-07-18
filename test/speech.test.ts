@@ -15,10 +15,8 @@ import {
 import type { FrameScheduler } from '../src/speech/adapters/provider';
 import type {
   AudioEngine,
-  Listener,
   SpeechMode,
   TTSAdapter,
-  UtteranceEvents,
   UtteranceHandle,
   VisemeFrame,
 } from '../src/contracts';

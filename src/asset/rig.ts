@@ -11,7 +11,7 @@
  * unit-testable without loading a GLB over the network.
  */
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import {
   RIG_VISEME_MORPHS,
   RIG_EXPRESSION_MORPHS,
@@ -166,7 +166,7 @@ export function buildLoadedAvatar(
         if (!material) continue;
         for (const value of Object.values(material)) {
           const texture = value as THREE.Texture;
-          if (texture && texture.isTexture) texture.dispose();
+          if (texture?.isTexture) texture.dispose();
         }
         material.dispose();
       }

@@ -90,7 +90,6 @@ export class GazeController {
         this.nextAt = now + 1.5 + this.rng();
         break;
       }
-      case 'idle':
       default: {
         // Gentle wander.
         this.target = {

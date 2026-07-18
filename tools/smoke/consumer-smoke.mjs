@@ -41,7 +41,7 @@ if (stats.contentFraction < 0.08) failures.push(`bust content fraction too low: 
 if (!requests.some((u) => u.includes('default-avatar'))) failures.push('lazy default-avatar chunk was never requested');
 if (errors.length > 0) failures.push(`page errors: ${errors.join('; ')}`);
 if (failures.length > 0) {
-  console.error('SMOKE FAILED:\n- ' + failures.join('\n- '));
+  console.error(`SMOKE FAILED:\n- ${failures.join('\n- ')}`);
   process.exit(1);
 }
 console.log('SMOKE PASSED');

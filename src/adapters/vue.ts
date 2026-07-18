@@ -28,7 +28,7 @@
  * ```
  */
 
-import { defineHologlyphHead, HologlyphHeadElement } from '../element';
+import { defineHologlyphHead, type HologlyphHeadElement } from '../element';
 
 interface VueComponentInstance {
   $refs: Record<string, HologlyphHeadElement>;

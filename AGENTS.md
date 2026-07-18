@@ -1,151 +1,185 @@
-# AGENTS.md: Hologlyph
+# Repository Guidelines
 
-## What Hologlyph is
+## Project Overview
 
 Hologlyph is a web-native, text-skinned talking-head library: a small 3D avatar
 that renders a face and speech from a declarative text surface, not a video
-stream. It is a TypeScript library built on Three.js, shipped as an ES module
-with thin framework wrappers. The core runtime drives a player loop, a renderer
-with WebGPU/WebGL2 fallback, an offscreen text skin, motion and speech engines,
-audio analysis, and a behaviour state machine. An asset pipeline (build-time only,
-not shipped) optimises GLB avatars under a tight delivery budget, and adapter
-modules package the engine as a Web Component plus React/Vue/Svelte wrappers.
-The architecture is declared and enforced by cairn (see below).
+stream. TypeScript strict, built on Three.js, shipped as an ES module with thin
+framework wrappers. Architecture is declared and enforced by cairn (see
+Development Commands and the cairn sections below).
 
-## Repository map
+## Architecture & Data Flow
 
-- `src/` - runtime source, one directory per cairn.blueprint node: `core/`,
-  `renderer/`, `text-skin/`, `shaders/`, `motion/`, `speech/`, `audio/`,
-  `behavior/`, `asset/`, `element/`, `adapters/`. `contracts.ts` (see
-  Conventions) and `index.ts` (entry point) live at `src/` root.
-- `tools/asset-pipeline/` - build-time GLB optimisation (`hologlyph.asset.pipeline`),
-  never bundled into the shipped library.
-- `demo/` - the Vite demo app served by `bun run dev`.
-- `meta/` - cairn artefact tree: `changes/` (active and `archive/`),
-  `decisions/`, `research/`, `sources/`, `todos/`, `contracts/`, plus
-  `cairn-feedback.jsonl` (friction log, see below).
-- `cairn.blueprint` - the declared architecture graph; `cairn.config.yaml`
-  configures the reconciler. `map.json`/`map.md` are generated snapshots, do not
-  hand-edit.
-- `.cairn/` - cairn's own state and the scaffolded agent guide `.cairn/AGENTS.md`.
+Three containers, 16 nodes, declared in `cairn.blueprint` (acyclic graph):
 
-## Cairn workflow
+- `hologlyph.runtime` - core, renderer, text-skin, shaders, motion, speech,
+  audio, behavior
+- `hologlyph.asset` - loader (`src/asset/`, `assets/`), pipeline
+  (`tools/asset-pipeline/`, build-time only, never bundled)
+- `hologlyph.adapter` - web component (`src/element/`), framework wrappers
+  (`src/adapters/`)
 
-Cairn keeps `cairn.blueprint` and the code in sync and gates drift at commit.
-Read `.cairn/AGENTS.md` for the full agent guide (orientation, artefact formats,
-the dev-loop skills in `.claude/skills/`). Caveat: that file is auto-scaffolded
-and is not regenerated on cairn upgrades, so it can lag the live CLI (it once
-said `cairn changes` where 0.3.0 says `cairn change list`); where its commands
-disagree with this file, this file wins. This section covers the essentials you
-must not skip.
+Contract-first: `src/contracts.ts` is the shared type-and-constant spine and the
+ONLY permitted cross-container import surface beyond edges declared in
+`cairn.blueprint`. Every subsystem interface (`Engine`, `MotionEngine`,
+`SpeechEngine`, `AudioEngine`, `VFXEngine`, `RendererHost`, `TextSkinEngine`,
+`AssetLoader`, `BehaviorMachine`) plus the canonical rig vocabulary
+(`RIG_VISEME_MORPHS`, `RIG_EXPRESSION_MORPHS`, `RIG_BONES`) lives there. Modules
+implement the interfaces and never import each other's concrete types.
 
-### Orientation
+Data flow: `createEngine()` builds `EngineImpl` (`src/core/engine.ts`), the
+composition root that owns every subsystem. `engine.init(canvas)` creates the
+renderer (WebGPU with WebGL2 fallback), loads the avatar (default bust or
+`avatarUrl`), wires text-skin materials onto morph meshes (skipping
+`KEEP_MATERIALS` such as `mouth_interior`), and starts the rAF loop. Each frame:
+behaviour machine (explicit FSM, data-driven transition table in
+`src/behavior/machine.ts`) -> motion engine (blendshapes, gaze, nods, viseme
+lip-sync) -> VFX emergence -> render. Speech reaches the mouth via
+`visemeTap()`, which wraps a `TTSAdapter` and forwards viseme/energy frames to
+motion. Viseme weights override expression weights on the mouth region; viseme
+frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 
-- `cairn context` - structural overview; start every session here.
-- `cairn get <id>` / `cairn neighbourhood <id>` - inspect a node and neighbours.
-  Node IDs are dotted, e.g. `hologlyph.runtime.core`.
-- `cairn status` and `cairn change list` - project state and active changes.
-- All commands accept `--json`.
+## Key Directories
 
-### Change lifecycle
+- `src/` - runtime source, one directory per blueprint node; `contracts.ts` and
+  `index.ts` (public entry) at the root.
+- `test/` - vitest suite, `test/*.test.ts` mirroring `src/` modules; fixtures in
+  `test/fixtures/`.
+- `tools/asset-pipeline/` - offline GLB build: `build-bust.ts` (composites 27
+  morphs from pinned ICT-FaceKit sources, sha256-verified against
+  `ict-source-manifest.json`), `optimize.ts` (Meshopt/KTX2, enforces a 1.5 MB
+  budget).
+- `tools/smoke/` - headless Playwright browser smoke scripts (dev-only).
+- `demo/` - Vite demo app served by `bun run dev`.
+- `meta/` - cairn artefacts: `changes/` (+ `archive/`), `decisions/`, `todos/`,
+  `research/`, `sources/`, and `cairn-feedback.jsonl` (friction log).
+- `cairn.blueprint`, `cairn.config.yaml` - architecture graph and reconciler
+  config. `map.json`/`map.md` are generated; never hand-edit.
+- `.cairn/AGENTS.md` - auto-scaffolded cairn guide; it can lag the live CLI.
+  Where it disagrees with this file, this file wins.
 
-Work flows through typed changes, not ad-hoc edits:
+## Development Commands
 
-1. `cairn change new <change-id>` - scaffold the change.
-2. Implement under a feature branch; run the gates as you go.
-3. `cairn change show <change-id>` - review before landing.
-4. `cairn change accept <change-id>` - pass the acceptance gate. In 0.3.0,
-   the gate is language-aware via the `gates:` block in `cairn.config.yaml`;
-   `cairn change accept` now runs `bunx tsc --noEmit`, `bunx vitest run`, and
-   `bun run build`. One remaining wrinkle is that its `cairn lint --strict`
-   sub-step still fails on 12 pre-existing advisory
-   `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings. `cairn hook all`, not acceptance,
-   remains the authoritative commit gate.
-5. `cairn change archive <change-id>` - archive once merged.
+- `bun install` - install dependencies (runtime is Bun, not Node).
+- `bunx tsc --noEmit` - type-check (strict).
+- `bunx vitest run` - full test suite once; `bunx vitest` to watch;
+  `bunx vitest run test/<file>.test.ts` for one file.
+- `bun run build` - Vite library build to `dist/` plus declarations via
+  `tsconfig.build.json`.
+- `bun run dev` - serve the demo app.
+- `bun run build-asset` / `bun run optimize-asset` - asset pipeline.
+- `bun run lint` - Biome lint (lint-only gate; formatter disabled).
+- `cairn hook all` - the authoritative commit gate; MUST exit 0 before any
+  commit lands. Also runs the language battery from `cairn.config.yaml`
+  (`gates:` block). `cairn scan` before committing; zero findings is the target.
+  Tension findings are advisory.
 
-### Gate
+### Cairn workflow essentials
 
-`cairn hook all` is the strict boundary. It must exit 0 before a commit lands.
-Run it (and `cairn scan`) before committing; zero findings is the target.
-Tension findings are advisory and do not fail the hook.
-The language battery is configured in `cairn.config.yaml` under `gates:`:
-`bunx tsc --noEmit`, `bunx vitest run`, and `bun run build`. The config also
-sets `ignore: [dist]`.
+- Orientation: `cairn context`, `cairn status`, `cairn change list`,
+  `cairn get <id>` / `cairn neighbourhood <id>` (dotted node IDs, e.g.
+  `hologlyph.runtime.core`). All commands accept `--json`.
+- Work flows through typed changes: `cairn change new <id>` -> implement on a
+  feature branch -> `cairn change show <id>` -> `cairn change accept <id>` ->
+  `cairn change archive <id>` after merge. Note: the accept gate's
+  `cairn lint --strict` sub-step still fails on 12 pre-existing advisory
+  `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings; `cairn hook all` remains the
+  authoritative gate.
+- Editing `cairn.blueprint` (new module, `path` claim, dependency edge) is an
+  architecture change and requires a paired decision artefact under
+  `meta/decisions/` (`cairn decision new <slug> --node <id>`).
+- Fresh session: run `cairn brief` (no arguments) to fuse the next open todo
+  with its binding decisions and gates. Then: branch from main
+  (`git checkout -b <type>/<slug>`), set the todo `status: in_progress`, TDD,
+  record decision artefacts BEFORE building on resolved open decisions, log
+  cairn friction to `meta/cairn-feedback.jsonl` as it happens, run the full
+  gate, set the todo `status: done`, tick the change's `tasks.md`, land via
+  squash-merged PR.
+- Keep a running `implementation-notes.md` in the active change directory
+  logging every deviation from the plan and every discovered edge case.
 
-### Blueprint changes need decisions
+## Code Conventions & Common Patterns
 
-Editing `cairn.blueprint` (a new module, a `path` claim, or a dependency edge)
-is an architecture change and requires a paired decision artefact under
-`meta/decisions/`. Scaffold one with `cairn decision new <slug> --node <id>`
-(chained via `informed_by:`), then make the blueprint edit. The hook gate checks
-structure and interface promises; an undeclared structural change is caught.
-
-### Development loop (start here in a fresh session)
-
-To pick up the next unit of work, run `cairn brief` (no arguments): it selects
-the next open todo and fuses the task, binding decisions, contract, and gates.
-In 0.3.0 its gate section is generic and correct: it points to `cairn hook all`
-and `cairn scan`, and says language and build gates belong in
-`cairn.config.yaml` and this `AGENTS.md`. The Build and test section below
-remains authoritative for the exact commands. Then, per unit:
-
-1. Identify the active change: the todo's `satisfies:` frontmatter names it,
-   and its directory is `meta/changes/<name>/` (verify with `cairn change list`,
-   read its proposal/design/tasks before coding). If the work belongs to no
-   active change, scaffold one first with `cairn change new <change-id>` per the
-   Change lifecycle above.
-2. Branch from main (`git checkout -b <type>/<slug>`).
-3. Set the todo's frontmatter `status: in_progress` (`meta/todos/todo.<slug>.md`).
-4. TDD: write the failing test first and confirm it fails for the right reason,
-   then implement to green. Required for bugfixes, expected for features;
-   deviations get a line in the change dir's `implementation-notes.md`.
-5. When you resolve a decision the design flagged as open (e.g. commit-vs-fetch
-   asset delivery), record it as a decision artefact BEFORE building on it, and
-   link the research that informed it via `informed_by:`.
-6. Log cairn friction to `meta/cairn-feedback.jsonl` as it happens, not at the end.
-7. Run the full gate (Build and test section plus `cairn hook all`), set the todo
-   `status: done`, tick the matching box in the change's `tasks.md`, then land
-   via feature-branch PR, squash-merge, branch deleted.
-
-Keep a running `implementation-notes.md` in the active change directory logging
-every deviation from the plan and every discovered edge case.
-
-## Build and test
-
-- `bun install` - install dependencies.
-- `bunx tsc --noEmit` - type-check (project is TypeScript strict).
-- `bunx vitest run` - run the test suite once (CI mode).
-- `bun run build` - bundle with Vite to `dist/`.
-- `bun run dev` - serve the `demo/` app locally for manual checks.
-
-Run the type-check and tests before any commit, alongside `cairn hook all`.
-
-## Conventions
-
-- TypeScript strict mode; no implicit `any`, no non-null assertions as a habit.
-- Contract-first: `src/contracts.ts` is the ONLY permitted cross-container import
-  surface beyond the edges declared in `cairn.blueprint`. Modules implement
-  those interfaces and are wired together by `hologlyph.runtime.core`.
-- Feature-branch and squash-merge pull requests. Never commit directly to main.
-- Stage explicit paths (`git add src/foo.ts`), never `git add -A` or `git add .`.
-- Commit with a message file: `git commit -F <file>` (write the message to a
-  temp file, review it, then commit).
+- TypeScript strict mode; no implicit `any`, no habitual non-null assertions.
 - British spelling, no em dashes, in code comments and docs.
-- Test-first: write the failing test before the implementation (see Development
-  loop). One regression test per defect: when fixing a bug, the test must fail
-  without the fix and pass with it.
+- Naming: factories `create*()`; implementation classes `*Impl`; private fields
+  `_`-prefixed; constants `UPPER_SNAKE`; file names match their primary export.
+- Dependency injection is lightweight and constructor-based; no DI container.
+  Time, RNG, `AudioContext`, and canvas factories are injectable for
+  deterministic tests (`GazeController(rng, clock)`,
+  `TextSkinEngineOptions.canvasFactory`).
+- Dispose discipline: every subsystem implements `Disposable` with idempotent
+  `dispose()`; the engine tears down in reverse order; the renderer walks the
+  scene graph disposing geometry, materials, and textures.
+- Error handling degrades, it does not throw: `validateRig()` returns a
+  structured report; KTX2 failures fall back to plain GLB; adapters emit
+  `error` + `end` events rather than raising.
+- State: behaviour is a plain data-driven FSM table, no state library.
+- Pure logic is extracted from GPU code (`src/shaders/emergence.ts`,
+  `src/speech/visemes.ts`, `src/text-skin/grid.ts`,
+  `src/motion/expressions.ts`) so it is testable without WebGL.
+- Reduced-motion support is a first-class path (`setReduced(true)` damps nods,
+  disables saccades, shortens ramps).
+
+### Git conventions
+
+- Feature branch + squash-merge PR; never commit directly to main.
+- Stage explicit paths (`git add src/foo.ts`); never `git add -A` or
+  `git add .`.
+- Commit with a message file: write the message to a temp file, review it, then
+  `git commit -F <file>`.
+- Test-first: failing test before the implementation; one regression test per
+  defect (must fail without the fix).
+
+## Important Files
+
+- `src/index.ts` - public entry: `createEngine`, contract types,
+  `defineHologlyphHead`.
+- `src/contracts.ts` - the contract spine (see Architecture).
+- `src/core/engine.ts` - composition root and frame loop.
+- `src/core/default-avatar.ts` - resolves the bundled bust GLB; Vite lib mode
+  inlines it as a lazy data-URL chunk so the main bundle stays ~11 kB gzip.
+- `cairn.blueprint` / `cairn.config.yaml` - architecture and gate config.
+- `vite.config.ts` (library, four entries, `three` externalised),
+  `demo/vite.config.ts` (demo app), `vitest.config.ts` (happy-dom).
+- `package.json` - exports `.`, `./react`, `./vue`, `./svelte`; only `dist/` is
+  published.
+
+## Runtime/Tooling Preferences
+
+- Bun is the package manager and script runner; invoke tools via `bunx`.
+- `three` is a runtime dependency externalised from the library build; framework
+  adapters take the framework namespace as a parameter (zero peer
+  dependencies).
+- CI (`.github/workflows/pages.yml`) only builds and deploys the demo to GitHub
+  Pages; the verification battery runs locally via `cairn hook all`.
+- npm publish is deferred; do not publish without an explicit go-ahead.
+
+## Testing & QA
+
+- Vitest with happy-dom; tests in `test/*.test.ts` matching `src/` modules;
+  inline fakes and `vi.mock()` at module level; no shared setup file.
+- Deterministic by injection: manual schedulers, injected clocks and RNGs.
+- Notable suites: `test/asset-bust.test.ts` loads the real GLB, validates the
+  rig (zero warnings expected), checks the 1.5 MiB budget, and guards
+  regen-from-source byte equality; `test/speech-e2e.test.ts` drives the full
+  viseme pipeline from a committed fixture.
+- Full verification chain before any merge: `bunx tsc --noEmit`,
+  `bunx vitest run`, `bun run build`, `bun run lint`, `cairn hook all`, plus a
+  live browser smoke test for anything visual (`bun run dev` + the
+  `tools/smoke/` Playwright scripts).
+- Asset exports need pinned reproducible provenance: upstream SHA, acquisition
+  command, consumed paths, licence copy at that SHA, and final asset hash.
 
 ## Cairn friction feedback
 
-When cairn surprises you, gives a confusing message, or blocks you wrongly,
-record it before working around it. Append one JSON object per line to
-`meta/cairn-feedback.jsonl` with these fields:
+When cairn surprises you, misleads you, or blocks you wrongly, append one JSON
+object per line to `meta/cairn-feedback.jsonl` before working around it:
 
 ```json
 {"ts":"2026-07-13T00:00:00Z","phase":"implementation","area":"cli","observation":"what happened","improvement":"what would fix it","severity":"minor"}
 ```
 
-Fields: `ts` (ISO timestamp), `phase` (scoping|implementation|review|...),
-`area` (cli|skill|hook|blueprint|...), `observation`, `improvement`,
-`severity` (minor|moderate|major). This structured log feeds cairn's own
-improvement; prefer it over the prose `cairn feedback` channel for this project.
+Fields: `ts`, `phase` (scoping|implementation|review|...), `area`
+(cli|skill|hook|blueprint|...), `observation`, `improvement`, `severity`
+(minor|moderate|major). Prefer this over the prose `cairn feedback` channel.
