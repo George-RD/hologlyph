@@ -105,6 +105,10 @@ export interface MotionEngine extends Disposable {
   setHeadTarget(yaw: number, pitch: number): void;
   setGazeMode(mode: GazeMode): void;
   setReducedMotion(reduced: boolean): void;
+  /** Point the gaze at a normalised pointer position (NDC x,y in [-1,1]); eyes and a subtle head fraction follow it, damped, with automatic return-to-forward after the idle timeout or on `clearGazeFollow`. */
+  setGazeTarget(ndcX: number, ndcY: number): void;
+  /** Stop following the pointer; the gaze eases back to forward/idle without snapping. */
+  clearGazeFollow(): void;
 }
 
 // ---------------------------------------------------------------------------

@@ -46,6 +46,8 @@ class FakeEngine implements Engine {
     clearVisemes: () => {},
     triggerNod: () => {},
     setGazeMode: () => {},
+    setGazeTarget: () => {},
+    clearGazeFollow: () => {},
     setReducedMotion: (v: boolean) => {
       this.motionCalls.push(v);
     },

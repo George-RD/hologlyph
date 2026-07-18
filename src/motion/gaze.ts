@@ -23,6 +23,22 @@ export interface GazeOffset {
 
 const DEG = Math.PI / 180;
 
+/**
+ * Eye gaze limits (radians) reached when the normalised pointer is at the
+ * screen edge. The element passes a normalised device coordinate in [-1, 1];
+ * `ndcToGazeOffset` clamps it and converts it to a clamped eye yaw/pitch.
+ */
+export const FOLLOW_YAW_LIMIT = 0.45;
+export const FOLLOW_PITCH_LIMIT = 0.32;
+
+/** Convert a normalised pointer position (NDC x,y in [-1,1]) to a clamped eye offset. */
+export function ndcToGazeOffset(ndcX: number, ndcY: number): GazeOffset {
+  const cx = Math.max(-1, Math.min(1, ndcX));
+  const cy = Math.max(-1, Math.min(1, ndcY));
+  // Screen y grows downward; a positive pitch looks up, so negate cy.
+  return { yaw: cx * FOLLOW_YAW_LIMIT, pitch: -cy * FOLLOW_PITCH_LIMIT };
+}
+
 /** Standard normal sample via Box-Muller, driven by the injected rng. */
 export function gaussian(rng: Rng): number {
   let u = 0;
@@ -32,6 +48,15 @@ export function gaussian(rng: Rng): number {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
+export interface GazeControllerOptions {
+  /** Idle timeout (seconds) after the last follow target before returning to forward. */
+  followTimeout?: number;
+}
+
+/** Time constants (seconds) for the exponential smoothing used while following. */
+const FOLLOW_TAU = 0.12;
+const FOLLOW_TAU_REDUCED = 0.6;
+
 export class GazeController {
   private mode: GazeMode = 'idle';
   private current: GazeOffset = { pitch: 0, yaw: 0 };
@@ -39,10 +64,19 @@ export class GazeController {
   private nextAt = 0;
   private reduced = false;
 
+  // Pointer follow state: when set, overrides the procedural saccades until the
+  // idle timeout elapses or clearFollow() is called.
+  private followTarget: GazeOffset | null = null;
+  private followUntil = 0;
+  private readonly followTimeout: number;
+
   constructor(
     private readonly rng: Rng,
     private readonly clock?: Clock,
-  ) {}
+    options?: GazeControllerOptions,
+  ) {
+    this.followTimeout = options?.followTimeout ?? 2;
+  }
 
   setMode(mode: GazeMode): void {
     this.mode = mode;
@@ -56,9 +90,39 @@ export class GazeController {
   setReduced(reduced: boolean): void {
     this.reduced = reduced;
   }
+  /** Point the eyes at a clamped direction; the idle timeout restarts. */
+  setFollowTarget(yaw: number, pitch: number, now: number): void {
+    this.followTarget = { yaw, pitch };
+    this.followUntil = now + this.followTimeout;
+  }
+
+  /** Stop following so the gaze eases back to forward/idle. */
+  clearFollow(): void {
+    if (this.followTarget) this.followUntil = 0;
+  }
+
+  /** True while a follow target is active (before the idle timeout). */
+  isFollowing(now: number): boolean {
+    return this.followTarget !== null && now < this.followUntil;
+  }
 
   update(dt: number, elapsed: number): GazeOffset {
     const now = this.clock ? this.clock() : elapsed;
+    if (this.followTarget) {
+      // While following (or easing back after the timeout), override the
+      // procedural saccades. Exponential smoothing never overshoots for any
+      // dt, so the motion is snap-free even under reduced motion.
+      const active = now < this.followUntil;
+      const goal = active ? this.followTarget : { pitch: 0, yaw: 0 };
+      const tau = this.reduced ? FOLLOW_TAU_REDUCED : FOLLOW_TAU;
+      const k = 1 - Math.exp(-dt / tau);
+      this.current.pitch += (goal.pitch - this.current.pitch) * k;
+      this.current.yaw += (goal.yaw - this.current.yaw) * k;
+      if (!active && Math.abs(this.current.pitch) < 1e-4 && Math.abs(this.current.yaw) < 1e-4) {
+        this.followTarget = null; // fully returned to forward; resume saccades
+      }
+      return this.current;
+    }
     if (now >= this.nextAt) this.resample(now);
     const k = Math.min(1, dt * 6);
     this.current.pitch += (this.target.pitch - this.current.pitch) * k;

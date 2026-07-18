@@ -197,6 +197,8 @@ vi.mock('../src/motion', () => ({
         this.reduced = r;
       },
       setHeadTarget() {},
+      setGazeTarget() {},
+      clearGazeFollow() {},
       disposeCount: 0,
       dispose() {
         this.disposeCount++;
