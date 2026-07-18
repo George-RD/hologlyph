@@ -65,3 +65,9 @@
 - scan: nodes=16, findings=34, errors=0
 - archive: 2026-07-18-eval-followups merged; no operations
 - scan: nodes=16, findings=38, errors=0
+- scan: nodes=16, findings=39, errors=0
+- archive: 2026-07-18-blend-zone-ghosting-metric merged; no operations
+- scan: nodes=16, findings=38, errors=0
+- archive: 2026-07-18-gaze-follow-pointer merged; no operations
+- scan: nodes=16, findings=37, errors=0
+- archive: 2026-07-18-idle-motion merged; no operations
