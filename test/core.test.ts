@@ -37,10 +37,12 @@ import type {
 
 interface FakeBehavior extends BehaviorMachine {
   disposeCount: number;
+  observeCount: number;
   state: BehaviorState;
 }
 interface FakeMotion extends MotionEngine {
   disposeCount: number;
+  motionUpdateCalls: number;
   applyVisemeCount: number;
   lastFrame: VisemeFrame | undefined;
   gazeMode: GazeMode | undefined;
@@ -61,6 +63,7 @@ interface FakeSpeech extends SpeechEngine {
 interface FakeTextSkin extends TextSkinEngine {
   disposeCount: number;
   updateCalls: number;
+  reduced: boolean | undefined;
 }
 interface FakeVfx extends VFXEngine {
   disposeCount: number;
@@ -73,6 +76,7 @@ interface FakeRenderer extends RendererHost {
   renderCount: number;
   backend: 'webgpu' | 'webgl2' | 'uninitialized';
   gpuRenderer: unknown;
+  setSizeCalls: Array<{ width: number; height: number; pixelRatio?: number }>;
 }
 interface FakeAsset extends AssetLoader {
   disposeCount: number;
@@ -146,6 +150,7 @@ const h = vi.hoisted(() => {
 
 // --- Mocks for sibling modules ---------------------------------------------
 
+ 
 vi.mock('../src/behavior', () => ({
   createBehaviorMachine() {
     const emitter = h.makeEmitter<BehaviorMachineEvents>();
@@ -153,9 +158,12 @@ vi.mock('../src/behavior', () => ({
       state: 'idle',
       scrollProgress: 0,
       dispatch() {},
-      observe() {},
+      observe() {
+        this.observeCount++;
+      },
       setScrollProgress() {},
       disposeCount: 0,
+      observeCount: 0,
       dispose() {
         this.disposeCount++;
       },
@@ -178,7 +186,10 @@ vi.mock('../src/motion', () => ({
       reduced: false,
       clearVisemesCount: 0,
       attach() {},
-      update() {},
+      motionUpdateCalls: 0,
+      update() {
+        this.motionUpdateCalls++;
+      },
       setExpression(e: Expression) {
         this.expression = e;
       },
@@ -275,6 +286,10 @@ vi.mock('../src/text-skin', () => ({
       scrollOffset: 0,
       updateCalls: 0,
       setSource() {},
+      reduced: undefined,
+      setReducedMotion(r: boolean) {
+        this.reduced = r;
+      },
       setScrollSpeed() {},
       update() {
         this.updateCalls++;
@@ -327,10 +342,13 @@ vi.mock('../src/renderer', () => ({
       camera: new THREE.PerspectiveCamera(35, 1, 0.1, 100),
       backend: 'uninitialized',
       gpuRenderer: { tag: 'gpu-renderer' } as unknown,
+      setSizeCalls: [],
       async init() {
         this.backend = 'webgpu';
       },
-      setSize() {},
+      setSize(width: number, height: number, pixelRatio?: number) {
+        this.setSizeCalls.push({ width, height, pixelRatio });
+      },
       setClippingPlane() {},
       renderCount: 0,
       render() {
@@ -544,6 +562,36 @@ describe('engine lifecycle', () => {
       engine.dispose();
     });
   });
+
+  it('setMotionFrozen halts motion updates while rendering continues, and resumes on unfreeze', () => {
+    const engine = createEngine();
+    const renderer = h.registry.renderer.at(-1)!;
+    const motion = h.registry.motion.at(-1)!;
+    const host = document.createElement('div');
+    const canvas = document.createElement('canvas');
+
+    return engine.mount(canvas, host).then(() => {
+      rafCb?.(16);
+      rafCb?.(32);
+      const before = motion.motionUpdateCalls;
+      expect(before).toBeGreaterThan(0);
+
+      // Frozen: motion is skipped entirely (idle and gaze phase off wall
+      // clock, so dt=0 would still breathe between frames) but frames render.
+      engine.setMotionFrozen(true);
+      const rendersBefore = renderer.renderCount;
+      rafCb?.(48);
+      rafCb?.(64);
+      expect(motion.motionUpdateCalls).toBe(before);
+      expect(renderer.renderCount).toBe(rendersBefore + 2);
+
+      engine.setMotionFrozen(false);
+      rafCb?.(80);
+      expect(motion.motionUpdateCalls).toBe(before + 1);
+
+      engine.dispose();
+    });
+  });
 });
 
 describe('visemeTap', () => {
@@ -577,6 +625,75 @@ describe('visemeTap', () => {
 // --- Regression tests for the adversarial-review fixes ---------------------
 
 describe('mount / dispose race', () => {
+  it('serialises overlapping mounts, disposes superseded avatar state, and observes once', async () => {
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    const asset = h.registry.asset.at(-1)!;
+    const behavior = h.registry.behavior.at(-1)!;
+    const host = document.createElement('div');
+    const canvas = document.createElement('canvas');
+    let firstDisposed = 0;
+    let secondDisposed = 0;
+    let resolveFirst!: (a: LoadedAvatar) => void;
+    const firstLoad = new Promise<LoadedAvatar>((resolve) => {
+      resolveFirst = resolve;
+    });
+
+    const firstAvatar: LoadedAvatar = {
+      root: new THREE.Group(),
+      morphMeshes: [],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {
+        firstDisposed += 1;
+      },
+    };
+
+    const secondAvatar: LoadedAvatar = {
+      root: new THREE.Group(),
+      morphMeshes: [],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {
+        secondDisposed += 1;
+      },
+    };
+
+    let call = 0;
+    const originalLoad = asset.load;
+    asset.load = async () => {
+      call += 1;
+      asset.loadCalls += 1;
+      if (call === 1) return firstLoad;
+      if (call === 2) return secondAvatar;
+      return originalLoad('fake.glb');
+    };
+    asset.loadCalls = 0;
+
+    const mountOne = engine.mount(canvas, host);
+    while (asset.loadCalls < 1) {
+      await Promise.resolve();
+    }
+    const mountTwo = engine.mount(canvas, host);
+    resolveFirst(firstAvatar);
+    await Promise.all([mountOne, mountTwo]);
+
+    expect(firstDisposed).toBe(1);
+    expect(behavior.observeCount).toBe(1);
+    expect(firstAvatar.root.parent).toBeNull();
+    expect(secondAvatar.root.parent).not.toBeNull();
+    expect(secondDisposed).toBe(0);
+    expect(asset.loadCalls).toBe(2);
+
+    engine.dispose();
+  });
   it('leaves no loop or listeners when disposed during renderer init', async () => {
     const engine = createEngine();
     const addSpy = vi.spyOn(document, 'addEventListener');
@@ -588,7 +705,6 @@ describe('mount / dispose race', () => {
     expect(addSpy).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function));
     addSpy.mockRestore();
   });
-
   it('disposes a late-loading avatar when disposed mid asset load', async () => {
     const engine = createEngine({ avatarUrl: 'fake.glb' });
     const asset = h.registry.asset.at(-1)!;
@@ -610,12 +726,21 @@ describe('mount / dispose race', () => {
         avatarDisposed = true;
       },
     };
-    asset.load = () => loadPromise;
+    let call = 0;
+    const originalLoad = asset.load;
+    asset.load = async () => {
+      call += 1;
+      if (call === 1) {
+        asset.loadCalls += 1;
+        return loadPromise;
+      }
+      return originalLoad('fallback.glb');
+    };
 
     const p = engine.mount(document.createElement('canvas'), document.createElement('div'));
-    // Let renderer init resolve so mount reaches the asset-load await, then
-    // dispose mid-load to exercise the second race guard.
-    await Promise.resolve();
+    while (asset.loadCalls < 1) {
+      await Promise.resolve();
+    }
     engine.dispose();
     resolveLoad(fakeAvatar);
     await p;
@@ -625,6 +750,7 @@ describe('mount / dispose race', () => {
   });
 });
 
+
 describe('speech end clears visemes', () => {
   it('clears residual visemes before emitting speechend', () => {
     const engine = createEngine();
@@ -632,6 +758,16 @@ describe('speech end clears visemes', () => {
     const speech = h.registry.speech.at(-1)!;
     speech.emit('end', undefined);
     expect(motion.clearVisemesCount).toBe(1);
+    engine.dispose();
+  });
+});
+
+describe('engine resize', () => {
+  it('forwards resize requests to the renderer host', () => {
+    const engine = createEngine();
+    const renderer = h.registry.renderer.at(-1)!;
+    engine.resize(800, 450);
+    expect(renderer.setSizeCalls).toEqual([{ width: 800, height: 450, pixelRatio: undefined }]);
     engine.dispose();
   });
 });
@@ -675,24 +811,28 @@ describe('host-offscreen loop suspension', () => {
 });
 
 describe('reduced motion propagation', () => {
-  it('threads reduced motion into VFX on mount', async () => {
+  it('threads reduced motion into VFX and the text skin on mount', async () => {
     const engine = createEngine({ reducedMotion: true });
     const motion = h.registry.motion.at(-1)!;
     const vfx = h.registry.vfx.at(-1)!;
+    const skin = h.registry.textSkin.at(-1)!;
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
     expect(motion.reduced).toBe(true);
     expect(vfx.reduced).toBe(true);
+    expect(skin.reduced).toBe(true);
     engine.dispose();
   });
 
-  it('routes a media-query change into VFX as well as motion', async () => {
+  it('routes a media-query change into VFX and the text skin as well as motion', async () => {
     const engine = createEngine();
     const motion = h.registry.motion.at(-1)!;
     const vfx = h.registry.vfx.at(-1)!;
+    const skin = h.registry.textSkin.at(-1)!;
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
     mqlListeners.forEach((fn) => fn({ matches: true } as MediaQueryListEvent));
     expect(motion.reduced).toBe(true);
     expect(vfx.reduced).toBe(true);
+    expect(skin.reduced).toBe(true);
     engine.dispose();
   });
 });
@@ -780,3 +920,42 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
      engine.dispose();
    });
  });
+describe('displaced materials', () => {
+  it('disposes displaced authored materials and their textures once on teardown', async () => {
+    const texture = { isTexture: true, dispose: vi.fn() } as unknown as THREE.Texture;
+    const sharedMaterialDispose = vi.fn();
+    const sharedMaterial = {
+      name: 'bust',
+      map: texture,
+      dispose: sharedMaterialDispose,
+    } as unknown as THREE.Material;
+    const sharedMesh = new THREE.Mesh(new THREE.BufferGeometry(), sharedMaterial);
+    const arrayMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      [sharedMaterial] as unknown as THREE.Material | THREE.Material[],
+    );
+    const skinMaterial = { name: 'skin', dispose: vi.fn() } as unknown as THREE.Material;
+    h.skinMaterialOverride = skinMaterial;
+
+    const sharedGroup = new THREE.Group();
+    sharedGroup.add(sharedMesh, arrayMesh);
+    h.avatarOverride = {
+      root: sharedGroup,
+      morphMeshes: [sharedMesh, arrayMesh],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    engine.dispose();
+
+    expect(sharedMaterialDispose).toHaveBeenCalledTimes(1);
+    expect(texture.dispose).toHaveBeenCalledTimes(1);
+  });
+});

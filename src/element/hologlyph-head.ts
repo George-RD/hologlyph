@@ -31,6 +31,9 @@ export type EngineFactory = (options?: EngineOptions) => Engine;
  * copy). Implemented locally so the element need not import the text-skin
  * module (it is outside this node's dependency edge).
  */
+type EngineWithResize = Engine & {
+  resize(width: number, height: number): void;
+};
 function staticTextSource(text: string): TextSkinSource {
   return {
     getText: () => text,
@@ -75,7 +78,7 @@ export class HologlyphHeadElement extends HTMLElement {
   static engineFactory: EngineFactory | null = null;
 
   static get observedAttributes(): string[] {
-    return ['src', 'mode', 'text-skin', 'reduced-motion'];
+    return ['src', 'text-skin', 'reduced-motion'];
   }
 
   private _engine: Engine | null = null;
@@ -137,7 +140,6 @@ export class HologlyphHeadElement extends HTMLElement {
       // the engine on the next connect.
       this._needsRecreate = true;
     }
-    // `mode` is declarative; it is read at engine creation time.
   }
   private async _boot(): Promise<void> {
     // Snapshot the generation at boot start; every await below re-checks it
@@ -165,6 +167,7 @@ export class HologlyphHeadElement extends HTMLElement {
     const engine = factory(options);
     this._engine = engine;
     this._wire(engine);
+    this._ensureResizeObserver();
 
     try {
       await engine.mount(canvas, this);
@@ -183,6 +186,26 @@ export class HologlyphHeadElement extends HTMLElement {
         engine.dispose();
       }
       return;
+    }
+  }
+
+  private _ensureResizeObserver(): void {
+    if (this._resizeObserver) return;
+    if (typeof ResizeObserver === 'undefined') return;
+
+    try {
+      const ro = new ResizeObserver(() => {
+        const width = Math.max(1, Math.floor(this.clientWidth || DEFAULT_CANVAS_SIZE));
+        const height = Math.max(1, Math.floor(this.clientHeight || DEFAULT_CANVAS_SIZE));
+        const engine = this._engine as EngineWithResize | null;
+        if (engine && typeof engine.resize === 'function') {
+          engine.resize(width, height);
+        }
+      });
+      ro.observe(this);
+      this._resizeObserver = ro;
+    } catch {
+      /* Observation is best-effort. */
     }
   }
 
@@ -238,24 +261,6 @@ export class HologlyphHeadElement extends HTMLElement {
     canvas.width = w;
     canvas.height = h;
     root.appendChild(canvas);
-
-    // Keep the backing store sized to the host when observable. The observer
-    // is retained on the instance so `_teardown()` can disconnect it and
-    // avoid leaking the host across disconnect/reconnect cycles.
-    if (typeof ResizeObserver !== 'undefined') {
-      try {
-        const ro = new ResizeObserver(() => {
-          const cw = Math.max(1, Math.floor(this.clientWidth || DEFAULT_CANVAS_SIZE));
-          const ch = Math.max(1, Math.floor(this.clientHeight || DEFAULT_CANVAS_SIZE));
-          canvas.width = cw;
-          canvas.height = ch;
-        });
-        ro.observe(this);
-        this._resizeObserver = ro;
-      } catch {
-        /* Observation is best-effort. */
-      }
-    }
 
     return canvas;
   }
@@ -422,13 +427,6 @@ export class HologlyphHeadElement extends HTMLElement {
   set src(value: string | null) {
     if (value == null) this.removeAttribute('src');
     else this.setAttribute('src', value);
-  }
-
-  get mode(): 'auto' | 'manual' {
-    return (this.getAttribute('mode') as 'auto' | 'manual') ?? 'auto';
-  }
-  set mode(value: 'auto' | 'manual') {
-    this.setAttribute('mode', value);
   }
 
   get textSkin(): string | null {

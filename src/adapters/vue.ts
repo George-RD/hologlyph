@@ -2,9 +2,7 @@
  * Thin Vue 3 wrapper for <hologlyph-head>.
  *
  * Vue supports custom elements natively, so this is simply a plain options
- * object component that uses the `<hologlyph-head>` element directly. No Vue
- * import is required: the returned object is a standard Vue component options
- * bag that any Vue 3 app can register.
+ * object component that any Vue 3 app can register.
  *
  * Tell Vue to treat the tag as a custom element so the compiler does not warn:
  *
@@ -64,21 +62,20 @@ export function hologlyphHeadVue(): HologlyphVueComponent {
     props: {
       src: { type: String, default: '' },
       text: { type: String, default: '' },
-      mode: { type: String, default: 'auto' },
       reducedMotion: { type: Boolean, default: false },
     },
     emits: ['ready', 'statechange', 'speechstart', 'speechend', 'error'],
     template:
       '<hologlyph-head ref="el" :src="src || null" :text-skin="text || null" ' +
       ':reduced-motion="reducedMotion ? \'\' : null"></hologlyph-head>',
-    mounted() {
+    mounted(this: VueComponentInstance) {
       this._wire();
     },
-    beforeUnmount() {
+    beforeUnmount(this: VueComponentInstance) {
       this._unwire();
     },
     methods: {
-      _wire() {
+      _wire(this: VueComponentInstance) {
         const el = this.$refs.el;
         if (!el) return;
         this._on = [];
@@ -99,7 +96,7 @@ export function hologlyphHeadVue(): HologlyphVueComponent {
         add('hologlyph-speechend', () => this.$emit('speechend'));
         add('hologlyph-error', (e) => this.$emit('error', (e as CustomEvent).detail.error));
       },
-      _unwire() {
+      _unwire(this: VueComponentInstance) {
         const el = this.$refs.el;
         if (el && this._on) {
           for (const [name, fn] of this._on) el.removeEventListener(name, fn);

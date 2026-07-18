@@ -42,7 +42,6 @@ export interface ReactLike {
 export interface HologlyphHeadProps {
   src?: string;
   text?: string;
-  mode?: 'auto' | 'manual';
   reducedMotion?: boolean;
   onReady?: () => void;
   onStateChange?: (detail: { from: string; to: string }) => void;
@@ -63,14 +62,21 @@ export function createHologlyphHead(react: ReactLike): (props: HologlyphHeadProp
   return function HologlyphHead(props: HologlyphHeadProps): unknown {
     const ref = useRef<HologlyphHeadElement | null>(null);
 
+    const applyProps = (el: HologlyphHeadElement): void => {
+      if (props.src !== undefined) el.src = props.src;
+      else el.removeAttribute('src');
+
+      if (props.text !== undefined) el.textSkin = props.text;
+      else el.removeAttribute('text-skin');
+
+      if (props.reducedMotion !== undefined) el.reducedMotion = props.reducedMotion;
+      else el.removeAttribute('reduced-motion');
+    };
+
     useEffect(() => {
       const el = ref.current;
       if (!el) return;
-
-      if (props.src !== undefined) el.src = props.src;
-      if (props.text !== undefined) el.textSkin = props.text;
-      if (props.mode !== undefined) el.mode = props.mode;
-      if (props.reducedMotion !== undefined) el.reducedMotion = props.reducedMotion;
+      applyProps(el);
 
       const listeners: Array<[string, EventListener]> = [];
       const add = (name: string, fn: EventListener): void => {
@@ -95,8 +101,25 @@ export function createHologlyphHead(react: ReactLike): (props: HologlyphHeadProp
       return () => {
         for (const [name, fn] of listeners) el.removeEventListener(name, fn);
       };
-    }, [props.src, props.text, props.mode, props.reducedMotion]);
+    }, [
+      props.src,
+      props.text,
+      props.reducedMotion,
+      props.onReady,
+      props.onStateChange,
+      props.onSpeechStart,
+      props.onSpeechEnd,
+      props.onError,
+    ]);
 
-    return createElement('hologlyph-head', { ref });
+    return createElement('hologlyph-head', {
+      ref: (el: unknown) => {
+        if (!el) return;
+
+        const host = el as HologlyphHeadElement;
+        ref.current = host;
+        applyProps(host);
+      },
+    });
   };
 }

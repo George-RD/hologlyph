@@ -72,6 +72,24 @@ describe('text-skin engine', () => {
     expect(engine.scrollOffset).toBeCloseTo(2.0, 5);
     expect(counts.fillText).toBe(drawnBefore);
   });
+  it('pauses scrollOffset updates when reduced motion is enabled', () => {
+    const { factory } = stubFactory();
+    const engine = createTextSkinEngine({ canvasFactory: factory });
+    engine.setSource(createStaticTextSource('motion aware'));
+    engine.setScrollSpeed(4);
+
+    engine.update(0.5);
+    expect(engine.scrollOffset).toBeGreaterThan(0);
+
+    const frozenAt = engine.scrollOffset;
+    engine.setReducedMotion(true);
+    engine.update(1);
+    expect(engine.scrollOffset).toBe(frozenAt);
+
+    engine.setReducedMotion(false);
+    engine.update(1);
+    expect(engine.scrollOffset).toBeGreaterThan(frozenAt);
+  });
 
   it('unsubscribes from the source on dispose and is idempotent', () => {
     const { factory, counts } = stubFactory();

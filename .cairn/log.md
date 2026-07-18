@@ -71,3 +71,4 @@
 - archive: 2026-07-18-gaze-follow-pointer merged; no operations
 - scan: nodes=16, findings=37, errors=0
 - archive: 2026-07-18-idle-motion merged; no operations
+- scan: nodes=16, findings=42, errors=0

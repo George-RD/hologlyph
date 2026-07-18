@@ -22,7 +22,6 @@ import { defineHologlyphHead, type HologlyphHeadElement } from '../element';
 export interface HologlyphHeadParams {
   src?: string;
   text?: string;
-  mode?: 'auto' | 'manual';
   reducedMotion?: boolean;
   onReady?: () => void;
   onStateChange?: (detail: { from: string; to: string }) => void;
@@ -46,12 +45,24 @@ export function hologlyphHead(
   const on: Array<[string, EventListener]> = [];
 
   const applyProps = (p: HologlyphHeadParams): void => {
-    if (p.src !== undefined) el.src = p.src;
-    if (p.text !== undefined) el.textSkin = p.text;
-    if (p.mode !== undefined) el.mode = p.mode;
-    if (p.reducedMotion !== undefined) el.reducedMotion = p.reducedMotion;
-  };
+    if (p.src !== undefined) {
+      el.src = p.src;
+    } else {
+      el.removeAttribute('src');
+    }
 
+    if (p.text !== undefined) {
+      el.textSkin = p.text;
+    } else {
+      el.removeAttribute('text-skin');
+    }
+
+    if (p.reducedMotion !== undefined) {
+      el.reducedMotion = p.reducedMotion;
+    } else {
+      el.removeAttribute('reduced-motion');
+    }
+  };
   const wire = (p: HologlyphHeadParams): void => {
     const add = (name: string, fn: EventListener): void => {
       el.addEventListener(name, fn);

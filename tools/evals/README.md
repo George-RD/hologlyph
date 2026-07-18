@@ -55,7 +55,7 @@ emits `tools/evals/out/report.json`.
 - `yaw-0.785.png` - camera orbited to the requested 45-degree (0.785 rad)
   view; isolates the triplanar blend zone for the ghosting metric
 - `close-up.png` - a tight crop used for the legibility proxy
-- `flow-0.png`, `flow-1.png` - two frames one second apart for the flow metric
+- `flow-0.png`, `flow-1.png` - two frames one second apart for the flow metric, with idle and gaze motion frozen through `window.__hologlyphEngine.setMotionFrozen(true)` so head drift does not contaminate flow.
 
 `tools/evals/out/report.json` holds every computed metric, its baseline value,
 a pass or warn or fail status, and the screenshot paths. The process exits
@@ -103,6 +103,9 @@ The capture seeds `Math.random` through a Playwright init script so the
 engine's gaze and saccade randomness are repeatable without changing the
 library. Each view waits about four seconds after the avatar loads and about
 eight hundred milliseconds after posing so motion settles before the screenshot.
+For the flow pair, the harness freezes motion with
+`window.__hologlyphEngine.setMotionFrozen(true)` so saccades and idle drift do
+not pollute the flow delta. Motion is thawed immediately afterwards.
 
 ## Side-view angle
 
@@ -114,12 +117,11 @@ the live renderer camera (initial position (0, 0.05, 2.4)) around the origin,
 which needs no change to the library and honours the requested yaw angle. The
 engine never resets the camera per frame, so the pose persists until the next
 page reload.
-
-## Baseline calibration
-
 `tools/evals/baseline.json` records the known-good metric values from the
 current build together with the pass or warn or fail bands. To recalibrate
 after an intentional visual change, run capture once against the new build,
-note the raw values printed by `score.mjs`, and update `baseline.json`. The
-thresholds use ratio bands against the baseline so small, benign run-to-run
-timing noise does not fail the gate.
+note the raw values printed by `score.mjs`, and update `baseline.json`.
+If the flow value is shifted after the motion freeze change, capture and score
+before updating `baseline.json` to preserve a comparable threshold profile.
+The thresholds use ratio bands against the baseline so small, benign
+run-to-run timing noise does not fail the gate.

@@ -96,6 +96,12 @@ export function createTextSkinEngine(options: TextSkinEngineOptions = {}): TextS
     texture.needsUpdate = true;
   }
 
+  let reducedScrollScale = 1;
+
+  function setReduced(reduced: boolean): void {
+    reducedScrollScale = reduced ? 0 : 1;
+  }
+
   const engine: TextSkinEngine & Disposable = {
     texture,
 
@@ -118,9 +124,14 @@ export function createTextSkinEngine(options: TextSkinEngineOptions = {}): TextS
       return scrollSpeed;
     },
 
+    setReducedMotion(reduced: boolean): void {
+      setReduced(reduced);
+    },
+
     update(dt: number): void {
       // No canvas work: GPU UV scroll reads scrollOffset in the shader.
-      scrollOffset += scrollSpeed * dt;
+      if (reducedScrollScale === 0) return;
+      scrollOffset += scrollSpeed * dt * reducedScrollScale;
     },
 
     get scrollOffset(): number {
