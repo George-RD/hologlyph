@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.motion
-status: open
+status: done
 created: 2026-07-17
 ---
 

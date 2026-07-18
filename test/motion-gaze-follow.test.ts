@@ -22,6 +22,15 @@ import {
 import { HologlyphHeadElement, defineHologlyphHead } from '../src/element';
 import * as THREE from 'three';
 
+/** Deterministic LCG so contact-mode saccades are repeatable across runs. */
+function seededRng(seed = 42): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
 function makeAvatar(): LoadedAvatar {
   const root = new THREE.Group();
   const head = new THREE.Bone();
@@ -172,7 +181,7 @@ describe('GazeController follow', () => {
 describe('MotionEngine gaze follow', () => {
   it('applies eye gaze plus a subtle, clamped head fraction', () => {
     let now = 0;
-    const m = createMotionEngine({ clock: () => now });
+    const m = createMotionEngine({ clock: () => now, idle: false, rng: seededRng() });
     const a = makeAvatar();
     m.attach(a);
     for (let i = 0; i < 180; i++) {
@@ -195,7 +204,7 @@ describe('MotionEngine gaze follow', () => {
 
   it('keeps the head still under reduced motion (eyes-only)', () => {
     let now = 0;
-    const m = createMotionEngine({ clock: () => now });
+    const m = createMotionEngine({ clock: () => now, idle: false, rng: seededRng() });
     const a = makeAvatar();
     m.attach(a);
     m.setReducedMotion(true);
@@ -212,7 +221,7 @@ describe('MotionEngine gaze follow', () => {
 
   it('eases back to forward when clearGazeFollow is called', () => {
     let now = 0;
-    const m = createMotionEngine({ clock: () => now });
+    const m = createMotionEngine({ clock: () => now, idle: false, rng: seededRng() });
     const a = makeAvatar();
     m.attach(a);
     for (let i = 0; i < 90; i++) {
@@ -225,9 +234,44 @@ describe('MotionEngine gaze follow', () => {
       now += 1 / 60;
       m.update(1 / 60, now);
     }
-    expect(required(a.bones.eyeL, 'left eye').rotation.y).toBeCloseTo(0, 1);
-    expect(required(a.bones.eyeL, 'left eye').rotation.x).toBeCloseTo(0, 1);
+    // Follow is disengaged: the eyes are back in contact mode, whose
+    // saccades are intentional, so bound them by the saccade amplitude
+    // rather than expecting exactly forward. The followed target (1, -1)
+    // mapped to a much larger offset than this bound.
+    expect(Math.abs(required(a.bones.eyeL, 'left eye').rotation.y)).toBeLessThan(0.12);
+    expect(Math.abs(required(a.bones.eyeL, 'left eye').rotation.x)).toBeLessThan(0.12);
+    // The follow-driven head participation must fully decay to the base pose.
     expect(required(a.bones.head, 'head').rotation.y).toBeCloseTo(0, 6);
+    expect(required(a.bones.head, 'head').rotation.x).toBeCloseTo(0, 6);
+  });
+
+  it('composes idle motion and pointer follow additively on the head', () => {
+    // Not confounded by shared rng: while a follow target is active the
+    // gaze update early-returns from deterministic smoothing without
+    // consuming rng draws, so idle is the only difference between runs.
+    const run = (idle: boolean): number => {
+      let now = 0;
+      const m = createMotionEngine({ clock: () => now, idle, rng: seededRng() });
+      const a = makeAvatar();
+      m.attach(a);
+      for (let i = 0; i < 300; i++) {
+        now += 1 / 60;
+        m.setGazeTarget(1, 0);
+        m.update(1 / 60, now);
+      }
+      return required(a.bones.head, 'head').rotation.y;
+    };
+    const withIdle = run(true);
+    const withoutIdle = run(false);
+    // Both runs retain the follow-driven participation...
+    expect(Math.abs(withIdle)).toBeGreaterThan(0.05);
+    expect(Math.abs(withoutIdle)).toBeGreaterThan(0.05);
+    // ...and idle contributes a nonzero, bounded extra offset on top of it,
+    // proving the merged frame loop composes the two additively rather than
+    // one suppressing the other.
+    const idleContribution = Math.abs(withIdle - withoutIdle);
+    expect(idleContribution).toBeGreaterThan(1e-5);
+    expect(idleContribution).toBeLessThan(0.06);
   });
 });
 
