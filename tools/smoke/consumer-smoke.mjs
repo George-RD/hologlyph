@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 const CHROME = process.env.HOLOGLYPH_CHROME;
 const browser = await chromium.launch({
   ...(CHROME ? { executablePath: CHROME } : {}),
-  args: ['--no-sandbox', '--use-angle=metal'],
+  args: ['--no-sandbox', ...(process.platform === 'darwin' ? ['--use-angle=metal'] : [])],
 });
 const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
 const errors = [];
