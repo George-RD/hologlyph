@@ -36,8 +36,14 @@ import type { TextSkinEngine } from '../contracts';
 const GRID_COLS = 96;
 const GRID_ROWS = 64;
 
-/** Glyph cells per world unit for the planar projection (tuned in the demo). */
-export const PLANAR_DENSITY = 20;
+/**
+ * Glyph cells per world unit for the planar projection (tuned in the demo).
+ * Was 20 against quantised-position GLBs, whose shader-visible positions were
+ * scaled 2x by KHR_mesh_quantization normalisation; base positions now ship
+ * as float32 (int16 position quantisation tears triangles in the WebGPU
+ * path), so the constant doubles to preserve the identical rendered density.
+ */
+export const PLANAR_DENSITY = 40;
 
 /** Horizontal projection scale: u advances this much per world unit of x. */
 export const U_SCALE = PLANAR_DENSITY / GRID_COLS;

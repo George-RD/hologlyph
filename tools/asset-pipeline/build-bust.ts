@@ -130,9 +130,16 @@ const RIGHT_EYE_MATERIALS: Record<string, true> = { M_ScleraRight: true, M_IrisR
 //   raycast shows they occlude the eyeball above/below centre. Under a text
 //   skin they cannot read as lashes (no alpha texture) and render as
 //   text-covered wisps.
-// M_EyeBlend (lid-eyeball seam) and M_LacrimalFluid (inner-corner detail)
-// stay: neither occludes the aperture and blend seals the seam visually.
-const DROPPED_MATERIALS: Record<string, true> = { M_EyeOcclusion: true, M_EyeLashes: true };
+// - M_LacrimalFluid: a tear-film band spanning the whole eye width (1.35R
+//   wide). Transparent fluid in photoreal renders; as an opaque primitive it
+//   caps the eyeball (owner screenshot, 2026-07-21).
+// M_EyeBlend stays, split out as the dialable eye_trim primitive: it is the
+// small caruncle-corner shell, real anatomy at the inner corner.
+const DROPPED_MATERIALS: Record<string, true> = {
+  M_EyeOcclusion: true,
+  M_EyeLashes: true,
+  M_LacrimalFluid: true,
+};
 
 // ---------------------------------------------------------------------------
 // Manifest + fetching
@@ -531,19 +538,24 @@ function build(
    // Per-vertex partition category drives the later glTF split. glTF keeps
    // morph-target counts per mesh, so the bust (which carries all 27 targets)
    // must hold every morph-bearing primitive: 0 = bust (face/head/neck),
-   // 3 = mouth interior (gums + tongue), 4 = teeth. The eyes (1 = sclera,
-   // 2 = iris) ship with no morph targets, so they form a separate mesh.
+   // 3 = mouth interior (gums + tongue), 4 = teeth, 5 = eye trim (the
+   // caruncle-corner blend shell + lacrimal fluid: kept for anatomy but split
+   // out so the runtime can style or hide them independently of the skin,
+   // exactly like mouth_interior). The eyes (1 = sclera, 2 = iris) ship with
+   // no morph targets, so they form a separate mesh.
    // Each primitive groups both sides by material, keeping left + right verts.
    const eyeCat = new Uint8Array(vcount);
    const scleraMats = new Set<number>();
    const irisMats = new Set<number>();
    const mouthMats = new Set<number>();
    const teethMats = new Set<number>();
+   const trimMats = new Set<number>();
    neutral.materials.forEach((m, i) => {
      if (m === 'M_ScleraLeft' || m === 'M_ScleraRight') scleraMats.add(i);
      if (m === 'M_IrisLeft' || m === 'M_IrisRight') irisMats.add(i);
      if (m === 'M_GumsTongue') mouthMats.add(i);
      if (m === 'M_Teeth') teethMats.add(i);
+     if (m === 'M_EyeBlend') trimMats.add(i);
    });
    for (let v = 0; v < vcount; v++) {
      const mat = vertMat[v]!;
@@ -551,6 +563,7 @@ function build(
      else if (irisMats.has(mat)) eyeCat[v] = 2;
      else if (mouthMats.has(mat)) eyeCat[v] = 3;
      else if (teethMats.has(mat)) eyeCat[v] = 4;
+     else if (trimMats.has(mat)) eyeCat[v] = 5;
      else eyeCat[v] = 0;
    }
 
@@ -658,20 +671,22 @@ function build(
    const buffer = doc.createBuffer();
  
    // Partition vertices by category. glTF keeps morph-target counts per mesh,
-   // so every morph-bearing primitive (bust, mouth interior) lives in the
-   // same 'bust' mesh. Mouth and teeth share one dark cavity material.
+   // so every morph-bearing primitive (bust, mouth interior, eye trim) lives
+   // in the same 'bust' mesh. Mouth and teeth share one dark cavity material.
    // Vertices keep ascending source order, so the build stays deterministic.
    //   0 = bust (face/head/neck), 1 = sclera, 2 = iris,
-   //   3/4 = mouth interior (gums, tongue, and teeth).
+   //   3/4 = mouth interior (gums, tongue, and teeth), 5 = eye trim.
    const vcount = geo.eyeCat.length;
    const remapBust = new Int32Array(vcount).fill(-1);
    const remapSclera = new Int32Array(vcount).fill(-1);
    const remapIris = new Int32Array(vcount).fill(-1);
    const remapMouth = new Int32Array(vcount).fill(-1);
+   const remapTrim = new Int32Array(vcount).fill(-1);
    const bustSrc: number[] = [];
    const scleraSrc: number[] = [];
    const irisSrc: number[] = [];
    const mouthSrc: number[] = [];
+   const trimSrc: number[] = [];
    for (let v = 0; v < vcount; v++) {
      const cat = geo.eyeCat[v]!;
      if (cat === 0) {
@@ -683,6 +698,9 @@ function build(
      } else if (cat === 2) {
        remapIris[v] = irisSrc.length;
        irisSrc.push(v);
+     } else if (cat === 5) {
+       remapTrim[v] = trimSrc.length;
+       trimSrc.push(v);
      } else {
        remapMouth[v] = mouthSrc.length;
        mouthSrc.push(v);
@@ -734,6 +752,7 @@ function build(
  
    const bust = extract(bustSrc, remapBust);
    const mouth = extract(mouthSrc, remapMouth);
+   const trim = extract(trimSrc, remapTrim);
    const sclera = extract(scleraSrc, remapSclera);
    const iris = extract(irisSrc, remapIris);
  
@@ -788,6 +807,12 @@ function build(
    addMorphs(bustPrim, bustSrc);
    const mouthPrim = makePrim(mouth);
    addMorphs(mouthPrim, mouthSrc);
+   // Eye trim: the caruncle-corner blend shell + lacrimal fluid. Split out
+   // with its own material (mouth_interior pattern) so the runtime can style
+   // or hide the inner-corner cover independently of the text skin. Carries
+   // the full morph set because it shares the bust mesh and moves with blinks.
+   const trimPrim = makePrim(trim);
+   addMorphs(trimPrim, trimSrc);
    const material = doc
      .createMaterial('bust')
      .setBaseColorFactor([0.5, 0.55, 0.6, 1])
@@ -796,12 +821,18 @@ function build(
      .createMaterial('mouth_interior')
      .setBaseColorFactor([0.04, 0.03, 0.035, 1])
      .setRoughnessFactor(0.9);
+   const trimMaterial = doc
+     .createMaterial('eye_trim')
+     .setBaseColorFactor([0.09, 0.08, 0.09, 1])
+     .setRoughnessFactor(0.8);
    bustPrim.setMaterial(material);
    mouthPrim.setMaterial(mouthMaterial);
+   trimPrim.setMaterial(trimMaterial);
  
    const bustMesh = doc.createMesh('bust');
    bustMesh.addPrimitive(bustPrim);
    bustMesh.addPrimitive(mouthPrim);
+   bustMesh.addPrimitive(trimPrim);
    bustMesh.setExtras({ targetNames });
    bustMesh.setWeights(new Array(targetNames.length).fill(0));
  

@@ -244,10 +244,10 @@ describe('shipped head bust', () => {
      if (!bust) return;
      const bustTargets = bust.listPrimitives()[0]?.listTargets().map((t) => t.getName()) ?? [];
      expect(bustTargets.sort()).toEqual([...CANONICAL].sort());
-     const bustPrims = bust.listPrimitives();
-     expect(bustPrims, 'bust primitive count').toHaveLength(2);
-     const bustMaterialNames = new Set(bustPrims.map((p) => p.getMaterial()?.getName()));
-     expect(bustMaterialNames).toEqual(new Set(['bust', 'mouth_interior']));
+    const bustPrims = bust.listPrimitives();
+    expect(bustPrims, 'bust primitive count').toHaveLength(3);
+    const bustMaterialNames = new Set(bustPrims.map((p) => p.getMaterial()?.getName()));
+    expect(bustMaterialNames).toEqual(new Set(['bust', 'mouth_interior', 'eye_trim']));
      for (const primitive of bustPrims) {
        expect(primitive.listTargets(), `${primitive.getMaterial()?.getName()} morph targets`).toHaveLength(
          CANONICAL.length,
@@ -296,8 +296,8 @@ describe('shipped head bust', () => {
         const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
         expect(
           mat?.name,
-          `${name} ray (${ox},${oy}) first hit must be an eye primitive, got ${mat?.name}`,
-        ).toMatch(/^eye_/);
+          `${name} ray (${ox},${oy}) first hit must be the eyeball, got ${mat?.name}`,
+        ).toMatch(/^eye_(sclera|iris)$/);
       }
     }
   });

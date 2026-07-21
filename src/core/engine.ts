@@ -46,9 +46,10 @@ import { createEmitter } from './emitter.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
  
 // Materials the engine must not replace with the text skin. The mouth cavity
-// keeps its authored dark material. All other morph meshes receive the glyph
-// grid, including any teeth-named or unnamed placeholder material.
-const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior']);
+// and the eye trim (caruncle-corner blend shell + lacrimal fluid) keep their
+// authored dark materials. All other morph meshes receive the glyph grid,
+// including any teeth-named or unnamed placeholder material.
+const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior', 'eye_trim']);
 function isEyeMesh(mesh: THREE.Mesh): boolean {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   return materials.some(
