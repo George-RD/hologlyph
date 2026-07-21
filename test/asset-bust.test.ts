@@ -244,10 +244,10 @@ describe('shipped head bust', () => {
      if (!bust) return;
      const bustTargets = bust.listPrimitives()[0]?.listTargets().map((t) => t.getName()) ?? [];
      expect(bustTargets.sort()).toEqual([...CANONICAL].sort());
-     const bustPrims = bust.listPrimitives();
-     expect(bustPrims, 'bust primitive count').toHaveLength(2);
-     const bustMaterialNames = new Set(bustPrims.map((p) => p.getMaterial()?.getName()));
-     expect(bustMaterialNames).toEqual(new Set(['bust', 'mouth_interior']));
+    const bustPrims = bust.listPrimitives();
+    expect(bustPrims, 'bust primitive count').toHaveLength(3);
+    const bustMaterialNames = new Set(bustPrims.map((p) => p.getMaterial()?.getName()));
+    expect(bustMaterialNames).toEqual(new Set(['bust', 'mouth_interior', 'eye_trim']));
      for (const primitive of bustPrims) {
        expect(primitive.listTargets(), `${primitive.getMaterial()?.getName()} morph targets`).toHaveLength(
          CANONICAL.length,
