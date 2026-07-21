@@ -83,3 +83,5 @@
 - archive: pages-owner-landing merged; no operations
 - scan: nodes=16, findings=43, errors=0
 - archive: landing-quickbar merged; no operations
+- scan: nodes=16, findings=43, errors=0
+- archive: landing-copy-lipsync merged; no operations
