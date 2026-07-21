@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import type * as THREE from 'three';
+import { Raycaster, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import {
@@ -259,6 +260,47 @@ describe('shipped head bust', () => {
      const teethMaterial = doc.getRoot().listMaterials().find((material) => material.getName() === 'teeth');
      expect(teethMaterial, 'teeth material must be removed').toBeUndefined();
    });
+  // Regression (eye occlusion membrane): ICT topology closes each eye opening
+  // with an auxiliary shadow card (M_EyeOcclusion) hugging the eyeball across
+  // the palpebral aperture. Folded into the bust it carries the text-skin
+  // material and paints skin over the eyes. Oracle: a ray fired through the
+  // aperture toward each eye centre must hit an eye primitive BEFORE any bust
+  // geometry. Pure math (Raycaster), no WebGL; bind pose equals rest pose so
+  // plain geometry raycasting is representative.
+  it('no bust geometry occludes the eyeballs through the open aperture', async () => {
+    const scene = await loadBust();
+    scene.updateMatrixWorld(true);
+    // Raycasting a SkinnedMesh reads skeleton.boneMatrices, which are only
+    // populated by skeleton.update() (normally called during render).
+    scene.traverse((obj) => {
+      const skinned = obj as THREE.SkinnedMesh;
+      if (skinned.isSkinnedMesh) skinned.skeleton.update();
+    });
+    const eyeNames = ['eye_l', 'eye_r'] as const;
+    const raycaster = new Raycaster();
+    for (const name of eyeNames) {
+      const bone = scene.getObjectByName(name);
+      expect(bone, `bone ${name}`).toBeDefined();
+      if (!bone) continue;
+      const centre = new Vector3();
+      bone.getWorldPosition(centre);
+      // Central ray plus four slight offsets covering the aperture cap.
+      for (const [ox, oy] of [[0, 0], [0.01, 0], [-0.01, 0], [0, 0.008], [0, -0.008]]) {
+        const origin = centre.clone().add(new Vector3(ox, oy, 0.5));
+        raycaster.set(origin, new Vector3(0, 0, -1));
+        const hits = raycaster.intersectObjects(scene.children, true);
+        const first = hits.find((h) => (h.object as THREE.Mesh).isMesh);
+        expect(first, `${name} ray (${ox},${oy}) hits something`).toBeDefined();
+        if (!first) continue;
+        const mesh = first.object as THREE.Mesh;
+        const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        expect(
+          mat?.name,
+          `${name} ray (${ox},${oy}) first hit must be an eye primitive, got ${mat?.name}`,
+        ).toMatch(/^eye_/);
+      }
+    }
+  });
  });
 
 /**
