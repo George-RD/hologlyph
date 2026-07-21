@@ -425,7 +425,7 @@ const idle = new IdleController();
 let exprCur = emptyExpressionWeights();
 let exprTarget = weightsFor('neutral');
 const VISEME_MS = 0.075;
-const speech = { seq: [], boundaryAt: 0, sawBoundary: false, words: [], wordIdx: 0, nextWordAt: 0 };
+const speech = { seq: [], boundaryAt: 0, sawBoundary: false, words: [], wordIdx: 0, nextWordAt: 0, gen: 0 };
 
 const panel = document.getElementById('panel');
 function group(title) { const f = document.createElement('fieldset'); const l = document.createElement('legend'); l.textContent = title; f.appendChild(l); panel.appendChild(f); return f; }
@@ -564,6 +564,7 @@ const saybar = document.createElement('div');
 saybar.id = 'saybar';
 const sayInput = document.createElement('input');
 sayInput.type = 'text';
+sayInput.setAttribute('aria-label', 'Text to speak');
 sayInput.maxLength = 240;
 sayInput.placeholder = 'type something for it to say...';
 const speakBtn = document.createElement('button');
@@ -573,6 +574,9 @@ saybar.appendChild(sayInput);
 saybar.appendChild(speakBtn);
 quickbar.appendChild(saybar);
 function startSpeak() {
+  // Bump the generation on every start/stop so callbacks from a prior
+  // utterance cannot clobber the active sequence or reset the window.
+  const gen = ++speech.gen;
   if (state.speaking) { state.speakUntil = 0; speechSynthesis.cancel(); return; }
   const text = sayInput.value.trim() || 'hologlyph is a web native text skinned talking head.';
   const now = performance.now() / 1000;
@@ -584,6 +588,7 @@ function startSpeak() {
   state.speakUntil = now + Math.min(20, Math.max(2.5, text.length * 0.075));
   const utt = new SpeechSynthesisUtterance(text);
   utt.onboundary = (e) => {
+    if (gen !== speech.gen) return; // stale utterance
     const word = wordAt(text, e.charIndex, e.charLength ?? 0);
     const seq = visemeSequenceForWord(word);
     if (seq.length === 0) return; // punctuation-only boundary: keep mouth as-is
@@ -591,7 +596,7 @@ function startSpeak() {
     speech.boundaryAt = performance.now() / 1000;
     speech.sawBoundary = true;
   };
-  utt.onend = () => { state.speakUntil = 0; };
+  utt.onend = () => { if (gen === speech.gen) state.speakUntil = 0; };
   try { speechSynthesis.speak(utt); } catch { /* keep the visual window */ }
 }
 speakBtn.addEventListener('click', startSpeak);

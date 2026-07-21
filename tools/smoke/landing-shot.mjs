@@ -21,6 +21,15 @@ const checks = await page.evaluate(() => ({
 console.log(JSON.stringify(checks));
 await page.screenshot({ path: '/tmp/holo-landing.png' });
 
+const failures = [];
+if (checks.engineLink) failures.push('engine-demo link still present in topbar');
+if (checks.intro !== 'hologlyph') failures.push(`intro title missing (got ${checks.intro})`);
+if (!checks.introCopy) failures.push('intro copy block missing');
+if (!checks.sayInput) failures.push('speak text input missing');
+if (Number(checks.camZ) < 1.9) failures.push(`camera too close (z=${checks.camZ}, expected >= 1.9)`);
+const ariaName = await page.evaluate(() => document.querySelector('#saybar input')?.getAttribute('aria-label'));
+if (!ariaName) failures.push('speak input has no accessible name (aria-label)');
+
 // Drive speak with typed text and sample viseme influences over time.
 await page.fill('#saybar input', 'hello world this is a smoke test of the mouth');
 await page.click('#saybar button');
@@ -45,5 +54,13 @@ const distinct = new Set(active.map((s) => s.name));
 console.log('speaking samples with open mouth:', active.length, 'distinct visemes:', [...distinct].join(','));
 await page.waitForTimeout(400);
 await page.screenshot({ path: '/tmp/holo-landing-speak.png' });
-console.log('errors:', errors.length ? errors.join('; ') : 'none');
+
+// Hard oracles: the speak pipeline must animate the mouth across several
+// distinct word-driven shapes, not stay closed or repeat one viseme.
+if (active.length < 4) failures.push(`mouth barely animated during speak (${active.length} open frames)`);
+if (distinct.size < 2) failures.push(`speak produced only ${distinct.size} distinct viseme(s) - lip-sync regressed`);
+if (errors.length) failures.push(`page errors: ${errors.join('; ')}`);
+
 await browser.close();
+if (failures.length) { console.error(`FAIL:\n - ${failures.join('\n - ')}`); process.exit(1); }
+console.log('PASS: landing smoke oracles green');
