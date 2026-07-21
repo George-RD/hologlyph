@@ -52,7 +52,6 @@ import { weightsFor, lerpWeights, emptyExpressionWeights } from '../src/motion/e
 import bustUrl from '../assets/hologlyph-bust.glb?url';
 
 const GRID_COLS = 96, GRID_ROWS = 64, PLANAR_DENSITY = 40;
-const GLOW_GAIN = 1.9;
 const SHADE_KEY_WEIGHT = 2.2, SHADE_FILL_WEIGHT = 0.8, SHADE_AMBIENT = 0.08, SHADE_FLOOR = 0.12;
 const TEXT = 'hologlyph is a web native text skinned talking head. '.repeat(40);
 
@@ -471,7 +470,7 @@ const gEyes = group('eyes');
 uslider(gEyes, 'pupil', 'pupil size (dilation)', 0.1, 0.75, 0.01);
 uslider(gEyes, 'irisSize', 'iris size (cone radians)', 0.2, 1.0, 0.01);
 uslider(gEyes, 'irisGlow', 'iris glow', 0, 3, 0.01);
-slider(gEyes, 'irisHue', 'iris hue', 0, 1, 0.01, 0.55, (v) => U.irisColor.value.setHSL(v, 0.85, 0.6));
+slider(gEyes, 'irisHue', 'iris hue', 0, 1, 0.01, 0.78, (v) => U.irisColor.value.setHSL(v, 0.85, 0.6));
 uslider(gEyes, 'scleraGlow', 'sclera text glow (0 = off)', 0, 1.5, 0.01);
 uslider(gEyes, 'eyePresence', 'eyeball presence (dim orb in recess mode)', 0, 1, 0.01);
 uslider(gEyes, 'eyeDensity', 'sclera text density', 40, 300, 1);

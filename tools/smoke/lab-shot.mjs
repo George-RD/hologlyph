@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 const CHROME = process.env.HOLOGLYPH_CHROME;
-const browser = await chromium.launch({ ...(CHROME ? { executablePath: CHROME } : {}), args: ['--no-sandbox', '--use-angle=metal'] });
+const browser = await chromium.launch({ ...(CHROME ? { executablePath: CHROME } : {}), args: ['--no-sandbox', ...(process.platform === 'darwin' ? ['--use-angle=metal'] : [])] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
