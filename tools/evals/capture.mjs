@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 
 // Optional real-browser override, e.g. HOLOGLYPH_CHROME=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 const CHROME = process.env.HOLOGLYPH_CHROME;
-const DEFAULT_URL = 'http://localhost:5173';
+const DEFAULT_URL = 'http://localhost:5173/hologlyph/engine.html';
 const OUTPUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
 const VIEWPORT = { width: 1100, height: 800 };
 const CANVAS_SELECTOR = '#holo';

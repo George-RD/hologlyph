@@ -35,10 +35,10 @@ jobs:
         run: |
           bun run dev &
           for i in $(seq 1 60); do
-            curl -sf http://localhost:5173/ >/dev/null && break
+            curl -sf http://localhost:5173/hologlyph/engine.html >/dev/null && break
             sleep 1
           done
-      - run: bun tools/evals/capture.mjs http://localhost:5173/
+      - run: bun tools/evals/capture.mjs http://localhost:5173/hologlyph/engine.html
       - run: bun tools/evals/score.mjs
       - name: Negative control (harness must catch smear)
         run: bun run eval:control

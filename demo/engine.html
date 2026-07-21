@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph — demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070d;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+      .intro, .outro {
+        height: 120vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 0 2rem;
+      }
+      .intro h1 { font-size: clamp(2rem, 6vw, 4rem); margin: 0 0 0.5rem; }
+      .intro p { max-width: 40rem; opacity: 0.8; }
+      #host {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+      }
+      #holo {
+        width: min(640px, 90vw);
+        height: 60vh;
+        display: block;
+      }
+      .controls {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      button, select {
+        font: inherit;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--accent);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: #04121f; font-weight: 600; }
+      #state { opacity: 0.7; font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <section class="intro">
+      <div>
+        <h1>hologlyph</h1>
+        <p>A web-native, text-skinned talking head. Scroll to emerge it from the
+        pool, then press Speak to start a conversation.</p>
+      </div>
+    </section>
+
+    <section id="host">
+      <canvas id="holo"></canvas>
+      <div class="controls">
+        <button type="button" id="speak" class="primary">Speak</button>
+        <label for="emotion">Emotion</label>
+        <select id="emotion">
+          <option value="neutral">neutral</option>
+          <option value="friendly">friendly</option>
+          <option value="thinking">thinking</option>
+          <option value="agree">agree</option>
+          <option value="concern">concern</option>
+          <option value="happy">happy</option>
+          <option value="surprised">surprised</option>
+          <option value="listening">listening</option>
+          <option value="speaking">speaking</option>
+        </select>
+        <span id="state">state: hidden</span>
+      </div>
+    </section>
+
+    <section class="outro">
+      <p>Keep scrolling — when the host leaves the viewport the head submerges.</p>
+    </section>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
