@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>hologlyph feature-aware shading variants</title>
+<style>
+  body { background:#0a0c10; color:#dde; font:12px monospace; margin:12px; }
+  .grid { display:flex; flex-wrap:wrap; gap:10px; }
+  .cell h3 { margin:2px 0; font-size:12px; font-weight:normal; color:#9fe7ff; }
+  .cell p { margin:0 0 4px; font-size:11px; color:#889; max-width:420px; }
+  canvas { width:420px; height:420px; background:#05070d; border:1px solid #1a2230; }
+</style>
+</head>
+<body>
+<h2>Feature-aware text-skin shading (experiment)</h2>
+<p>Programmatic feature boundaries baked from the GLB: lip/eyelid/brow masks come
+from morph-target delta magnitudes; the cavity mask is geometric concavity from
+the one-ring. Each variant modulates the existing shade term with these masks.</p>
+<div class="grid" id="grid"></div>
+<div id="status">loading...</div>
+<script type="module">
+import * as THREE from 'three/webgpu';
+import {
+  attribute, dot, float, floor, fract, luminance, mix,
+  normalGeometry, normalView, normalWorld, positionGeometry,
+  positionViewDirection, pow, saturate, texture, uniform, vec2, vec3,
+} from 'three/tsl';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { createTextSkinEngine, createStaticTextSource } from '../src/text-skin/index.ts';
+import bustUrl from '../assets/hologlyph-bust.glb?url';
+
+// Mirror the production projection/shade constants (src/shaders/materials.ts).
+const GRID_COLS = 96, GRID_ROWS = 64;
+const PLANAR_DENSITY = 20;
+const U_SCALE = PLANAR_DENSITY / GRID_COLS;
+const V_SCALE = PLANAR_DENSITY / GRID_ROWS;
+const BASE_OPACITY = 0.02, GLOW_GAIN = 1.9, RIM_GAIN = 0.12;
+const SHADE_KEY_WEIGHT = 2.2, SHADE_FILL_WEIGHT = 0.8, SHADE_AMBIENT = 0.08, SHADE_FLOOR = 0.12;
+
+const TEXT = 'hologlyph is a web native text skinned talking head. '.repeat(40);
+
+// Morph-name groups that localise to each facial feature.
+const GROUPS = {
+  mouth: ['viseme_aa','viseme_ee','viseme_ih','viseme_oh','viseme_ou','viseme_pp',
+    'viseme_ff','viseme_th','viseme_dd','viseme_kk','viseme_ch','viseme_ss',
+    'viseme_nn','viseme_rr','jaw_open','mouth_round'],
+  eyelid: ['exp_blink','exp_blink_l','exp_blink_r'],
+  brow: ['exp_brow_up','exp_brow_down'],
+};
+
+// Bake per-vertex feature masks (aMouth/aEyelid/aBrow/aCavity) onto a mesh's
+// geometry. Masks normalise to [0,1]. Missing morphs -> zero (e.g. eyes mesh).
+function bakeFeatures(mesh) {
+  const geo = mesh.geometry;
+  const pos = geo.attributes.position;
+  const nor = geo.attributes.normal;
+  const N = pos.count;
+  const dict = mesh.morphTargetDictionary || {};
+  const morphs = geo.morphAttributes.position || [];
+
+  const out = { aMouth: new Float32Array(N), aEyelid: new Float32Array(N), aBrow: new Float32Array(N) };
+  for (const [g, list] of Object.entries(GROUPS)) {
+    const key = g === 'mouth' ? 'aMouth' : g === 'eyelid' ? 'aEyelid' : 'aBrow';
+    const arr = out[key];
+    let gmax = 0;
+    for (const nm of list) {
+      const idx = dict[nm];
+      if (idx === undefined || !morphs[idx]) continue;
+      const m = morphs[idx];
+      for (let i = 0; i < N; i++) {
+        const mag = Math.hypot(m.getX(i), m.getY(i), m.getZ(i));
+        if (mag > arr[i]) arr[i] = mag;
+        if (arr[i] > gmax) gmax = arr[i];
+      }
+    }
+    if (gmax > 0) for (let i = 0; i < N; i++) arr[i] = Math.min(1, arr[i] / gmax);
+  }
+
+  // Geometric cavity: mean dot(normalize(neighbour - pos), normal) over the
+  // one-ring, clamped positive. Concave creases (sockets, nostrils, lip line,
+  // nasolabial folds) score high; convex bumps score ~0.
+  const cav = new Float32Array(N);
+  const idxAttr = geo.index;
+  if (idxAttr) {
+    const acc = new Float64Array(N), cnt = new Uint32Array(N);
+    const ia = idxAttr.array;
+    const add = (a, b) => {
+      const dx = pos.getX(b) - pos.getX(a), dy = pos.getY(b) - pos.getY(a), dz = pos.getZ(b) - pos.getZ(a);
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const d = (dx / len) * nor.getX(a) + (dy / len) * nor.getY(a) + (dz / len) * nor.getZ(a);
+      acc[a] += d; cnt[a]++;
+    };
+    for (let t = 0; t < ia.length; t += 3) {
+      const a = ia[t], b = ia[t + 1], c = ia[t + 2];
+      add(a, b); add(a, c); add(b, a); add(b, c); add(c, a); add(c, b);
+    }
+    let cmax = 0;
+    for (let i = 0; i < N; i++) { const v = cnt[i] ? Math.max(0, acc[i] / cnt[i]) : 0; cav[i] = v; if (v > cmax) cmax = v; }
+    if (cmax > 0) for (let i = 0; i < N; i++) cav[i] = Math.min(1, (cav[i] / cmax) * 1.3);
+  }
+  out.aCavity = cav;
+
+  for (const [name, arr] of Object.entries(out)) {
+    geo.setAttribute(name, new THREE.BufferAttribute(arr, 1));
+  }
+}
+
+// Build a feature-aware material. `w` selects mask weights per variant.
+// `debugMasks` renders the raw masks as RGB instead of the text skin.
+function buildMaterial(skin, w, debugMasks = false) {
+  const mat = new THREE.MeshStandardNodeMaterial();
+  mat.metalness = 0; mat.roughness = 0.4;
+  mat.transparent = true; mat.depthTest = true; mat.depthWrite = true;
+
+  const tex = skin.texture;
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter; tex.anisotropy = Math.max(tex.anisotropy, 4);
+
+  const aMouth = attribute('aMouth', 'float');
+  const aEyelid = attribute('aEyelid', 'float');
+  const aBrow = attribute('aBrow', 'float');
+  const aCavity = attribute('aCavity', 'float');
+
+  if (debugMasks) {
+    mat.colorNode = vec3(aMouth, aEyelid.add(aBrow), aCavity);
+    mat.emissiveNode = vec3(aMouth, aEyelid.add(aBrow), aCavity).mul(0.6);
+    mat.opacityNode = float(1);
+    mat.transparent = false;
+    return mat;
+  }
+
+  // --- triplanar bind-space sampling (mirrors production) ---
+  const scroll = uniform(0);
+  const bindNormal = normalGeometry.normalize();
+  const axisW = bindNormal.abs().pow(2);
+  const weights = axisW.div(axisW.dot(vec3(1)));
+  const rowY = floor(positionGeometry.y.mul(PLANAR_DENSITY));
+  const rowZ = floor(positionGeometry.z.mul(PLANAR_DENSITY));
+  const rateY = float(0.75).add(fract(rowY.mul(0.618)).mul(0.5));
+  const rateZ = float(0.75).add(fract(rowZ.mul(0.618)).mul(0.5));
+  const sXY = texture(tex, vec2(positionGeometry.x.mul(U_SCALE).add(0.5).add(scroll.mul(rateY)), positionGeometry.y.mul(V_SCALE)));
+  const sZY = texture(tex, vec2(positionGeometry.z.mul(U_SCALE).add(0.5).add(scroll.mul(rateY)), positionGeometry.y.mul(V_SCALE)));
+  const sXZ = texture(tex, vec2(positionGeometry.x.mul(U_SCALE).add(0.5).add(scroll.mul(rateZ)), positionGeometry.z.mul(V_SCALE)));
+  const sampled = sXY.mul(weights.z).add(sZY.mul(weights.x)).add(sXZ.mul(weights.y));
+
+  // --- production matte-skin shade term ---
+  const keyDir = vec3(1.2, 1.6, 2.0).normalize();
+  const fillDir = vec3(-1.5, 0.4, 1.0).normalize();
+  const shadeBase = saturate(dot(normalWorld, keyDir)).mul(SHADE_KEY_WEIGHT)
+    .add(saturate(dot(normalWorld, fillDir)).mul(SHADE_FILL_WEIGHT))
+    .add(SHADE_AMBIENT).clamp(SHADE_FLOOR, 1);
+
+  // --- feature modulation: darken creases and feature bands ---
+  const shade = shadeBase
+    .mul(float(1).sub(aCavity.mul(w.cavity)))
+    .mul(float(1).sub(aMouth.mul(w.mouthDark)))
+    .mul(float(1).sub(aEyelid.mul(w.eyelid)))
+    .mul(float(1).sub(aBrow.mul(w.brow)))
+    .clamp(0.03, 1);
+
+  // Warm the lip colour (a real feature colour cue, not just brightness).
+  const warmMix = aMouth.mul(w.mouthWarm);
+  const lipTint = mix(vec3(1, 1, 1), vec3(1.0, 0.62, 0.55), warmMix);
+
+  const luma = luminance(sampled.rgb);
+  mat.colorNode = sampled.rgb.mul(shade).mul(lipTint);
+  // Boost lip opacity so glyphs there read denser.
+  mat.opacityNode = luma.mul(1 - BASE_OPACITY).add(BASE_OPACITY).add(aMouth.mul(w.mouthOpacity)).clamp(0, 1);
+
+  const rim = pow(saturate(float(1).sub(dot(normalView, positionViewDirection))), 3).mul(RIM_GAIN);
+  const rimTint = vec3(0.5, 0.7, 1.0).mul(rim);
+  mat.emissiveNode = sampled.rgb.mul(GLOW_GAIN).mul(shade).mul(lipTint).add(rimTint);
+  return mat;
+}
+
+const ZERO = { cavity: 0, mouthDark: 0, mouthWarm: 0, mouthOpacity: 0, eyelid: 0, brow: 0 };
+const VARIANTS = [
+  { name: 'V0 current (baseline)', desc: 'Exactly what ships now: half-lambert shade only, no feature masks.', w: ZERO },
+  { name: 'V1 subtle feature variance', desc: 'Gentle crease AO + mild lip/eye/brow darkening. The "slightly stronger variance" ask.', w: { cavity: 0.35, mouthDark: 0.30, mouthWarm: 0, mouthOpacity: 0, eyelid: 0.25, brow: 0.20 } },
+  { name: 'V2 cavity AO only (geometric)', desc: 'No morph masks: pure geometric concavity darkening. Sockets, nostrils, lip line, nasolabial folds.', w: { cavity: 0.65, mouthDark: 0, mouthWarm: 0, mouthOpacity: 0, eyelid: 0, brow: 0 } },
+  { name: 'V3 strong lips + eye orbit', desc: 'Cavity + strong lip darken/warm/density + strong eyelid orbit shadow. The "much stronger for lips" direction.', w: { cavity: 0.45, mouthDark: 0.80, mouthWarm: 0.80, mouthOpacity: 0.35, eyelid: 0.70, brow: 0.35 } },
+  { name: 'V4 max combined', desc: 'Everything pushed near the ceiling: strongest crease + lip + orbit + brow. Upper bound for tuning.', w: { cavity: 0.60, mouthDark: 0.92, mouthWarm: 0.92, mouthOpacity: 0.42, eyelid: 0.82, brow: 0.45 } },
+  { name: 'V5 masks (debug)', desc: 'Proof of the programmatic boundaries. R=lips, G=eyelid+brow, B=cavity. No text.', w: ZERO, debug: true },
+];
+
+const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
+const gltf = await loader.loadAsync(bustUrl);
+gltf.scene.traverse((o) => { if (o.isMesh) bakeFeatures(o); });
+
+const skin = createTextSkinEngine();
+skin.setSource(createStaticTextSource(TEXT));
+
+const grid = document.getElementById('grid');
+
+const FACE_CAM = { pos: [0.34, 0.14, 0.95], look: [0, 0.02, 0.05], fov: 27 };
+const MOUTH_CAM = { pos: [0.16, -0.06, 0.62], look: [0, -0.12, 0.10], fov: 24 };
+
+async function renderTile(variant, cam, labelSuffix = '') {
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  const h = document.createElement('h3'); h.textContent = variant.name + labelSuffix; cell.appendChild(h);
+  const p = document.createElement('p'); p.textContent = variant.desc; cell.appendChild(p);
+  const canvas = document.createElement('canvas');
+  canvas.width = 840; canvas.height = 840; cell.appendChild(canvas);
+  grid.appendChild(cell);
+
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: true, forceWebGL: true });
+  await renderer.init();
+  renderer.setSize(840, 840, false);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05070d);
+  const camera = new THREE.PerspectiveCamera(cam.fov, 1, 0.1, 100);
+  camera.position.set(...cam.pos);
+  camera.lookAt(...cam.look);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1.2, 1.6, 2.0); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xbcd4ff, 0.8); fill.position.set(-1.5, 0.4, 1.0); scene.add(fill);
+
+  const clone = gltf.scene.clone(true);
+  const mat = buildMaterial(skin, variant.w, variant.debug);
+  // Mirror engine.ts: skin only morph meshes, keep mouth_interior + real eyes.
+  clone.traverse((o) => {
+    if (!o.isMesh) return;
+    const mn = Array.isArray(o.material) ? '' : (o.material && o.material.name) || '';
+    if (mn === 'eye_sclera' || mn === 'eye_iris') {
+      o.renderOrder = 2;
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of ms) { m.transparent = true; m.side = THREE.FrontSide; m.depthTest = true; m.depthWrite = true; }
+      return;
+    }
+    if (mn === 'mouth_interior') return;
+    o.renderOrder = 1;
+    o.material = mat;
+  });
+  scene.add(clone);
+  await renderer.renderAsync(scene, camera);
+}
+
+// Row 1-2: full-face variants.
+for (const variant of VARIANTS) await renderTile(variant, FACE_CAM);
+
+// Row 3: mouth-zoom comparison of baseline vs the two strong directions.
+const sep = document.createElement('h2');
+sep.textContent = 'Mouth zoom: baseline vs strong feature emphasis';
+sep.style.width = '100%';
+grid.appendChild(sep);
+const byName = Object.fromEntries(VARIANTS.map((v) => [v.name.slice(0, 2), v]));
+for (const key of ['V0', 'V3', 'V4']) await renderTile(byName[key], MOUTH_CAM, ' (mouth zoom)');
+
+document.getElementById('status').textContent = 'DONE';
+</script>
+</body>
+</html>
