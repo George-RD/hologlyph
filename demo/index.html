@@ -29,14 +29,20 @@
   #topbar { position:absolute; top:10px; right:12px; display:flex; gap:8px; align-items:center; }
   #topbar a, #topbar button { flex:none; background:rgba(11,14,20,0.75); color:#9fb2c8; border:1px solid #24384f; border-radius:5px; padding:4px 10px; font:inherit; text-decoration:none; cursor:pointer; }
   #topbar a:hover, #topbar button:hover { background:#1c3247; color:#cde; }
+  #tuneBtn { font-size:15px; line-height:1; padding:4px 9px; }
+  #quickbar { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); display:flex; gap:6px; flex-wrap:wrap; justify-content:center; max-width:min(92%, 760px); }
+  #quickbar button { flex:none; background:rgba(11,14,20,0.78); color:#9fb2c8; border:1px solid #24384f; border-radius:5px; padding:5px 12px; font:inherit; cursor:pointer; }
+  #quickbar button:hover { background:#1c3247; color:#cde; }
+  #quickbar button.active { background:#2a5f43; border-color:#3f8f63; color:#dfe; }
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="view"></canvas>
   <div id="status">loading...</div>
+  <div id="quickbar"></div>
   <div id="topbar">
-    <button type="button" id="tuneBtn" title="open the shading lab controls">tune</button>
+    <button type="button" id="tuneBtn" title="open the tuning panel" aria-label="open the tuning panel">&#9881;</button>
     <a href="./engine.html" title="scroll-emergence engine demo">engine demo</a>
     <a href="https://github.com/George-RD/hologlyph">github</a>
   </div>
@@ -499,10 +505,19 @@ uslider(gTone, 'rim', 'rim glow', 0, 0.4, 0.005);
 uslider(gTone, 'glowGain', 'glyph glow gain (brightness)', 0, 4, 0.05);
 slider(gTone, 'roughness', 'surface roughness (1 kills specular sheen)', 0.05, 1, 0.01, 0.4, (v) => { headMat.roughness = v; });
 
-const gAct = group('expressions + speech');
-const exprBtns = document.createElement('div'); exprBtns.className = 'btns'; gAct.appendChild(exprBtns);
+// Expressions + speak live on the stage quickbar (always visible), not in
+// the tuning panel. Expressions use the real semantic map
+// (src/motion/expressions.ts); speak is a lab approximation cycling viseme
+// morphs off SpeechSynthesis (library route: SpeechEngine -> visemeTap ->
+// MotionEngine).
+const quickbar = document.getElementById('quickbar');
+const exprBtns = document.createElement('div');
+exprBtns.style.display = 'contents';
+quickbar.appendChild(exprBtns);
 for (const name of ['neutral', 'friendly', 'thinking', 'happy', 'surprised', 'concern', 'listening']) {
-  const b = document.createElement('button'); b.textContent = name;
+  const b = document.createElement('button');
+  b.type = 'button'; b.textContent = name;
+  if (name === state.expression) b.classList.add('active');
   b.addEventListener('click', () => {
     state.expression = name; exprTarget = weightsFor(name);
     for (const x of exprBtns.children) x.classList.toggle('active', x.textContent === name);
@@ -510,20 +525,20 @@ for (const name of ['neutral', 'friendly', 'thinking', 'happy', 'surprised', 'co
   exprBtns.appendChild(b);
 }
 const speakBtn = document.createElement('button');
-speakBtn.textContent = 'speak (demo)';
+speakBtn.type = 'button';
+speakBtn.textContent = 'speak';
+speakBtn.title = 'cycle viseme morphs off SpeechSynthesis (demo approximation)';
 speakBtn.addEventListener('click', () => {
   if (state.speaking) { state.speakUntil = 0; speechSynthesis.cancel(); return; }
   // Drive visemes immediately; SpeechSynthesis audio is best-effort (may be
-  // voiceless in headless/CI contexts) and ends the window early if it fires.
+  // voiceless in headless/CI contexts). Natural audio end closes the window
+  // early; an audio ERROR does not - the visual demo still runs its 3.5 s.
   state.speakUntil = performance.now() / 1000 + 3.5;
   const utt = new SpeechSynthesisUtterance('hologlyph is a web native text skinned talking head.');
-  utt.onend = utt.onerror = () => { state.speakUntil = 0; };
+  utt.onend = () => { state.speakUntil = 0; };
   try { speechSynthesis.speak(utt); } catch { /* keep the timer window */ }
 });
-gAct.appendChild(speakBtn);
-const ahint = document.createElement('p'); ahint.className = 'hint';
-ahint.textContent = 'Expressions use the real semantic map (src/motion/expressions.ts). Speak is a lab approximation cycling viseme morphs off SpeechSynthesis; the library route is SpeechEngine -> visemeTap -> MotionEngine.';
-gAct.appendChild(ahint);
+quickbar.appendChild(speakBtn);
 
 const gPre = group('presets + export');
 const btns = document.createElement('div'); btns.className = 'btns'; gPre.appendChild(btns);
