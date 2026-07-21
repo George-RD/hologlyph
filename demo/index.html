@@ -517,10 +517,16 @@ quickbar.appendChild(exprBtns);
 for (const name of ['neutral', 'friendly', 'thinking', 'happy', 'surprised', 'concern', 'listening']) {
   const b = document.createElement('button');
   b.type = 'button'; b.textContent = name;
-  if (name === state.expression) b.classList.add('active');
+  const on = name === state.expression;
+  b.classList.toggle('active', on);
+  b.setAttribute('aria-pressed', String(on));
   b.addEventListener('click', () => {
     state.expression = name; exprTarget = weightsFor(name);
-    for (const x of exprBtns.children) x.classList.toggle('active', x.textContent === name);
+    for (const x of exprBtns.children) {
+      const sel = x.textContent === name;
+      x.classList.toggle('active', sel);
+      x.setAttribute('aria-pressed', String(sel));
+    }
   });
   exprBtns.appendChild(b);
 }
@@ -582,6 +588,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now; const t = now / 1000;
   state.speaking = t < (state.speakUntil || 0);
   speakBtn.classList.toggle('active', state.speaking);
+  speakBtn.setAttribute('aria-pressed', String(state.speaking));
 
   const tgt = state.thinking
     ? { yaw: THINK.yaw, pitch: THINK.pitch, roll: 0, lookX: THINK.lookX, lookY: THINK.lookY, speed: state.scrollSpeed * THINK.speedMul }
