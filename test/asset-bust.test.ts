@@ -296,8 +296,8 @@ describe('shipped head bust', () => {
         const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
         expect(
           mat?.name,
-          `${name} ray (${ox},${oy}) first hit must be an eye primitive, got ${mat?.name}`,
-        ).toMatch(/^eye_/);
+          `${name} ray (${ox},${oy}) first hit must be the eyeball, got ${mat?.name}`,
+        ).toMatch(/^eye_(sclera|iris)$/);
       }
     }
   });

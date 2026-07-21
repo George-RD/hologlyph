@@ -130,9 +130,16 @@ const RIGHT_EYE_MATERIALS: Record<string, true> = { M_ScleraRight: true, M_IrisR
 //   raycast shows they occlude the eyeball above/below centre. Under a text
 //   skin they cannot read as lashes (no alpha texture) and render as
 //   text-covered wisps.
-// M_EyeBlend (lid-eyeball seam) and M_LacrimalFluid (inner-corner detail)
-// stay: neither occludes the aperture and blend seals the seam visually.
-const DROPPED_MATERIALS: Record<string, true> = { M_EyeOcclusion: true, M_EyeLashes: true };
+// - M_LacrimalFluid: a tear-film band spanning the whole eye width (1.35R
+//   wide). Transparent fluid in photoreal renders; as an opaque primitive it
+//   caps the eyeball (owner screenshot, 2026-07-21).
+// M_EyeBlend stays, split out as the dialable eye_trim primitive: it is the
+// small caruncle-corner shell, real anatomy at the inner corner.
+const DROPPED_MATERIALS: Record<string, true> = {
+  M_EyeOcclusion: true,
+  M_EyeLashes: true,
+  M_LacrimalFluid: true,
+};
 
 // ---------------------------------------------------------------------------
 // Manifest + fetching
@@ -548,7 +555,7 @@ function build(
      if (m === 'M_IrisLeft' || m === 'M_IrisRight') irisMats.add(i);
      if (m === 'M_GumsTongue') mouthMats.add(i);
      if (m === 'M_Teeth') teethMats.add(i);
-     if (m === 'M_EyeBlend' || m === 'M_LacrimalFluid') trimMats.add(i);
+     if (m === 'M_EyeBlend') trimMats.add(i);
    });
    for (let v = 0; v < vcount; v++) {
      const mat = vertMat[v]!;

@@ -42,7 +42,7 @@ declare const Bun: {
 declare const process: { exit(code?: number): never };
 
 import { WebIO, type Document } from '@gltf-transform/core';
-import { dedup, prune, meshopt, simplify, textureCompress } from '@gltf-transform/functions';
+import { dedup, prune, quantize, reorder, simplify, textureCompress } from '@gltf-transform/functions';
 import {
   EXTMeshoptCompression,
   KHRMeshQuantization,
@@ -178,11 +178,29 @@ async function main(): Promise<void> {
     const count = prim?.getAttribute('POSITION')?.getCount() ?? 0;
     logger.info(`Simplify: ratio ${simplifyRatio} -> ${count} vertices.`);
   }
+  // Quantisation policy (2026-07-21, owner-visible mesh tears): int16
+  // quantisation of the BASE position attribute on this skinned
+  // multi-primitive bust makes scattered triangles render black/void in
+  // three's WebGPU path (fixed surface spots, angle-dependent; bisected by
+  // attribute - position-only quantise reproduces, no-position quantise is
+  // clean; volumes, reorder, simplify, filters, morphs all exonerated).
+  // Base POSITION therefore stays float32; morph-target deltas and every
+  // other attribute are quantised, and EXT_meshopt_compression recovers the
+  // bulk (delivery ~1.09 MB vs 1.01 MB fully quantised).
   await doc.transform(
     dedup(),
     prune({ keepAttributes: true, keepLeaves: true }),
-    meshopt({ encoder: MeshoptEncoder, level: 'high' }),
+    reorder({ encoder: MeshoptEncoder, target: 'size' }),
+    quantize({
+      pattern: /^(TEXCOORD|JOINTS|WEIGHTS|COLOR)(_\d+)?$/,
+      patternTargets: /^(POSITION|NORMAL|TANGENT)(_\d+)?$/,
+      quantizeNormal: 8,
+    }),
   );
+  doc
+    .createExtension(EXTMeshoptCompression)
+    .setRequired(true)
+    .setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.FILTER });
 
   // Best-effort texture resize. Requires an image backend (sharp); without it
   // glTF-Transform cannot resize, so we skip with a clear message.

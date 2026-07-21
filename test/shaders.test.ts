@@ -174,8 +174,10 @@ describe('planar skin projection (pure)', () => {
   });
 
   it('uses a low planar density so glyphs read large on the bust', () => {
-    // 20 cells per world unit keeps individual glyphs recognisable at demo size.
-    expect(PLANAR_DENSITY).toBe(20);
+    // 40 cells per world unit keeps individual glyphs recognisable at demo
+    // size (was 20 against quantised-position GLBs whose shader positions
+    // were scaled 2x; base positions ship as float32 now).
+    expect(PLANAR_DENSITY).toBe(40);
     // U_SCALE / V_SCALE must still derive from the density and stay square.
     expect(U_SCALE).toBeCloseTo(PLANAR_DENSITY / 96, 6);
     expect(V_SCALE).toBeCloseTo(PLANAR_DENSITY / 64, 6);

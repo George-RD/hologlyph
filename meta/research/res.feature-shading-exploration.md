@@ -123,3 +123,25 @@ Round 5 (2026-07-21, membrane resolved):
     because the wide band also cut lid skin. Band tightening plus a darker
     sclera floor (0.012) restored a natural almond opening. Disambiguate
     before strengthening a cut.
+
+Round 6 (2026-07-21, owner defect reports):
+
+18. Inner-corner cover = M_EyeBlend (caruncle shell, 24 verts/side). Real
+    anatomy: split out as the dialable eye_trim primitive rather than
+    dropped. M_LacrimalFluid measured as a tear-film band spanning the whole
+    eye width (1.35R wide); opaque under a text skin it caps the eyeball, so
+    it joined the dropped groups (PR #46).
+19. Mesh tears (collar, crown, skull sides; angle-dependent black
+    triangles, worse at high glyph density): pre-existing in EVERY shipped
+    GLB, root-caused by attribute-split bisect to int16 quantisation of the
+    base POSITION attribute on the skinned multi-primitive bust in three's
+    WebGPU path. Everything else was exonerated by live A/B (masks, other
+    primitives, morphs, depth-write, colour/emissive, quantisation volume,
+    reorder, simplify, filters). Pipeline now ships float32 base positions,
+    quantises the rest; 1.07 MB.
+20. Quantised positions were 2x in shader-visible space; every density
+    constant and the eval baseline encoded that scale. PLANAR_DENSITY
+    doubled (20 -> 40) preserves the approved look exactly; eval passes
+    against the unchanged baseline. Lesson: shader-space bind coordinates
+    are part of the tuned contract; asset encoding changes can silently
+    rescale them.
