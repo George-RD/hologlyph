@@ -10,16 +10,24 @@ this file tracks their purpose and what remains owner-session-only.
   TSL uniforms on the real bust: motion (incl. blink hold), zone opacities,
   feature shading, text fit, tone, eyes, expressions, speech, presets,
   config-JSON export. Controls hidden behind the "tune" button (or ?tune).
+  Landing shell adds intro copy, a wider default camera (z=2.05), and a
+  type-your-own-text speak bar. Speak visemes are word-boundary driven via
+  src/speech/visemes.ts (wordAt + visemeSequenceForWord, 75 ms cadence,
+  50/120 ms attack/release), with a timer-walked word fallback when the
+  voice emits no boundary events. The engine-demo topbar link was removed
+  (owner request, 2026-07-21).
   Boot defaults + the 'Owner 07-21' preset are the owner-approved config
   (meta/sources/src.owner-approved-look-2026-07-21.md).
   Serve with `bun run dev`, open /hologlyph/ - deployed to GitHub Pages.
 - `demo/engine.html` - the scroll-emergence engine demo (previous landing
-  page); the visual eval and demo-smoke capture THIS page.
+  page); no longer linked from the landing but MUST stay: the visual eval
+  and demo-smoke capture THIS page.
 - `demo/feature-shading-variants.html` - older static side-by-side grid
   (superseded by the lab, kept for comparison).
 - `demo/TEXT-LAYERS.md` - explainer of the text layers and their sliders.
-- `tools/smoke/feature-variants-shot.mjs`, `tools/smoke/lab-shot.mjs` -
-  Playwright captures for the two demo pages.
+- `tools/smoke/feature-variants-shot.mjs`, `tools/smoke/lab-shot.mjs`,
+  `tools/smoke/landing-shot.mjs` - Playwright captures for the demo pages
+  (landing-shot also asserts the speak pipeline animates distinct visemes).
 
 ## Where the approved look lives
 

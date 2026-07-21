@@ -30,10 +30,18 @@
   #topbar a, #topbar button { flex:none; background:rgba(11,14,20,0.75); color:#9fb2c8; border:1px solid #24384f; border-radius:5px; padding:4px 10px; font:inherit; text-decoration:none; cursor:pointer; }
   #topbar a:hover, #topbar button:hover { background:#1c3247; color:#cde; }
   #tuneBtn { font-size:15px; line-height:1; padding:4px 9px; }
-  #quickbar { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); display:flex; gap:6px; flex-wrap:wrap; justify-content:center; max-width:min(92%, 760px); }
+  #quickbar { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); display:flex; flex-direction:column; gap:8px; align-items:center; max-width:min(92%, 760px); }
+  .qrow { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
   #quickbar button { flex:none; background:rgba(11,14,20,0.78); color:#9fb2c8; border:1px solid #24384f; border-radius:5px; padding:5px 12px; font:inherit; cursor:pointer; }
   #quickbar button:hover { background:#1c3247; color:#cde; }
   #quickbar button.active { background:#2a5f43; border-color:#3f8f63; color:#dfe; }
+  #saybar { display:flex; gap:6px; width:min(92vw, 520px); }
+  #saybar input { flex:1; min-width:0; background:rgba(11,14,20,0.78); color:#cde; border:1px solid #24384f; border-radius:5px; padding:5px 10px; font:inherit; }
+  #saybar input::placeholder { color:#5f6b7e; }
+  #intro { position:absolute; left:24px; top:20px; max-width:360px; pointer-events:none; }
+  #intro h1 { font-size:22px; letter-spacing:2px; color:#9fe7ff; margin:0 0 8px; }
+  #intro p { color:#8fa0b6; font-size:12.5px; margin:0 0 8px; text-shadow:0 1px 4px #04060b; }
+  #intro .dim { color:#5f6b7e; font-size:11.5px; }
 </style>
 </head>
 <body>
@@ -41,9 +49,13 @@
   <canvas id="view"></canvas>
   <div id="status">loading...</div>
   <div id="quickbar"></div>
+  <div id="intro">
+    <h1>hologlyph</h1>
+    <p>A web native talking head whose skin is living text. No video, no image files: a small 3D bust rendered from streaming glyphs, with lip sync, gaze and expressions computed entirely in your browser.</p>
+    <p class="dim">Drag to orbit. Pick an expression, or type something below and make it speak.</p>
+  </div>
   <div id="topbar">
     <button type="button" id="tuneBtn" title="open the tuning panel" aria-label="open the tuning panel">&#9881;</button>
-    <a href="./engine.html" title="scroll-emergence engine demo">engine demo</a>
     <a href="https://github.com/George-RD/hologlyph">github</a>
   </div>
 </div>
@@ -64,6 +76,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createTextSkinEngine, createStaticTextSource } from '../src/text-skin/index.ts';
 import { IdleController } from '../src/motion/idle.ts';
 import { weightsFor, lerpWeights, emptyExpressionWeights } from '../src/motion/expressions.ts';
+import { wordAt, visemeSequenceForWord } from '../src/speech/visemes.ts';
+import { RIG_VISEME_MORPHS } from '../src/contracts.ts';
 import bustUrl from '../assets/hologlyph-bust.glb?url';
 
 const GRID_COLS = 96, GRID_ROWS = 64, PLANAR_DENSITY = 40;
@@ -330,7 +344,7 @@ const renderer = new THREE.WebGPURenderer({ canvas, antialias: true, forceWebGL:
 await renderer.init();
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060b);
 const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-camera.position.set(0, 0.08, 1.15);
+camera.position.set(0, 0.06, 2.05);
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0.02, 0); controls.enablePan = false; controls.minDistance = 0.35; controls.maxDistance = 3;
 scene.add(new THREE.AmbientLight(0xffffff, 0.35));
@@ -366,7 +380,16 @@ gltf.scene.traverse((o) => {
   if (o.isBone) { if (o.name === 'head') bones.head = o; if (o.name === 'neck') bones.neck = o; if (o.name === 'eye_l') bones.eyeL = o; if (o.name === 'eye_r') bones.eyeR = o; }
   if (!o.isMesh) return;
   const mn = Array.isArray(o.material) ? '' : (o.material && o.material.name) || '';
-  if (mn === 'mouth_interior') return;
+  if (mn === 'mouth_interior') {
+    // Keep its authored dark cavity material (KEEP_MATERIALS pattern; this
+    // mesh carries gums, tongue AND teeth), but drive its viseme/expression
+    // morphs so it opens with the lips instead of freezing at bind pose.
+    // (The tongue rides the jaw here; per-phoneme tongue articulation - tip to
+    // the teeth on T/D, between teeth on TH - needs tongue morph targets the
+    // asset does not yet carry, and the rig has no tongue bone.)
+    if (o.morphTargetInfluences) morphMeshes.push(o);
+    return;
+  }
   if (mn === 'eye_trim') {
     // Caruncle-corner blend shell + lacrimal fluid: keeps its authored dark
     // material (engine KEEP_MATERIALS pattern); slider dials its opacity.
@@ -395,12 +418,14 @@ scene.add(gltf.scene);
 const state = {
   scrollSpeed: 0.02, yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0,
   idle: true, thinking: false, speaking: false, expression: 'neutral',
+  speakGain: 0.55,
 };
 const cur = { yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0, speed: state.scrollSpeed };
 const idle = new IdleController();
 let exprCur = emptyExpressionWeights();
 let exprTarget = weightsFor('neutral');
-let visemeTarget = null; let visemeTimer = 0;
+const VISEME_MS = 0.075;
+const speech = { seq: [], boundaryAt: 0, sawBoundary: false, words: [], wordIdx: 0, nextWordAt: 0 };
 
 const panel = document.getElementById('panel');
 function group(title) { const f = document.createElement('fieldset'); const l = document.createElement('legend'); l.textContent = title; f.appendChild(l); panel.appendChild(f); return f; }
@@ -433,6 +458,7 @@ slider(gMotion, 'roll', 'head roll', -0.4, 0.4, 0.01, 0, (v) => state.roll = v);
 slider(gMotion, 'lookX', 'look left/right (eyes)', -0.5, 0.5, 0.01, 0, (v) => state.lookX = v);
 slider(gMotion, 'lookY', 'look up/down (eyes)', -0.4, 0.4, 0.01, 0, (v) => state.lookY = v);
 slider(gMotion, 'blinkHold', 'blink hold (eyelid closure)', 0, 1, 0.01, 0, (v) => state.blinkHold = v);
+slider(gMotion, 'speakGain', 'mouth movement scale (speech)', 0.1, 1, 0.01, state.speakGain, (v) => state.speakGain = v);
 checkbox(gMotion, 'idle drift + breathing + blink', state.idle, (v) => state.idle = v);
 checkbox(gMotion, 'show original materials (base model)', false, (v) => {
   for (const [mesh, mats] of originals) mesh.material = v ? mats.orig : mats.lab;
@@ -512,7 +538,7 @@ slider(gTone, 'roughness', 'surface roughness (1 kills specular sheen)', 0.05, 1
 // MotionEngine).
 const quickbar = document.getElementById('quickbar');
 const exprBtns = document.createElement('div');
-exprBtns.style.display = 'contents';
+exprBtns.className = 'qrow';
 quickbar.appendChild(exprBtns);
 for (const name of ['neutral', 'friendly', 'thinking', 'happy', 'surprised', 'concern', 'listening']) {
   const b = document.createElement('button');
@@ -530,21 +556,46 @@ for (const name of ['neutral', 'friendly', 'thinking', 'happy', 'surprised', 'co
   });
   exprBtns.appendChild(b);
 }
+// Speak: word-boundary driven visemes (the same mapping the library's demo
+// TTS adapter uses: onboundary -> wordAt -> visemeSequenceForWord, walked at
+// 75 ms per viseme). When the browser/voice emits no boundary events, a
+// pre-chunked word walker keeps the mouth tracking the text on a timer.
+const saybar = document.createElement('div');
+saybar.id = 'saybar';
+const sayInput = document.createElement('input');
+sayInput.type = 'text';
+sayInput.maxLength = 240;
+sayInput.placeholder = 'type something for it to say...';
 const speakBtn = document.createElement('button');
 speakBtn.type = 'button';
 speakBtn.textContent = 'speak';
-speakBtn.title = 'cycle viseme morphs off SpeechSynthesis (demo approximation)';
-speakBtn.addEventListener('click', () => {
+saybar.appendChild(sayInput);
+saybar.appendChild(speakBtn);
+quickbar.appendChild(saybar);
+function startSpeak() {
   if (state.speaking) { state.speakUntil = 0; speechSynthesis.cancel(); return; }
-  // Drive visemes immediately; SpeechSynthesis audio is best-effort (may be
-  // voiceless in headless/CI contexts). Natural audio end closes the window
-  // early; an audio ERROR does not - the visual demo still runs its 3.5 s.
-  state.speakUntil = performance.now() / 1000 + 3.5;
-  const utt = new SpeechSynthesisUtterance('hologlyph is a web native text skinned talking head.');
+  const text = sayInput.value.trim() || 'hologlyph is a web native text skinned talking head.';
+  const now = performance.now() / 1000;
+  speech.seq = []; speech.sawBoundary = false;
+  speech.words = text.split(/\s+/).filter(Boolean).map(visemeSequenceForWord);
+  speech.wordIdx = 0; speech.nextWordAt = now + 0.25; speech.boundaryAt = now;
+  // Visual window: sized to the text; natural audio end closes it early.
+  // An audio ERROR does not (voiceless/headless contexts still animate).
+  state.speakUntil = now + Math.min(20, Math.max(2.5, text.length * 0.075));
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.onboundary = (e) => {
+    const word = wordAt(text, e.charIndex, e.charLength ?? 0);
+    const seq = visemeSequenceForWord(word);
+    if (seq.length === 0) return; // punctuation-only boundary: keep mouth as-is
+    speech.seq = seq;
+    speech.boundaryAt = performance.now() / 1000;
+    speech.sawBoundary = true;
+  };
   utt.onend = () => { state.speakUntil = 0; };
-  try { speechSynthesis.speak(utt); } catch { /* keep the timer window */ }
-});
-quickbar.appendChild(speakBtn);
+  try { speechSynthesis.speak(utt); } catch { /* keep the visual window */ }
+}
+speakBtn.addEventListener('click', startSpeak);
+sayInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startSpeak(); });
 
 const gPre = group('presets + export');
 const btns = document.createElement('div'); btns.className = 'btns'; gPre.appendChild(btns);
@@ -581,7 +632,6 @@ function resize() {
 }
 new ResizeObserver(resize).observe(document.getElementById('stage')); resize();
 
-const VISEMES = ['viseme_aa', 'viseme_ee', 'viseme_oh', 'viseme_ou', 'viseme_dd'];
 const THINK = { yaw: 0.22, pitch: -0.14, lookX: 0.30, lookY: 0.26, speedMul: 4 };
 let last = performance.now();
 function frame(now) {
@@ -610,10 +660,17 @@ function frame(now) {
   // Expressions ease toward the semantic target (real map from src/motion).
   exprCur = lerpWeights(exprCur, exprTarget, Math.min(1, dt * 6));
 
-  // Lab speak: cycle viseme targets off a timer while SpeechSynthesis runs.
+  // Current viseme from the word-boundary cursor (75 ms per viseme). Silence
+  // (past the end of a word's sequence) closes the mouth between words.
+  let visemeName = null;
   if (state.speaking) {
-    visemeTimer -= dt;
-    if (visemeTimer <= 0) { visemeTarget = VISEMES[Math.floor(Math.random() * VISEMES.length)]; visemeTimer = 0.07 + Math.random() * 0.09; }
+    if (!speech.sawBoundary && t >= speech.nextWordAt && speech.wordIdx < speech.words.length) {
+      speech.seq = speech.words[speech.wordIdx++];
+      speech.boundaryAt = t;
+      speech.nextWordAt = t + speech.seq.length * VISEME_MS + 0.12;
+    }
+    const idx = Math.floor((t - speech.boundaryAt) / VISEME_MS);
+    if (idx >= 0 && idx < speech.seq.length) visemeName = speech.seq[idx];
   }
   for (const m of morphMeshes) {
     const dict = m.morphTargetDictionary; if (!dict) continue;
@@ -623,10 +680,13 @@ function frame(now) {
       if (name === 'exp_blink') target = Math.max(w, blink);
       m.morphTargetInfluences[idx] += (target - m.morphTargetInfluences[idx]) * Math.min(1, dt * 10);
     }
-    for (const vn of VISEMES) {
+    for (const vn of RIG_VISEME_MORPHS) {
+      if (vn === 'viseme_sil') continue;
       const idx = dict[vn]; if (idx === undefined) continue;
-      const target = state.speaking && vn === visemeTarget ? 0.55 + Math.random() * 0.3 : 0;
-      m.morphTargetInfluences[idx] += (target - m.morphTargetInfluences[idx]) * Math.min(1, dt * 16);
+      const target = vn === visemeName ? state.speakGain : 0;
+      const curW = m.morphTargetInfluences[idx];
+      const tc = target > curW ? 0.05 : 0.12; // attack 50 ms, release 120 ms
+      m.morphTargetInfluences[idx] += (target - curW) * Math.min(1, dt / tc);
     }
   }
 
