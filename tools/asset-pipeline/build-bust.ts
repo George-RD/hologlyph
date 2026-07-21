@@ -121,6 +121,19 @@ const RECIPE: Recipe = { ...VISEME_RECIPE, ...EXPRESSION_RECIPE };
 const LEFT_EYE_MATERIALS: Record<string, true> = { M_ScleraLeft: true, M_IrisLeft: true };
 const RIGHT_EYE_MATERIALS: Record<string, true> = { M_ScleraRight: true, M_IrisRight: true };
 
+// Auxiliary face groups DROPPED from the shipped bust.
+// - M_EyeOcclusion: the shadow card ICT closes each eye opening with. It hugs
+//   the eyeball across the palpebral aperture, so folded into the bust it
+//   carries the text-skin material and paints glyphs over the eyes (raycast
+//   through the aperture hits it before the sclera, dead centre included).
+// - M_EyeLashes: four stacked lash cards overhanging the aperture; source
+//   raycast shows they occlude the eyeball above/below centre. Under a text
+//   skin they cannot read as lashes (no alpha texture) and render as
+//   text-covered wisps.
+// M_EyeBlend (lid-eyeball seam) and M_LacrimalFluid (inner-corner detail)
+// stay: neither occludes the aperture and blend seals the seam visually.
+const DROPPED_MATERIALS: Record<string, true> = { M_EyeOcclusion: true, M_EyeLashes: true };
+
 // ---------------------------------------------------------------------------
 // Manifest + fetching
 // ---------------------------------------------------------------------------
@@ -320,28 +333,36 @@ function build(
   const indices: number[] = [];
   const vertMat: number[] = [];
 
+  const droppedMats = new Set<number>();
+  neutral.materials.forEach((m, i) => {
+    if (DROPPED_MATERIALS[m]) droppedMats.add(i);
+  });
+
   const cornerCount = neutral.triPos.length;
-  for (let c = 0; c < cornerCount; c++) {
-    const pi = neutral.triPos[c]!;
-    const ui = neutral.triUv[c]!;
-    const mat = neutral.triMat[c]!;
-    // Pack (pi, ui, mat) into one number key: 15+15+5 bits < 2^53. Material is
-    // part of vertex identity because UV island and skin joint depend on it, so
-    // boundary vertices shared across materials must be duplicated.
-    const k = (pi * 32768 + (ui + 1)) * 32 + mat;
-    let vid = key.get(k);
-    if (vid === undefined) {
-      vid = srcPos.length;
-      key.set(k, vid);
-      srcPos.push(pi);
-      if (ui >= 0) {
-        uvOut.push(neutral.uvs[ui * 2]!, neutral.uvs[ui * 2 + 1]!);
-      } else {
-        uvOut.push(0, 0);
+  for (let c = 0; c < cornerCount; c += 3) {
+    if (droppedMats.has(neutral.triMat[c]!)) continue;
+    for (let cc = c; cc < c + 3; cc++) {
+      const pi = neutral.triPos[cc]!;
+      const ui = neutral.triUv[cc]!;
+      const mat = neutral.triMat[cc]!;
+      // Pack (pi, ui, mat) into one number key: 15+15+5 bits < 2^53. Material
+      // is part of vertex identity because UV island and skin joint depend on
+      // it, so boundary vertices shared across materials must be duplicated.
+      const k = (pi * 32768 + (ui + 1)) * 32 + mat;
+      let vid = key.get(k);
+      if (vid === undefined) {
+        vid = srcPos.length;
+        key.set(k, vid);
+        srcPos.push(pi);
+        if (ui >= 0) {
+          uvOut.push(neutral.uvs[ui * 2]!, neutral.uvs[ui * 2 + 1]!);
+        } else {
+          uvOut.push(0, 0);
+        }
+        vertMat.push(mat);
       }
-      vertMat.push(mat);
+      indices.push(vid);
     }
-    indices.push(vid);
   }
 
   const vcount = srcPos.length;
