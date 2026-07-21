@@ -10,7 +10,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('[console]', m.type(), m.text().slice(0, 160)); });
 
-await page.goto('http://localhost:5199/', { waitUntil: 'load' });
+await page.goto('http://localhost:5199/hologlyph/engine.html', { waitUntil: 'load' });
 
 // Wait until the engine leaves 'hidden' (ready + observer fired) or timeout.
 await page.waitForFunction(

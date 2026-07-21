@@ -6,7 +6,7 @@ created: 2026-07-21
 
 # Port the feature-shading system into src/ seeded by the owner config
 
-The feature-shading lab (demo/feature-shading-lab.html) carries the whole
+The feature-shading lab (demo/index.html (the lab/landing page)) carries the whole
 approved shading system as demo scaffolding: baked vertex masks (aLips with
 mouth-line falloff, aEyelid, aBrow, aCavity, aNose, aSocket), zone opacity
 boosts, socket shadow/mask, lip/brow hue terms, tone controls, eye

@@ -6,7 +6,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('[console error]', m.text().slice(0, 200)); });
 
-await page.goto('http://localhost:5199/hologlyph/feature-shading-lab.html', { waitUntil: 'load' });
+await page.goto('http://localhost:5199/hologlyph/?tune', { waitUntil: 'load' });
 await page.waitForFunction(() => document.getElementById('status')?.textContent?.startsWith('live'), null, { timeout: 60000 }).catch(() => console.log('never went live'));
 await page.waitForTimeout(1500);
 
