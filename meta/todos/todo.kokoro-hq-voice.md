@@ -21,11 +21,15 @@ yields exact viseme timing instead of the word-boundary approximation.
 
 ## Constraints (why it stayed deferred)
 
-- Asset budget: Kokoro weights are ~80 MB fp32 / ~40 MB q8. This MUST stay out
-  of the < 1.5 MB shipped asset budget and the ~11 kB core bundle: lazy-loaded
-  on demand only, never bundled or auto-fetched (dec.speech-architecture).
+- Asset budget: Kokoro-82M ONNX weights are large - about 326 MB fp32, ~163 MB
+  fp16, ~86-92 MB q8, with q4 variants in between (kokoro-js dtype options:
+  fp32/fp16/q8/q4/q4f16). The q8 quantised model is the practical browser
+  default. Whichever variant, it MUST stay out of the < 1.5 MB shipped asset
+  budget and the ~11 kB core bundle: lazy-loaded on demand only, never bundled
+  or auto-fetched (dec.speech-architecture).
 - Autoplay/gesture: `AudioContext` playback needs a user gesture. The load
-  button doubles as that gesture (`AudioEngine.resume()` on click).
+  button doubles as that gesture, calling `AudioEngine.resumeFromGesture()`
+  (the contract's gesture method) on click.
 - Embed-ability: the library core must not depend on Kokoro; it is an opt-in
   adapter the host or demo wires in, so zero cost when unused.
 
@@ -38,16 +42,27 @@ yields exact viseme timing instead of the word-boundary approximation.
    `src/speech/adapters/kokoro.ts`, exported via `src/speech/index.ts` as
    `createKokoroTTSAdapter(options)`. It:
    - lazily loads the model (with a progress callback for the button UI),
-   - synthesises PCM + phoneme timing, connects PCM through the reserved
-     `AudioEngine` PCM seam (res.seam-audit; currently unused in v2),
+   - synthesises audio + phoneme timing. The current `AudioEngine` contract
+     routes sound via `connectElement(HTMLMediaElement)` /
+     `disconnectElement` and exposes `readEnergy()` - there is NO raw
+     PCM/AudioBuffer method today. So the pragmatic path is to render Kokoro
+     output to a blob and play it through an `HTMLAudioElement` routed with
+     `connectElement`. A true AudioBuffer/PCM path would first require
+     extending `AudioEngine` (the deferred PCM seam noted in res.seam-audit);
+     call that out as its own contract change if chosen.
    - maps Kokoro phonemes to the canonical `RIG_VISEME_MORPHS` vocabulary and
      emits `VisemeFrame`s through `UtteranceHandle`, reduced-motion aware.
-3. Prefer WebGPU with WASM fallback; degrade-don't-throw: on load/synthesis
-   failure emit `error` + `end` and leave the existing default adapter in place.
-4. Demo: add a "Load HQ voice" button to the say-bar. Click -> resume audio,
-   lazy-load Kokoro with a progress indicator, then `speechEngine.setAdapter`
-   (or the demo's equivalent) so subsequent `speak` uses Kokoro. Keep the
-   default `SpeechSynthesis` path as the zero-download fallback.
+3. Degrade-don't-throw: on model-load or synthesis failure the adapter emits
+   `error` + `end` only. It does NOT swap itself out - adapter replacement is
+   owned by whoever holds the `SpeechEngine` (the demo here), via
+   `setAdapter`. So the demo must, on the adapter's `error`, revert to the
+   default `SpeechSynthesis` adapter with `setAdapter` and surface a message;
+   define that ownership explicitly when building.
+4. Demo: add a "Load HQ voice" button to the say-bar. Click ->
+   `resumeFromGesture()`, lazy-load Kokoro with a progress indicator, then
+   `setAdapter(kokoroAdapter)` so subsequent `speak` uses Kokoro. Keep the
+   default `SpeechSynthesis` path as the zero-download fallback and the
+   error-revert target.
 
 ## Verification when tackled
 
