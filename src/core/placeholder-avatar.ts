@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { clamp01 } from '../contracts.js';
 import type { LoadedAvatar } from '../contracts.js';
+import { bakeFeatureMasks } from '../asset/rig.js';
 
 const JAW_OPEN_INDEX = 0;
 const BLINK_INDEX = 1;
@@ -48,6 +49,7 @@ function buildHeadMesh(): THREE.Mesh {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.morphTargetInfluences = [0, 0];
   mesh.morphTargetDictionary = { jaw_open: JAW_OPEN_INDEX, exp_blink: BLINK_INDEX };
+  bakeFeatureMasks(mesh);
   mesh.name = 'placeholder-head';
   return mesh;
 }

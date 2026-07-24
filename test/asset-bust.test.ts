@@ -17,6 +17,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import {
   RIG_VISEME_MORPHS,
+  RIG_TONGUE_MORPHS,
   RIG_EXPRESSION_MORPHS,
   RIG_BONES,
 } from '../src/contracts';
@@ -31,7 +32,9 @@ const CWD = nodeProcess.cwd();
 const BUST_PATH = resolve(CWD, 'assets/hologlyph-bust.glb');
 /** dec.performance-budget: shipped GLB delivery target. */
 const DELIVERY_BUDGET_BYTES = 1.5 * 1024 * 1024;
-const CANONICAL: readonly string[] = [...RIG_VISEME_MORPHS, ...RIG_EXPRESSION_MORPHS];
+const TONGUE_DATA_PATH = resolve(CWD, 'tools/asset-pipeline/tongue-morphs.json');
+const TONGUE_POSES_PATH = resolve(CWD, 'tools/asset-pipeline/tongue-poses.json');
+const CANONICAL: readonly string[] = [...RIG_VISEME_MORPHS, ...RIG_TONGUE_MORPHS, ...RIG_EXPRESSION_MORPHS];
 
 async function loadBust(): Promise<THREE.Group> {
   const bytes = readFileSync(BUST_PATH);
@@ -51,7 +54,7 @@ describe('shipped head bust', () => {
     expect(size).toBeLessThanOrEqual(DELIVERY_BUDGET_BYTES);
   });
 
-  it('validateRig reports a fully conformant rig (27 morphs + 5 bones)', async () => {
+  it('validateRig reports a fully conformant rig (30 morphs + 5 bones)', async () => {
     const scene = await loadBust();
     const report = validateRig(scene);
     expect(report.missingMorphs).toEqual([]);
@@ -238,7 +241,7 @@ describe('shipped head bust', () => {
      for (const p of prims) {
        expect(p.listTargets(), `${p.getMaterial()?.getName()} targets`).toHaveLength(0);
      }
-     // The bust mesh must still carry all 27 canonical morph targets.
+     // The bust mesh must still carry all 30 canonical morph targets.
      const bust = doc.getRoot().listMeshes().find((m) => m.getName() === 'bust');
      expect(bust, 'bust mesh').toBeDefined();
      if (!bust) return;
@@ -298,6 +301,65 @@ describe('shipped head bust', () => {
           mat?.name,
           `${name} ray (${ox},${oy}) first hit must be the eyeball, got ${mat?.name}`,
         ).toMatch(/^eye_(sclera|iris)$/);
+      }
+    }
+  });
+  it('validates sparse tongue provenance and primitive locality', async () => {
+    const data = JSON.parse(readFileSync(TONGUE_DATA_PATH, 'utf8')) as {
+      source_sha256: string;
+      blender_version: string;
+      fixed_root_rule: string;
+      vertex_count: number;
+      tongue_vertex_mask: number[];
+      targets: Record<string, {
+        pose_sources: Array<{ file: string; weight: number }>;
+        vertices: Array<{ index: number; delta: [number, number, number] }>;
+      }>;
+    };
+    const poses = JSON.parse(readFileSync(TONGUE_POSES_PATH, 'utf8')) as Record<
+      string,
+      { sources: Array<{ file: string; weight: number }> }
+    >;
+    expect(data.source_sha256).toBe('eedbc2576d8e5ea57f55255b8f98263213a1efb5431d8bfceed1d7aef10271f9');
+    expect(data.blender_version).toBe('4.2.10');
+    expect(data.fixed_root_rule).toContain('y <= -5.0');
+    expect(data.vertex_count).toBe(26719);
+    expect(data.tongue_vertex_mask.length).toBeGreaterThan(100);
+    const mask = new Set(data.tongue_vertex_mask);
+    const vectors = RIG_TONGUE_MORPHS.map((name) => {
+      const rows = data.targets[name]?.vertices ?? [];
+      expect(data.targets[name]?.pose_sources).toEqual(poses[name]?.sources);
+      expect(rows.length).toBeGreaterThan(20);
+      for (let i = 1; i < rows.length; i++) {
+        const current = rows[i];
+        const previous = rows[i - 1];
+        if (!current || !previous) throw new Error('Expected sorted tongue vertex rows');
+        expect(current.index).toBeGreaterThan(previous.index);
+      }
+      for (const row of rows) expect(mask.has(row.index)).toBe(true);
+      return rows.flatMap((row) => row.delta);
+    });
+    expect(vectors[0]).not.toEqual(vectors[1]);
+    expect(vectors[1]).not.toEqual(vectors[2]);
+
+    await MeshoptDecoder.ready;
+    const io = new WebIO()
+      .registerExtensions([EXTMeshoptCompression, KHRMeshQuantization])
+      .registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
+    const doc = await io.readBinary(new Uint8Array(readFileSync(BUST_PATH)));
+    const bust = doc.getRoot().listMeshes().find((mesh) => mesh.getName() === 'bust');
+    expect(bust).toBeDefined();
+    if (!bust) return;
+    for (const primitive of bust.listPrimitives()) {
+      const material = primitive.getMaterial()?.getName();
+      for (const name of RIG_TONGUE_MORPHS) {
+        const target = primitive.listTargets().find((entry) => entry.getName() === name);
+        expect(target).toBeDefined();
+        const values = target?.getAttribute('POSITION')?.getArray() as Float32Array | undefined;
+        let max = 0;
+        if (values) for (const value of values) max = Math.max(max, Math.abs(value));
+        if (material === 'mouth_interior') expect(max).toBeGreaterThan(1e-5);
+        else expect(max).toBe(0);
       }
     }
   });

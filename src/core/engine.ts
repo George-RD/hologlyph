@@ -39,9 +39,10 @@ import { createAudioEngine } from '../audio';
 import { createBehaviorMachine } from '../behavior';
 import { createMotionEngine } from '../motion';
 import { createRendererHost } from '../renderer';
-import { createSpeechEngine, createDemoTTSAdapter } from '../speech';
+import { createSpeechEngine } from '../speech/engine';
+import { createDemoTTSAdapter } from '../speech/adapters/demo';
 import { createTextSkinEngine } from '../text-skin';
-import { createVFXEngine } from '../shaders';
+import { createVFXEngine, buildEyeballMaterial } from '../shaders';
 import { createEmitter } from './emitter.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
  
@@ -58,7 +59,7 @@ function isEyeMesh(mesh: THREE.Mesh): boolean {
 }
 
 const DEFAULT_TEXT =
-  'hologlyph — a web-native, text-skinned talking head. Scroll to emerge, speak to converse.';
+  'hologlyph: a web-native, text-skinned talking head. Scroll to emerge, speak to converse.';
 
 /**
  * Wrap a TTSAdapter so its utterance `viseme` / `energy` events flow into a
@@ -69,7 +70,7 @@ const DEFAULT_TEXT =
  * underlying adapter's lifetime (the engine-created demo adapter). When the
  * adapter is supplied by the caller (via options.ttsAdapter or
  * setVoiceAdapter) the caller retains ownership and the wrapper must NOT
- * dispose it on `dispose()` — otherwise a later re-wrap would tear down the
+ * dispose it on `dispose()`, otherwise a later re-wrap would tear down the
  * caller's live adapter.
  */
 export function visemeTap(
@@ -122,6 +123,7 @@ class EngineImpl implements Engine {
   private readonly sysAudio: AudioEngine;
   private readonly sysSpeech: SpeechEngine;
   private readonly sysTextSkin: TextSkinEngine;
+  private readonly eyeTextSkin: TextSkinEngine;
   private readonly sysVfx: VFXEngine;
   private readonly sysAsset: AssetLoader;
   /** Base TTS adapter currently wrapped and handed to the speech engine. */
@@ -156,10 +158,15 @@ class EngineImpl implements Engine {
     this.sysSpeech = createSpeechEngine(this.sysAudio);
     this.sysTextSkin = createTextSkinEngine();
     this.sysVfx = createVFXEngine();
+    this.eyeTextSkin = createTextSkinEngine({ cols: 128, rows: 96, cellWidth: 10, cellHeight: 12, fontSize: 9 });
     this.sysAsset = createAssetLoader();
 
     const source: TextSkinSource = options.textSource ?? createDefaultTextSource();
     this.sysTextSkin.setSource(source);
+    this.eyeTextSkin.setSource(source);
+    if (options.headConfig) {
+      this.sysVfx.setHeadConfig(options.headConfig);
+    }
 
     // Route visemes: demo adapter by default, or a user-provided one. The
     // caller owns any adapter it passes via options.ttsAdapter, so the wrapper
@@ -273,6 +280,7 @@ class EngineImpl implements Engine {
 
   setTextSkinSource(source: TextSkinSource): void {
     this.sysTextSkin.setSource(source);
+    this.eyeTextSkin.setSource(source);
   }
 
   setVoiceAdapter(adapter: TTSAdapter): void {
@@ -300,6 +308,7 @@ class EngineImpl implements Engine {
     this.sysMotion.dispose();
     this.sysSpeech.dispose();
     this.sysTextSkin.dispose();
+    this.eyeTextSkin.dispose();
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -416,21 +425,65 @@ class EngineImpl implements Engine {
         material.depthWrite = true;
       }
     });
-    this.skinMaterial = this.sysVfx.createSkinMaterial(this.sysTextSkin);
+    let eyeFrame = { cx: 0.688, cy: 0.003, cz: 0 };
+    this.avatar.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mn = Array.isArray(mesh.material) ? '' : mesh.material?.name || '';
+      if (mn !== 'eye_sclera') return;
+      const p = mesh.geometry.attributes.position as THREE.BufferAttribute | undefined;
+      if (!p) return;
+      let sx = 0, sy = 0, sz = 0, n = 0;
+      for (let i = 0; i < p.count; i++) {
+        if (p.getX(i) <= 0) continue;
+        sx += p.getX(i); sy += p.getY(i); sz += p.getZ(i); n++;
+      }
+      if (n > 0) eyeFrame = { cx: sx / n, cy: sy / n, cz: sz / n };
+    });
+
+    const headMat = this.sysVfx.createSkinMaterial(this.sysTextSkin);
+    let eyeballMat: THREE.Material | null = null;
+    const getEyeballMat = () => {
+      if (!eyeballMat) {
+        eyeballMat = this.sysVfx.createEyeballMaterial(this.eyeTextSkin, eyeFrame);
+      }
+      return eyeballMat;
+    };
+    this.skinMaterial = headMat;
     this.displacedMaterials.clear();
-    for (const mesh of this.avatar.morphMeshes) {
+    const allMeshes = new Set<THREE.Mesh>(this.avatar.morphMeshes);
+    this.avatar.root.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) allMeshes.add(obj as THREE.Mesh);
+    });
+
+    for (const mesh of allMeshes) {
       const original = mesh.material;
       const name = (Array.isArray(original) ? undefined : original?.name) as string | undefined;
+      if (name === 'eye_iris') {
+        mesh.visible = false;
+        if (original && !Array.isArray(original) && original !== headMat && original !== eyeballMat) {
+          this.displacedMaterials.add(original);
+        }
+        continue;
+      }
+      if (name === 'eye_sclera') {
+        const mat = getEyeballMat();
+        if (original && !Array.isArray(original) && original !== headMat && original !== mat) {
+          this.displacedMaterials.add(original);
+        }
+        mesh.material = mat;
+        continue;
+      }
       if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
       if (Array.isArray(original)) {
         for (const material of original) {
-          if (material && material !== this.skinMaterial) {
+          if (material && material !== this.skinMaterial && material !== eyeballMat) {
             this.displacedMaterials.add(material);
           }
         }
         mesh.material = this.skinMaterial;
       } else if (original) {
-        if (original !== this.skinMaterial) {
+        if (original !== this.skinMaterial && original !== eyeballMat) {
           this.displacedMaterials.add(original);
         }
         mesh.material = this.skinMaterial;
@@ -445,6 +498,7 @@ class EngineImpl implements Engine {
     // (dec.renderer-posture); the text skin pauses its row flow.
     this.sysVfx.setReducedMotion(reduced);
     this.sysTextSkin.setReducedMotion(reduced);
+    this.eyeTextSkin.setReducedMotion(reduced);
     if (typeof matchMedia !== 'undefined' && !this.observed) {
       this.reducedMotionMql = matchMedia('(prefers-reduced-motion: reduce)');
       this.reducedMotionMql.addEventListener?.('change', this.onReducedMotion);
@@ -537,6 +591,7 @@ class EngineImpl implements Engine {
 
     this.syncEmergence();
     this.sysTextSkin.update(dt);
+    this.eyeTextSkin.update(dt);
     this.sysVfx.update(dt);
 
     // Close the emergence loop: the state machine needs completion events
@@ -585,6 +640,7 @@ class EngineImpl implements Engine {
     // Mirror the reduced-motion preference into VFX and the text skin.
     this.sysVfx.setReducedMotion(event.matches);
     this.sysTextSkin.setReducedMotion(event.matches);
+    this.eyeTextSkin.setReducedMotion(event.matches);
   };
 
   private prefersReducedMotion(): boolean {

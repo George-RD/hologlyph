@@ -84,8 +84,8 @@ export function createTextSkinEngine(options: TextSkinEngineOptions = {}): TextS
 
   let source: TextSkinSource | null = null;
   let unsubscribe: (() => void) | null = null;
-  // Keep the default content alive with a gentle GPU-only row flow.
-  let scrollSpeed = 0.08;
+  // Owner-approved row flow default.
+  let scrollSpeed = 0.02;
   let scrollOffset = 0;
   let disposed = false;
 

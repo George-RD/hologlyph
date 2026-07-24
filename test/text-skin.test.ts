@@ -59,6 +59,13 @@ describe('text-skin engine', () => {
     expect(counts.fillText).toBeGreaterThan(afterSet);
   });
 
+  it('uses the owner-approved scroll speed by default', () => {
+    const { factory } = stubFactory();
+    const engine = createTextSkinEngine({ canvasFactory: factory });
+
+    expect(engine.scrollSpeed).toBeCloseTo(0.02, 6);
+  });
+
   it('advances scrollOffset on update without redrawing', () => {
     const { factory, counts } = stubFactory();
     const engine = createTextSkinEngine({ canvasFactory: factory });

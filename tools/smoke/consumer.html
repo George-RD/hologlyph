@@ -14,7 +14,9 @@
 </script>
 <script type="module">
 import { createEngine } from '/dist/hologlyph.js';
-const engine = createEngine(); // NO avatarUrl: must load the packaged default head
+const placeholder = new URLSearchParams(location.search).has('placeholder');
+const engine = createEngine(placeholder ? { avatarUrl: '' } : undefined);
+document.getElementById('state').dataset.mode = placeholder ? 'placeholder' : 'default';
 engine.on('statechange', (e) => { document.getElementById('state').textContent = `state: ${e.to}`; });
 engine.on('ready', () => { document.getElementById('state').dataset.ready = '1'; });
 engine.on('error', (e) => { document.getElementById('state').textContent = `error: ${e.message}`; });

@@ -6,7 +6,7 @@
   "licence": "MIT",
   "licence_file": "tools/asset-pipeline/ICT-FaceKit-LICENSE",
   "raw_base": "https://raw.githubusercontent.com/USC-ICT/ICT-FaceKit/da5f95a607f5e6b37755b38d3385d7f2853732e5/FaceXModel",
-  "note": "Pinned ICT-FaceKit sources for the head bust. generic_neutral_mesh is the basis; every other entry is an ARKit-style expression whose per-vertex delta from neutral is retained. The shipped GLB composites the 27 canonical rig targets from a subset; --full retains all listed deltas as the reproducible full-fidelity intermediate. sha256 pins content integrity.",
+  "note": "Pinned ICT-FaceKit sources for the head bust. generic_neutral_mesh is the basis; every other entry is an ARKit-style expression whose per-vertex delta from neutral is retained. The shipped GLB composites 27 face targets from this subset plus 3 locally authored tongue correctives; --full retains all listed upstream deltas as the reproducible full-fidelity intermediate. sha256 pins content integrity.",
   "files": {
     "PupilDilate_L.obj": "ab28968a231bb184b73e4103b6026f22bf2a2201d242b601326d121ee25d285c",
     "PupilDilate_R.obj": "72a3ad704e509c22a004d279e0a1460e8abafcff0afe1eee5ef794302e42087c",

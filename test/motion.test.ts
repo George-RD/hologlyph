@@ -192,6 +192,53 @@ describe('mouth smoothing', () => {
   });
 });
 
+describe('tongue viseme coupling', () => {
+  function settle(
+    weights: Record<string, number>,
+    reduced = false,
+  ): LoadedAvatar {
+    const engine = createMotionEngine();
+    const avatar = makeAvatar();
+    engine.attach(avatar);
+    engine.setReducedMotion(reduced);
+    engine.applyVisemeFrame({ time: 0, weights });
+    for (let i = 0; i < 40; i++) engine.update(0.016, i * 0.016);
+    return avatar;
+  }
+
+  it('couples coronal, dental, and velar visemes to distinct tongue targets', () => {
+    for (const viseme of ['viseme_dd', 'viseme_nn', 'viseme_ss']) {
+      const avatar = settle({ [viseme]: 1 });
+      expect(avatar.getMorph('tongue_up')).toBeGreaterThan(0.8);
+      expect(avatar.getMorph('tongue_out')).toBeLessThan(0.01);
+      expect(avatar.getMorph('tongue_back')).toBeLessThan(0.01);
+    }
+    const out = settle({ viseme_th: 1 });
+    expect(out.getMorph('tongue_out')).toBeGreaterThan(0.8);
+    const back = settle({ viseme_kk: 1 });
+    expect(back.getMorph('tongue_back')).toBeGreaterThan(0.8);
+  });
+
+  it('damps only tongue correctives under reduced motion', () => {
+    const ordinary = settle({ viseme_th: 1 });
+    const reduced = settle({ viseme_th: 1 }, true);
+    expect(reduced.getMorph('tongue_out')).toBeLessThan(ordinary.getMorph('tongue_out') * 0.35);
+  });
+
+  it('releases tongue correctives smoothly when visemes clear', () => {
+    const engine = createMotionEngine();
+    const avatar = makeAvatar();
+    engine.attach(avatar);
+    engine.applyVisemeFrame({ time: 0, weights: { viseme_kk: 1 } });
+    for (let i = 0; i < 40; i++) engine.update(0.016, i * 0.016);
+    const before = avatar.getMorph('tongue_back');
+    engine.clearVisemes();
+    engine.update(0.016, 1);
+    expect(avatar.getMorph('tongue_back')).toBeGreaterThan(0);
+    expect(avatar.getMorph('tongue_back')).toBeLessThan(before);
+  });
+});
+
 describe('nods', () => {
   function profile(kind: NodClass, reduced: boolean): number[] {
     let now = 0;
@@ -373,5 +420,24 @@ describe('head target drag', () => {
     const neck = a.bones.neck!;
     expect(neck.rotation.y).toBeCloseTo(0.3 * 0.35, 3);
     expect(neck.rotation.x).toBeCloseTo(0.2 * 0.35, 3);
+  });
+});
+describe('blink hold', () => {
+  it('clamps weight to [0,1] and overrides procedural blink on exp_blink', () => {
+    const m = createMotionEngine();
+    const a = makeAvatar();
+    m.attach(a);
+
+    m.setBlinkHold(0.85);
+    m.update(1 / 60, 1 / 60);
+    expect(a.getMorph('exp_blink')).toBeCloseTo(0.85);
+
+    m.setBlinkHold(1.5);
+    m.update(1 / 60, 2 / 60);
+    expect(a.getMorph('exp_blink')).toBe(1);
+
+    m.setBlinkHold(-0.5);
+    m.update(1 / 60, 3 / 60);
+    expect(a.getMorph('exp_blink')).toBe(0);
   });
 });

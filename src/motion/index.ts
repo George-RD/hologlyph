@@ -17,7 +17,7 @@ import type {
   VisemeFrame,
   MotionEngine,
 } from '../contracts';
-import { RIG_EXPRESSION_MORPHS, RIG_VISEME_MORPHS, clamp01 } from '../contracts';
+import { RIG_EXPRESSION_MORPHS, RIG_TONGUE_MORPHS, RIG_VISEME_MORPHS, clamp01 } from '../contracts';
 import { weightsFor, lerpWeights, emptyExpressionWeights } from './expressions';
 import { GazeController, ndcToGazeOffset, type Rng, type Clock } from './gaze';
 import { NOD_SPECS } from './nods';
@@ -30,8 +30,8 @@ interface Vec3 {
   z: number;
 }
 
-/** Mouth region: all viseme morphs plus jaw_open. */
-const MOUTH_NAMES = [...RIG_VISEME_MORPHS, 'jaw_open'];
+/** Mouth region: all viseme, tongue, and jaw morphs. */
+const MOUTH_NAMES = [...RIG_VISEME_MORPHS, ...RIG_TONGUE_MORPHS, 'jaw_open'];
 const MOUTH: Record<string, true> = {};
 for (const m of MOUTH_NAMES) MOUTH[m] = true;
 /** Blink morphs idle may fill below expression priority (resting face only). */
@@ -128,6 +128,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   const idle = new IdleController({ rng, clock: clockOpt, intensity: idleIntensity });
   let reduced = false;
   let nod: { kind: NodClass; start: number } | null = null;
+  let blinkHold = 0;
   let lastNow = 0;
 
   function attach(a: LoadedAvatar): void {
@@ -180,6 +181,9 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   function setHeadTarget(yaw: number, pitch: number): void {
     targetYaw = Math.max(-DRAG_YAW_LIMIT, Math.min(DRAG_YAW_LIMIT, yaw));
     targetPitch = Math.max(-DRAG_PITCH_LIMIT, Math.min(DRAG_PITCH_LIMIT, pitch));
+  }
+  function setBlinkHold(weight: number): void {
+    blinkHold = clamp01(weight);
   }
 
   function setGazeTarget(ndcX: number, ndcY: number): void {
@@ -286,12 +290,27 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
           // Idle composes below expression priority: it only fills the blink
           // morphs when the explicit expression does not already drive them
           // (resting face), so it never fights an explicit expression or viseme.
+          // Blink hold overrides/augments both.
           const idleBlinkVal = BLINK_NAMES[name] && expr < 1e-3 ? idlePose.blink : 0;
-          avatar.setMorph(name, clamp01(Math.max(expr, idleBlinkVal)));
+          const blinkTarget = BLINK_NAMES[name] ? Math.max(expr, idleBlinkVal, blinkHold) : expr;
+          avatar.setMorph(name, clamp01(blinkTarget));
         }
       }
       for (const name of RIG_VISEME_MORPHS) {
         const target = visemeActive && vw ? (vw[name] ?? 0) : 0;
+        const current = mouthCurrent[name] ?? 0;
+        const tau = target > current ? TAU_ATTACK : TAU_RELEASE;
+        const next = current + (target - current) * (1 - Math.exp(-dt / tau));
+        mouthCurrent[name] = next;
+        avatar.setMorph(name, clamp01(next));
+      }
+      const tongueTargets: Record<string, number> = {
+        tongue_up: Math.max(vw?.viseme_dd ?? 0, vw?.viseme_nn ?? 0, vw?.viseme_ss ?? 0),
+        tongue_out: vw?.viseme_th ?? 0,
+        tongue_back: vw?.viseme_kk ?? 0,
+      };
+      for (const name of RIG_TONGUE_MORPHS) {
+        const target = (visemeActive ? tongueTargets[name] ?? 0 : 0) * (reduced ? 0.3 : 1);
         const current = mouthCurrent[name] ?? 0;
         const tau = target > current ? TAU_ATTACK : TAU_RELEASE;
         const next = current + (target - current) * (1 - Math.exp(-dt / tau));
@@ -333,6 +352,7 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     setHeadTarget,
     setGazeTarget,
     clearGazeFollow,
+    setBlinkHold,
   };
 }
 

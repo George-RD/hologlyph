@@ -6,6 +6,7 @@ import { visemeTap } from '../src/core';
 import { createMotionEngine } from '../src/motion';
 import {
   RIG_VISEME_MORPHS,
+  RIG_TONGUE_MORPHS,
   type AudioEngine,
   type LoadedAvatar,
   type MotionEngine,
@@ -186,7 +187,7 @@ function playFrames(
       const stepDt = Math.min(DT, windowEnd - t);
       seam.motion.update(stepDt, t);
       t += stepDt;
-      for (const name of RIG_VISEME_MORPHS) {
+      for (const name of [...RIG_VISEME_MORPHS, ...RIG_TONGUE_MORPHS]) {
         maxWeight[name] = Math.max(maxWeight[name] ?? 0, seam.avatar.getMorph(name));
       }
     }
@@ -232,6 +233,9 @@ describe('viseme end-to-end (speech -> motion)', () => {
     for (const canonical of REACHABLE_CANONICAL) {
       expect(maxWeight[canonical] ?? 0).toBeGreaterThan(0.3);
     }
+    expect(maxWeight.tongue_up ?? 0).toBeGreaterThan(0.25);
+    expect(maxWeight.tongue_out ?? 0).toBeGreaterThan(0.25);
+    expect(maxWeight.tongue_back ?? 0).toBeGreaterThan(0.25);
     // Polly has no nn symbol, so this path must never drive it.
     expect(maxWeight.viseme_nn ?? 0).toBe(0);
   });
@@ -257,7 +261,28 @@ describe('viseme end-to-end (speech -> motion)', () => {
     for (const morph of RIG_VISEME_MORPHS.filter((m) => m !== 'viseme_nn')) {
       expect(maxWeight[morph] ?? 0).toBeGreaterThan(0.8);
     }
+    expect(maxWeight.tongue_up ?? 0).toBeGreaterThan(0.25);
+    expect(maxWeight.tongue_out ?? 0).toBeGreaterThan(0.25);
+    expect(maxWeight.tongue_back ?? 0).toBeGreaterThan(0.25);
     // The gap closes: viseme_nn is reachable through the canonical timeline.
     expect(maxWeight.viseme_nn ?? 0).toBeGreaterThan(0.8);
+  });
+
+  it('speech provider timeline propagates tongue articulation', async () => {
+    const frames: VisemeFrame[] = [
+      { time: 0, weights: { viseme_dd: 1 } },
+      { time: 0.2, weights: { viseme_th: 1 } },
+      { time: 0.4, weights: { viseme_kk: 1 } },
+    ];
+    const { avatar, motion, scheduler, engine } = setupSeam(frames);
+    const done = engine.speak('den the key');
+    await flushMicrotasks();
+    expect(lastAudio).not.toBeNull();
+    const peaks = playFrames({ avatar, motion, scheduler }, frames, lastAudio!, 0.2);
+    lastAudio!.emit('ended');
+    await done;
+    expect(peaks.tongue_up ?? 0).toBeGreaterThan(0.4);
+    expect(peaks.tongue_out ?? 0).toBeGreaterThan(0.4);
+    expect(peaks.tongue_back ?? 0).toBeGreaterThan(0.4);
   });
 });

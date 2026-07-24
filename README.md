@@ -60,6 +60,38 @@ if (canvas && host) {
 }
 ```
 
+## Optional Kokoro HQ voice
+
+Install the optional adapter, then load it only from an explicit user gesture.
+The model weights remain outside the Hologlyph bundle and download on demand.
+
+```sh
+npm install hologlyph kokoro-js
+```
+
+```ts
+import { createKokoroTTSAdapter } from 'hologlyph/speech';
+
+const hqVoice = createKokoroTTSAdapter({
+  dtype: 'q8',
+  onProgress: ({ progress }) => console.log(progress),
+});
+
+loadVoiceButton.addEventListener('click', async () => {
+  try {
+    await engine.audio.resumeFromGesture();
+    await hqVoice.load();
+    engine.setVoiceAdapter(hqVoice);
+  } catch (error) {
+    console.error('HQ voice load failed; keeping the current adapter', error);
+  }
+});
+```
+
+The caller owns the adapter passed to `setVoiceAdapter` and must dispose it
+after the engine no longer uses it. Model or synthesis errors emit `error` and
+`end`; the host decides whether to restore another adapter.
+
 ## React
 
 ```sh

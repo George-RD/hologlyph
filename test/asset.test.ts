@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   RIG_VISEME_MORPHS,
+  RIG_TONGUE_MORPHS,
   RIG_EXPRESSION_MORPHS,
   RIG_BONES,
   type LoadedAvatar,
@@ -28,7 +29,7 @@ function makeBone(key: keyof typeof RIG_BONES): THREE.Bone {
   return bone;
 }
 
-const ALL_CANONICAL = [...RIG_VISEME_MORPHS, ...RIG_EXPRESSION_MORPHS];
+const ALL_CANONICAL = [...RIG_VISEME_MORPHS, ...RIG_TONGUE_MORPHS, ...RIG_EXPRESSION_MORPHS];
 
 describe('validateRig', () => {
   it('reports a fully conformant rig', () => {
@@ -184,5 +185,43 @@ describe('AssetLoader.dispose', () => {
     loader.dispose();
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
+  });
+});
+describe('feature mask baking (buildLoadedAvatar)', () => {
+  it('bakes feature attributes on morph meshes and degrades missing morphs to zero without throwing', () => {
+    const group = new THREE.Group();
+    const mesh = makeMorphMesh(['viseme_pp', 'viseme_ou']);
+    const positions = new Float32Array([
+      0, 0, 0,
+      0.1, +-0.05, 0.1,
+      +-0.1, +-0.05, 0.1,
+    ]);
+    const deltas = new Float32Array([
+      0, 0, 0,
+      0, 0.05, 0,
+      0, 0.05, 0,
+    ]);
+    mesh.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    mesh.geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3));
+    mesh.geometry.morphAttributes.position = [new THREE.BufferAttribute(deltas, 3), new THREE.BufferAttribute(deltas, 3)];
+    group.add(mesh);
+
+    const avatar = buildLoadedAvatar(group, []);
+    expect(avatar.morphMeshes[0]).toBe(mesh);
+
+    const geo = mesh.geometry;
+    const aLips = geo.getAttribute('aLips') as THREE.InterleavedBufferAttribute;
+    const aJaw = geo.getAttribute('aJaw') as THREE.InterleavedBufferAttribute;
+    const aBrow = geo.getAttribute('aBrow') as THREE.InterleavedBufferAttribute;
+    const aCavity = geo.getAttribute('aCavity') as THREE.InterleavedBufferAttribute;
+    const aSocket = geo.getAttribute('aSocket') as THREE.InterleavedBufferAttribute;
+    expect(aLips).toBeDefined();
+    expect(aBrow).toBeDefined();
+    expect(aLips.getX(1)).toBeGreaterThan(0);
+    expect(aBrow.getX(1)).toBe(0);
+    expect(aLips.data).toBe(aJaw.data);
+    expect(aLips.data).toBe(aBrow.data);
+    expect(aCavity.data).toBe(aSocket.data);
+    expect(aLips.data).not.toBe(aCavity.data);
   });
 });

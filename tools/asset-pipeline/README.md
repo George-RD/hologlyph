@@ -23,7 +23,8 @@ of the MIT licence lives at `tools/asset-pipeline/ICT-FaceKit-LICENSE`.
 ## Build the shipped bust (two steps)
 
 ```bash
-# Step 1: assemble the 27-target bust from ICT-FaceKit sources
+# Step 1: assemble the 30-target bust from ICT-FaceKit sources and the
+# Blender-authored sparse tongue corrections.
 bun tools/asset-pipeline/build-bust.ts tools/asset-pipeline/.build/hologlyph-bust.raw.glb
 
 # Step 2: optimise (Meshopt + KTX2) toward the delivery budget
@@ -37,15 +38,25 @@ bun run build-asset
 bun run optimize-asset -- tools/asset-pipeline/.build/hologlyph-bust.raw.glb assets/hologlyph-bust.glb --simplify 0.5
 ```
 
+### Re-author tongue correctives
+
+After the pinned ICT source cache has been acquired, run the authoring script
+with Blender 4.2.10 LTS:
+
+```bash
+"$BLENDER" --background --python tools/asset-pipeline/author-tongue.py -- \
+  tools/asset-pipeline/.cache/generic_neutral_mesh.obj \
+  tools/asset-pipeline/tongue-poses.json \
+  tools/asset-pipeline/tongue-morphs.json \
+  tools/asset-pipeline/tongue-geometry-report.json
+```
+
 ### Full-fidelity retention (`--full`)
 
 Pass `--full` to `build-bust.ts` to also emit a full-fidelity intermediate at
 `tools/asset-pipeline/.build/hologlyph-bust.intermediate.glb`. This retains all
-57 source deltas from the manifest (every ARKit expression shape) rather than
-the 27 canonical rig targets. The composition recipe lives in
-`tools/asset-pipeline/build-bust.ts` (the `VISEME_RECIPE` and `EXPRESSION_RECIPE`
-maps); the intermediate preserves every raw delta so the recipe can be revised
-without re-fetching.
+source deltas plus `tongue_up`, `tongue_out`, and `tongue_back`; the shipped
+recipe remains the 30 canonical rig targets.
 
 ```bash
 bun tools/asset-pipeline/build-bust.ts --full [out.glb]
@@ -53,13 +64,11 @@ bun tools/asset-pipeline/build-bust.ts --full [out.glb]
 
 ## Morph recipe
 
-The shipped bust carries 27 canonical morph targets:
+The shipped bust carries 30 canonical morph targets:
 
-- **15 visemes** — each composited as a weighted sum of ARKit expression deltas
-  (per `res.morph-authoring`). For example `viseme_aa` blends `jawOpen: 1.0`
-  with `mouthStretch_L/R: 0.3`; `viseme_pp` uses `mouthPress_L/R: 1.0` plus
-  `mouthClose: 0.25` (the `mouthClose` weight was tuned down from 1.0 after a
-  keyframe render showed lip folding at full weight).
+- **15 visemes** — each composited as a weighted sum of ARKit expression deltas.
+- **3 tongue correctives** — `tongue_up`, `tongue_out`, and `tongue_back`, authored
+  as sparse Blender shape-key corrections over representative jaw-coupled poses.
 - **12 expressions** — `exp_happy`, `exp_sad`, `exp_surprised`, `exp_angry`,
   `exp_relaxed`, `exp_blink`, `exp_blink_l`, `exp_blink_r`, `exp_brow_up`,
   `exp_brow_down`, `jaw_open`, `mouth_round`.
@@ -90,7 +99,7 @@ intermediate (1.30 MB) at review size. The full intermediate is retained via
 ## Acceptance
 
 The canonical rig is verified by `test/asset-bust.test.ts`:
-- validates the shipped GLB loads with a conformant 27-morph, 5-bone rig
+- validates the shipped GLB loads with a conformant 30-morph, 5-bone rig
 - proves every morph is drivable through `buildLoadedAvatar`
 - checks normal and UV vertex attributes survive optimisation
 - includes a regen-from-source guard (runs when

@@ -24,6 +24,10 @@
     "./svelte": {
       "types": "./dist/adapters/svelte.d.ts",
       "default": "./dist/adapters/svelte.js"
+    },
+    "./speech": {
+      "types": "./dist/speech/index.d.ts",
+      "default": "./dist/speech.js"
     }
   },
   "files": [
@@ -53,11 +57,20 @@
     "@gltf-transform/functions": "^4.4.1",
     "@types/three": "^0.178.0",
     "happy-dom": "^18.0.1",
+    "kokoro-js": "^1.2.1",
     "meshoptimizer": "^1.2.0",
     "playwright": "^1.61.1",
     "typescript": "^5.8.3",
     "typescript-language-server": "^5.3.0",
     "vite": "^7.0.0",
     "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "kokoro-js": "^1.2.1"
+  },
+  "peerDependenciesMeta": {
+    "kokoro-js": {
+      "optional": true
+    }
   }
 }

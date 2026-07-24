@@ -1,0 +1,39 @@
+{
+  "source_sha256": "eedbc2576d8e5ea57f55255b8f98263213a1efb5431d8bfceed1d7aef10271f9",
+  "vertex_count": 26719,
+  "blender_version": "4.2.10",
+  "tongue_vertex_count": 2977,
+  "target_moved_counts": {
+    "tongue_up": 313,
+    "tongue_out": 253,
+    "tongue_back": 91
+  },
+  "target_max_delta": {
+    "tongue_up": 0.24166761581223356,
+    "tongue_out": 0.19127670089585358,
+    "tongue_back": 0.22803505563843127
+  },
+  "directional_mean_delta": {
+    "tongue_up": [
+      0.0,
+      0.12890695610223651,
+      0.018798892108626217
+    ],
+    "tongue_out": [
+      0.0,
+      0.023851010118577085,
+      0.11130466386956517
+    ],
+    "tongue_back": [
+      0.0,
+      0.11775181061538456,
+      -0.09158470857142863
+    ]
+  },
+  "fixed_root_verified": true,
+  "non_tongue_verified": true,
+  "gum_overlap_count": 0,
+  "gum_max_delta": 0.0,
+  "teeth_overlap_count": 0,
+  "non_tongue_max_delta": 0.0
+}

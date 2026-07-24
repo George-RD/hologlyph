@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createVFXEngine } from '../src/shaders';
 import {
@@ -9,21 +9,21 @@ import {
   visibleFraction,
 } from '../src/shaders/emergence';
 import {
-  BASE_OPACITY,
+  blendedProjectionUV,
   buildSkinMaterial,
-  GLOW_GAIN,
+  normaliseHeadConfig,
+  PLANAR_DENSITY,
   planarUV,
   rowFlowUV,
-  triplanarWeights,
-  PLANAR_DENSITY,
-  RIM_GAIN,
   SHADE_AMBIENT,
   SHADE_FILL_WEIGHT,
   SHADE_FLOOR,
   SHADE_KEY_WEIGHT,
+  triplanarWeights,
   U_SCALE,
   V_SCALE,
 } from '../src/shaders/materials';
+import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type { TextSkinEngine } from '../src/contracts';
 
 describe('emergence mapping maths (pure)', () => {
@@ -103,6 +103,49 @@ describe('VFX engine (no GPU objects)', () => {
     const vfx = createVFXEngine();
     vfx.dispose();
     expect(() => vfx.dispose()).not.toThrow();
+  });
+  it('updates eye uniforms in place on setHeadConfig and advances eye scroll on update', () => {
+    const vfx = createVFXEngine();
+    let scrollReads = 0;
+    const eyeSkin = {
+      texture: new THREE.CanvasTexture(),
+      get scrollOffset() {
+        scrollReads++;
+        return 1.5;
+      },
+    } as unknown as TextSkinEngine;
+    const material = vfx.createEyeballMaterial(eyeSkin, { cx: 0.688, cy: 0.003, cz: 0 });
+    const colorSet = vi.spyOn(THREE.Color.prototype, 'set');
+
+    vfx.setHeadConfig({ eyes: { pupil: 0.55, irisColor: '#123456' } });
+    vfx.update(0.016);
+
+    expect(vfx.headConfig.eyes.pupil).toBe(0.55);
+    expect(colorSet).toHaveBeenCalledWith('#123456');
+    expect(scrollReads).toBe(1);
+    colorSet.mockRestore();
+    material.dispose();
+    vfx.dispose();
+  });
+  it('unregisters disposed skin and eye material bindings', () => {
+    const vfx = createVFXEngine();
+    let bindingsLive = true;
+    const skin = {
+      texture: new THREE.CanvasTexture(),
+      get scrollOffset() {
+        if (!bindingsLive) throw new Error('disposed skin binding was read');
+        return 0;
+      },
+    } as unknown as TextSkinEngine;
+    const skinMaterial = vfx.createSkinMaterial(skin);
+    const eyeMaterial = vfx.createEyeballMaterial(skin, { cx: 0.688, cy: 0.003, cz: 0 });
+
+    skinMaterial.dispose();
+    eyeMaterial.dispose();
+    bindingsLive = false;
+
+    expect(() => vfx.update(0.016)).not.toThrow();
+    vfx.dispose();
   });
 });
 describe('VFX reduced motion', () => {
@@ -189,6 +232,77 @@ describe('planar skin projection (pure)', () => {
   });
 });
 
+describe('owner-approved head configuration', () => {
+  it('pins every approved production value and is deeply immutable', () => {
+    expect(DEFAULT_HEAD_CONFIG).toEqual({
+      skin: {
+        opacity: {
+          base: 0.075, lips: 0.32, nose: 0.38, jaw: 0.21, orbit: 0.15, brow: 0,
+          socketMask: 1,
+        },
+        shading: {
+          socketShadow: 0.64, socketSize: 1, cavity: 0.45, lipDark: 0.5,
+          lipHue: 0.6, lipGate: 1.4, eyelid: 0.5, brow: 0.3, browGate: 2.2,
+        },
+        glyph: {
+          scale: 0.79, horizontalDensity: 2, verticalDensity: 2, sharpness: 5.5,
+        },
+        tone: {
+          balance: 0.21, amount: 0.65, skinWarmth: 0, rim: 0.065, glowGain: 0.55,
+        },
+      },
+      eyes: {
+        density: 300, scleraGlow: 0.51, irisGlow: 2.35, presence: 0.74,
+        pupil: 0.24, flowDirection: 1, irisSize: 0.43,
+        irisColor: '#d78bf8', scleraColor: '#e1edf9',
+      },
+    });
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);
+  });
+
+  it('deep-merges partial overrides, clamps values, and rejects malformed colours', () => {
+    const merged = normaliseHeadConfig({
+      skin: { opacity: { lips: 4 }, glyph: { scale: -1 } },
+      eyes: { pupil: -2, irisColor: '#ABCDEF', scleraColor: 'not-a-colour' },
+    });
+    expect(merged.skin.opacity.lips).toBe(1);
+    expect(merged.skin.opacity.base).toBe(DEFAULT_HEAD_CONFIG.skin.opacity.base);
+    expect(merged.skin.glyph.scale).toBeGreaterThan(0);
+    expect(merged.eyes.pupil).toBe(0);
+    expect(merged.eyes.irisColor).toBe('#abcdef');
+    expect(merged.eyes.scleraColor).toBe(DEFAULT_HEAD_CONFIG.eyes.scleraColor);
+    expect(Object.isFrozen(merged)).toBe(true);
+    expect(Object.isFrozen(merged.skin.opacity)).toBe(true);
+    expect(Object.isFrozen(merged.skin.shading)).toBe(true);
+    expect(Object.isFrozen(merged.skin.glyph)).toBe(true);
+    expect(Object.isFrozen(merged.skin.tone)).toBe(true);
+    expect(Object.isFrozen(merged.eyes)).toBe(true);
+  });
+});
+
+describe('projection blend mapping', () => {
+  it('interpolates projection coordinates into one sample coordinate', () => {
+    const front = blendedProjectionUV(0.2, 0.1, 0.3, 0, 0, 1, 0, 5.5);
+    const side = blendedProjectionUV(0.2, 0.1, 0.3, 1, 0, 0, 0, 5.5);
+    const diagonal = blendedProjectionUV(0.2, 0.1, 0.3, 1, 0, 1, 0, 5.5);
+    expect(diagonal.u).toBeCloseTo((front.u + side.u) / 2, 6);
+    expect(diagonal.v).toBeCloseTo((front.v + side.v) / 2, 6);
+    expect(diagonal.samples).toBe(1);
+  });
+
+  it('preserves the dominant-axis mapping and continuous coverage at the blend', () => {
+    const before = blendedProjectionUV(0.2, 0.1, 0.3, 0.69, 0, 0.71, 0.2, 5.5);
+    const after = blendedProjectionUV(0.2, 0.1, 0.3, 0.71, 0, 0.69, 0.2, 5.5);
+    expect(Math.abs(before.u - after.u)).toBeLessThan(0.02);
+    expect(Math.abs(before.v - after.v)).toBeLessThan(0.02);
+  });
+});
+
 describe('skin shading constants (pure)', () => {
   it('weights the two directional lights by their scene intensities', () => {
     // Key light intensity 2.2 white; fill light intensity 0.8 cool.
@@ -206,26 +320,18 @@ describe('skin shading constants (pure)', () => {
   });
 });
 describe('buildSkinMaterial (no GPU objects)', () => {
-  it('is translucent with a base opacity floor below full glyph luma', () => {
-    expect(BASE_OPACITY).toBeGreaterThan(0);
-    expect(BASE_OPACITY).toBeLessThan(1);
-
+  it('is translucent and uses owner defaults in its live uniform binding', () => {
     const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
-    const { material } = buildSkinMaterial(skin);
-
+    const { material, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
     expect(material.transparent).toBe(true);
+    expect(uniforms.baseOpacity.value).toBe(DEFAULT_HEAD_CONFIG.skin.opacity.base);
+    expect(uniforms.glowGain.value).toBe(DEFAULT_HEAD_CONFIG.skin.tone.glowGain);
   });
 
   it('sets RepeatWrapping on both texture axes so the grid tiles under scroll', () => {
     const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
-    buildSkinMaterial(skin);
-
+    buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
     expect(skin.texture.wrapS).toBe(THREE.RepeatWrapping);
     expect(skin.texture.wrapT).toBe(THREE.RepeatWrapping);
-  });
-
-  it('exports positive glow and rim gains for the holographic emissive term', () => {
-    expect(GLOW_GAIN).toBeGreaterThan(0);
-    expect(RIM_GAIN).toBeGreaterThan(0);
   });
 });
