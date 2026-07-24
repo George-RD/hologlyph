@@ -67,7 +67,7 @@ Controls: "rim glow", "surface roughness" (1 kills sheen), "glyph glow gain"
 ## Asset-level layers (not shader)
 
 - mouth_interior: dark cavity primitive, never text-skinned.
-- eye_trim (PR #46): the caruncle-corner shell, dialable via
-  "inner-corner trim opacity".
+- eye_trim (PR #46): the caruncle-corner shell, shaped by the
+  "inner-corner trim size" shader cutoff.
 - The occlusion membrane, lash cards, and lacrimal tear film are gone from
   the asset (PRs #44, #46).

@@ -1,5 +1,23 @@
 # Third-party notices
 
+## Kokoro-82M and kokoro-js
+
+The optional `hologlyph/speech` adapter can load `kokoro-js` and Kokoro-82M
+model weights on demand. Neither the runtime package nor the model weights are
+bundled with Hologlyph.
+
+- Library: `kokoro-js` 1.2.1, https://www.npmjs.com/package/kokoro-js/v/1.2.1
+- npm integrity: `sha512-oq0HZJWis3t8lERkMJh84WLU86dpYD0EuBPtqYnLlQzyFP1OkyBRDcweAqCfhNOpltyN9j/azp1H6uuC47gShw==`
+- Model: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX
+- Reviewed model revision: `1939ad2a8e416c0acfeecc08a694d14ef25f2231`
+- Licence: Apache License 2.0
+- Licence text: https://www.apache.org/licenses/LICENSE-2.0
+
+`kokoro-js` 1.2.1 resolves model and voice files from the model's `main`
+revision and does not expose a revision option. The reviewed revision above is
+an audit record, not a runtime pin. Applications requiring immutable weights
+must provide a loader backed by pinned or self-hosted content.
+
 ## ICT-FaceKit (USC Institute for Creative Technologies)
 
 The default head bust shipped with this package (inside dist/, as an inlined

@@ -24,26 +24,25 @@ make character scale inconsistent and risk row-flow seams.
 
 ## Decision
 
-Use bind-space triplanar text sampling with normal-weighted blending for the
-skin shader. Blend the three axis projections by the squared absolute bind-pose
-normal components, and apply the existing staggered row flow independently to
-each projection. Keep authored UVs out of the runtime text path.
+Use bind-space triplanar projection with normal-weighted coordinate interpolation for the
+skin shader. Interpolate projection coordinates across axis planes weighted by absolute
+bind-pose normal components raised to a configurable sharpness exponent (default 5.5),
+sampling the text skin once per fragment. Keep authored UVs out of the runtime text path.
 
 ## Rationale
 
 Triplanar mapping removes grazing-angle stretch without inheriting the measured
 UV density variation or island seams. Bind-pose positions and normals keep the
 mapping attached during head rotation, while blending makes transitions
-continuous. The extra texture samples are accepted because the material
-already uses one shared texture and the result preserves legible glyphs across
-the full bust. The prior planar decision is superseded only for runtime
+continuous. A single texture sample at the interpolated coordinate preserves
+legible glyphs across the full bust without blending multiple letterforms.
+The prior planar decision is superseded only for runtime
 sampling; the continuous GPU canvas and row-flow architecture remain intact.
 
 ## Consequences
 
-The shader performs three texture samples and normal-weighted blending per
-fragment. Row flow must remain axis-local and use bind-pose coordinates so
-content moves without detaching from the skin. Projection seams are replaced
-by soft blend zones, but diagonal glyphs can cross-fade near equal axis
-weights. The authored UV layout remains available for asset tooling but is not
-part of the runtime contract.
+The shader performs one texture lookup per fragment using interpolated projection coordinates.
+Row flow uses bind-pose coordinates so content moves smoothly without detaching from the skin.
+Interpolating sample coordinates before texture lookup removes cross-fading between multiple
+letterforms and reduces blend-zone ghosting at grazing angles while preserving continuous text coverage. The authored
+UV layout remains available for asset tooling but is not part of the runtime contract.

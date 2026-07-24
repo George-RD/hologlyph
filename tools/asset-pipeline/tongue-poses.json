@@ -1,0 +1,5 @@
+{
+  "tongue_up": {"sources": [{"file": "jawOpen.obj", "weight": 0.35}]},
+  "tongue_out": {"sources": [{"file": "jawOpen.obj", "weight": 0.4}, {"file": "mouthShrugLower.obj", "weight": 0.6}]},
+  "tongue_back": {"sources": [{"file": "jawOpen.obj", "weight": 0.35}, {"file": "mouthStretch_L.obj", "weight": 0.2}, {"file": "mouthStretch_R.obj", "weight": 0.2}]}
+}

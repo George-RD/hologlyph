@@ -109,6 +109,8 @@ export interface MotionEngine extends Disposable {
   setGazeTarget(ndcX: number, ndcY: number): void;
   /** Stop following the pointer; the gaze eases back to forward/idle without snapping. */
   clearGazeFollow(): void;
+  /** Manual blink hold weight [0,1], overriding or augmenting procedural blink. */
+  setBlinkHold(weight: number): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +187,9 @@ export const RIG_VISEME_MORPHS = [
   'viseme_nn',
   'viseme_rr',
 ] as const;
+ 
+/** Canonical tongue corrective morphs authored against the shipped tongue topology. */
+export const RIG_TONGUE_MORPHS = ['tongue_up', 'tongue_out', 'tongue_back'] as const;
 
 export const RIG_EXPRESSION_MORPHS = [
   'exp_happy',
@@ -258,10 +263,134 @@ export interface TextSkinEngine extends Disposable {
 // ---------------------------------------------------------------------------
 // Shaders / VFX (dec.renderer-posture)
 // ---------------------------------------------------------------------------
+export interface SkinOpacityConfig {
+  readonly base: number;
+  readonly lips: number;
+  readonly nose: number;
+  readonly jaw: number;
+  readonly orbit: number;
+  readonly brow: number;
+  readonly socketMask: number;
+}
+
+export interface SkinShadingConfig {
+  readonly socketShadow: number;
+  readonly socketSize: number;
+  readonly cavity: number;
+  readonly lipDark: number;
+  readonly lipHue: number;
+  readonly lipGate: number;
+  readonly eyelid: number;
+  readonly brow: number;
+  readonly browGate: number;
+}
+
+export interface SkinGlyphConfig {
+  readonly scale: number;
+  readonly horizontalDensity: number;
+  readonly verticalDensity: number;
+  readonly sharpness: number;
+}
+
+export interface SkinToneConfig {
+  readonly balance: number;
+  readonly amount: number;
+  readonly skinWarmth: number;
+  readonly rim: number;
+  readonly glowGain: number;
+}
+
+export interface HeadSkinConfig {
+  readonly opacity: SkinOpacityConfig;
+  readonly shading: SkinShadingConfig;
+  readonly glyph: SkinGlyphConfig;
+  readonly tone: SkinToneConfig;
+}
+
+export interface HeadEyeConfig {
+  readonly density: number;
+  readonly scleraGlow: number;
+  readonly irisGlow: number;
+  readonly presence: number;
+  readonly pupil: number;
+  readonly flowDirection: number;
+  readonly irisSize: number;
+  readonly irisColor: string;
+  readonly scleraColor: string;
+}
+
+export interface HeadConfig {
+  readonly skin: HeadSkinConfig;
+  readonly eyes: HeadEyeConfig;
+}
+
+export type HeadConfigOverrides = {
+  skin?: {
+    opacity?: Partial<SkinOpacityConfig>;
+    shading?: Partial<SkinShadingConfig>;
+    glyph?: Partial<SkinGlyphConfig>;
+    tone?: Partial<SkinToneConfig>;
+  };
+  eyes?: Partial<HeadEyeConfig>;
+};
+
+export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
+  skin: Object.freeze({
+    opacity: Object.freeze({
+      base: 0.075,
+      lips: 0.32,
+      nose: 0.38,
+      jaw: 0.21,
+      orbit: 0.15,
+      brow: 0,
+      socketMask: 1,
+    }),
+    shading: Object.freeze({
+      socketShadow: 0.64,
+      socketSize: 1,
+      cavity: 0.45,
+      lipDark: 0.5,
+      lipHue: 0.6,
+      lipGate: 1.4,
+      eyelid: 0.5,
+      brow: 0.3,
+      browGate: 2.2,
+    }),
+    glyph: Object.freeze({
+      scale: 0.79,
+      horizontalDensity: 2,
+      verticalDensity: 2,
+      sharpness: 5.5,
+    }),
+    tone: Object.freeze({
+      balance: 0.21,
+      amount: 0.65,
+      skinWarmth: 0,
+      rim: 0.065,
+      glowGain: 0.55,
+    }),
+  }),
+  eyes: Object.freeze({
+    density: 300,
+    scleraGlow: 0.51,
+    irisGlow: 2.35,
+    presence: 0.74,
+    pupil: 0.24,
+    flowDirection: 1,
+    irisSize: 0.43,
+    irisColor: '#d78bf8',
+    scleraColor: '#e1edf9',
+  }),
+});
 
 export interface VFXEngine extends Disposable {
   /** Build the single-source TSL text-skin material for the bust. */
   createSkinMaterial(skin: TextSkinEngine): THREE.Material;
+  /** Build the TSL eyeball material for the sclera cap. */
+  createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material;
+  /** Live look controls. */
+  setHeadConfig(config: HeadConfigOverrides): void;
+  readonly headConfig: HeadConfig;
   /** Emergence progress [0,1]: 0 = fully submerged, 1 = fully emerged. */
   setEmergence(progress: number): void;
   readonly emergence: number;
@@ -291,13 +420,14 @@ export interface RendererHost extends Disposable {
 }
 
 // ---------------------------------------------------------------------------
-// Engine (dec.api-emphasis) — imperative advanced surface
+// Engine (dec.api-emphasis): imperative advanced surface
 // ---------------------------------------------------------------------------
 
 export interface EngineOptions {
   avatarUrl?: string;
   textSource?: TextSkinSource;
   ttsAdapter?: TTSAdapter;
+  headConfig?: HeadConfigOverrides;
   reducedMotion?: boolean;
 }
 

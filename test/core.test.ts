@@ -12,6 +12,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createEngine, visemeTap } from '../src/core';
+import { createPlaceholderAvatar } from '../src/core/placeholder-avatar';
+import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type {
   AssetLoader,
   AudioEngine,
@@ -20,6 +22,8 @@ import type {
   BehaviorMachineEvents,
   Emitter,
   Expression,
+  HeadConfig,
+  HeadConfigOverrides,
   LoadedAvatar,
   GazeMode,
   MotionEngine,
@@ -69,6 +73,8 @@ interface FakeVfx extends VFXEngine {
   disposeCount: number;
   emergenceValue: number;
   reduced: boolean;
+  _headConfig: HeadConfig;
+  headConfigCalls: HeadConfigOverrides[];
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -210,6 +216,7 @@ vi.mock('../src/motion', () => ({
       setHeadTarget() {},
       setGazeTarget() {},
       clearGazeFollow() {},
+      setBlinkHold() {},
       disposeCount: 0,
       dispose() {
         this.disposeCount++;
@@ -247,31 +254,34 @@ vi.mock('../src/audio', () => ({
   },
 }));
 
-vi.mock('../src/speech', () => {
+vi.mock('../src/speech/engine', () => ({
+  createSpeechEngine() {
+    const emitter = h.makeEmitter<{ start: undefined; end: undefined; stall: undefined }>();
+    const speech: FakeSpeech = {
+      adapter: undefined,
+      speaking: false,
+      setAdapter(a: TTSAdapter) {
+        this.adapter = a;
+      },
+      async speak() {},
+      cancel() {},
+      disposeCount: 0,
+      dispose() {
+        this.disposeCount++;
+      },
+      on: emitter.on,
+      off: emitter.off,
+      emit: emitter.emit,
+    };
+    h.registry.speech.push(speech);
+    return speech;
+  },
+}));
+
+vi.mock('../src/speech/adapters/demo', () => {
   const adapter = h.buildAdapter('demo');
   h.demoAdapter = adapter;
   return {
-    createSpeechEngine() {
-      const emitter = h.makeEmitter<{ start: undefined; end: undefined; stall: undefined }>();
-      const speech: FakeSpeech = {
-        adapter: undefined,
-        speaking: false,
-        setAdapter(a: TTSAdapter) {
-          this.adapter = a;
-        },
-        async speak() {},
-        cancel() {},
-        disposeCount: 0,
-        dispose() {
-          this.disposeCount++;
-        },
-        on: emitter.on,
-        off: emitter.off,
-        emit: emitter.emit,
-      };
-      h.registry.speech.push(speech);
-      return speech;
-    },
     createDemoTTSAdapter() {
       return adapter;
     },
@@ -309,16 +319,35 @@ vi.mock('../src/shaders', () => ({
     const vfx: FakeVfx = {
       emergenceValue: 0,
       reduced: false,
+      _headConfig: DEFAULT_HEAD_CONFIG,
+      get headConfig() {
+        return this._headConfig;
+      },
+      headConfigCalls: [],
       get emergence() {
         return this.emergenceValue;
       },
       rootOffsetY: 0,
       clippingPlane: new THREE.Plane(),
       createSkinMaterial() {
-        // The engine assigns this as mesh.material, so it must carry dispose().
-         return h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
-       },
-       setEmergence(p: number) {
+        return h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
+      },
+      createEyeballMaterial() {
+        return { isEyeball: true, dispose() {} } as unknown as THREE.Material;
+      },
+      setHeadConfig(config: HeadConfigOverrides) {
+        this.headConfigCalls.push(config);
+        this._headConfig = {
+          skin: {
+            opacity: { ...this._headConfig.skin.opacity, ...config.skin?.opacity },
+            shading: { ...this._headConfig.skin.shading, ...config.skin?.shading },
+            glyph: { ...this._headConfig.skin.glyph, ...config.skin?.glyph },
+            tone: { ...this._headConfig.skin.tone, ...config.skin?.tone },
+          },
+          eyes: { ...this._headConfig.eyes, ...config.eyes },
+        };
+      },
+      setEmergence(p: number) {
         this.emergenceValue = p;
       },
       setReducedMotion(reduce: boolean) {
@@ -332,6 +361,9 @@ vi.mock('../src/shaders', () => ({
     };
     h.registry.vfx.push(vfx);
     return vfx;
+  },
+  buildEyeballMaterial() {
+    return { material: { isEyeball: true, dispose() {} } as unknown as THREE.Material };
   },
 }));
 
@@ -768,6 +800,35 @@ describe('engine resize', () => {
     const renderer = h.registry.renderer.at(-1)!;
     engine.resize(800, 450);
     expect(renderer.setSizeCalls).toEqual([{ width: 800, height: 450, pixelRatio: undefined }]);
+    engine.dispose();
+  });
+});
+
+describe('placeholder avatar feature attributes', () => {
+  it('provides every attribute required by the skin material', () => {
+    const avatar = createPlaceholderAvatar();
+    const geometry = avatar.morphMeshes[0]?.geometry;
+
+    expect(geometry).toBeDefined();
+    for (const name of ['aLips', 'aJaw', 'aEyelid', 'aBrow', 'aCavity', 'aNose', 'aSocket']) {
+      expect(geometry?.getAttribute(name), name).toBeDefined();
+    }
+    avatar.dispose();
+  });
+});
+
+describe('head configuration wiring', () => {
+  it('applies constructor overrides and exposes live VFX updates', () => {
+    const initial: HeadConfigOverrides = { eyes: { pupil: 0.42 } };
+    const live: HeadConfigOverrides = { skin: { glyph: { scale: 0.8 } } };
+    const engine = createEngine({ headConfig: initial });
+    const vfx = h.registry.vfx.at(-1)!;
+
+    engine.vfx.setHeadConfig(live);
+
+    expect(vfx.headConfigCalls).toEqual([initial, live]);
+    expect(vfx.headConfig.eyes.pupil).toBe(0.42);
+    expect(vfx.headConfig.skin.glyph.scale).toBe(0.8);
     engine.dispose();
   });
 });

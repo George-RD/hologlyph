@@ -12,22 +12,23 @@
  *   1. Fetches + sha256-verifies the neutral head and the ARKit expression OBJs
  *      it needs (subset for the shipped rig, or all listed shapes in --full).
  *   2. Parses the OBJs, computes per-vertex deltas (expression minus neutral).
- *   3. Composites the 27 canonical rig morphs (15 visemes + 12 expressions) as
- *      weighted sums of ARKit deltas (RECIPE below; res.morph-authoring).
+ *   3. Composites the 30 canonical rig morphs (15 visemes + 12 expressions +
+ *      3 authored tongue correctives) as weighted sums of ARKit deltas.
  *   4. Splits the mesh by material group so the eyeballs skin to eye_l/eye_r and
  *      the rest skins to head, giving a functional root/neck/head/eye skeleton.
  *   5. Projects a frontal planar UV island as TEXCOORD_0 for the text skin
  *      (surface realism is irrelevant per dec.head-asset-source).
  *   6. Normalises the bust to ~1 unit tall, centred, facing +Z (camera framing).
- *   7. Writes the shipped GLB (27 canonical targets) and, in --full, a
+ *   7. Writes the shipped GLB (30 canonical targets) and, in --full, a
  *      full-fidelity intermediate retaining every fetched source delta.
  *
  * Usage:
- *   bun tools/asset-pipeline/build-bust.ts [out.glb]        # shipped 27-target bust
+ *   bun tools/asset-pipeline/build-bust.ts [out.glb]        # shipped 30-target bust
  *   bun tools/asset-pipeline/build-bust.ts --full [out.glb] # + retained intermediate
  *
  * The output still needs tools/asset-pipeline/optimize.ts (Meshopt + KTX2) to
  * reach the < 1.5 MB delivery budget; run that next.
+ *
  */
 
 declare const Bun: {
@@ -57,6 +58,7 @@ const MANIFEST_PATH = join(HERE, 'ict-source-manifest.json');
 const REPO_ROOT = resolve(HERE, '..', '..');
 const DEFAULT_OUT = join(REPO_ROOT, 'assets', 'hologlyph-bust.glb');
 const INTERMEDIATE_OUT = join(HERE, '.build', 'hologlyph-bust.intermediate.glb');
+const TONGUE_MANIFEST_PATH = join(HERE, 'tongue-morphs.json');
 
 // ---------------------------------------------------------------------------
 // Canonical morph recipe (res.morph-authoring, specs/morph-authoring-detail.md).
@@ -113,9 +115,19 @@ const EXPRESSION_RECIPE: Recipe = {
   jaw_open: { jawOpen: 1.0 },
   mouth_round: { mouthFunnel: 0.6, mouthPucker: 0.6 },
 };
+const TONGUE_RECIPE: Recipe = {
+  tongue_up: { tongue_up: 1 },
+  tongue_out: { tongue_out: 1 },
+  tongue_back: { tongue_back: 1 },
+};
 
-const CANONICAL_ORDER = [...Object.keys(VISEME_RECIPE), ...Object.keys(EXPRESSION_RECIPE)];
-const RECIPE: Recipe = { ...VISEME_RECIPE, ...EXPRESSION_RECIPE };
+const CANONICAL_ORDER = [
+  ...Object.keys(VISEME_RECIPE),
+  ...Object.keys(TONGUE_RECIPE),
+  ...Object.keys(EXPRESSION_RECIPE),
+];
+const RECIPE: Recipe = { ...VISEME_RECIPE, ...TONGUE_RECIPE, ...EXPRESSION_RECIPE };
+
 
 // Material groups whose faces skin to the left/right eye joints (functional gaze).
 const LEFT_EYE_MATERIALS: Record<string, true> = { M_ScleraLeft: true, M_IrisLeft: true };
@@ -149,6 +161,57 @@ interface Manifest {
   commit: string;
   licence: string;
   files: Record<string, string>; // "name.obj" -> sha256
+}
+
+interface TongueManifest {
+  schema: number;
+  source: string;
+  source_sha256: string;
+  vertex_count: number;
+  tongue_material: string;
+  tongue_vertex_mask: number[];
+  targets: Record<string, {
+    pose_sources: Array<{ file: string; weight: number }>;
+    sha256: string;
+    vertices: Array<{ index: number; delta: [number, number, number] }>;
+  }>;
+}
+
+function loadTongueDeltas(neutral: ObjMesh, neutralBytes: Uint8Array): Map<string, Float32Array> {
+  const manifest = JSON.parse(readFileSync(TONGUE_MANIFEST_PATH, 'utf8')) as TongueManifest;
+  if (manifest.schema !== 1 || manifest.vertex_count !== neutral.positions.length / 3) {
+    throw new Error('tongue manifest topology does not match neutral');
+  }
+  if (sha256(neutralBytes) !== manifest.source_sha256) {
+    throw new Error('tongue manifest neutral sha256 mismatch');
+  }
+  const tongueMask = new Set(manifest.tongue_vertex_mask);
+  if (tongueMask.size === 0) throw new Error('tongue manifest has an empty vertex mask');
+  const out = new Map<string, Float32Array>();
+  for (const name of Object.keys(TONGUE_RECIPE)) {
+    const target = manifest.targets[name];
+    if (!target || target.vertices.length === 0) throw new Error(`tongue target ${name} is missing`);
+    const canonicalRows = target.vertices
+      .map((row) => `${row.index}:${row.delta[0].toFixed(9)},${row.delta[1].toFixed(9)},${row.delta[2].toFixed(9)};`)
+      .join('');
+    if (sha256(new TextEncoder().encode(canonicalRows)) !== target.sha256) {
+      throw new Error(`tongue target ${name} payload sha256 mismatch`);
+    }
+    const delta = new Float32Array(neutral.positions.length);
+    let previous = -1;
+    for (const row of target.vertices) {
+      if (!Number.isInteger(row.index) || row.index <= previous || row.index < 0 || row.index >= manifest.vertex_count) {
+        throw new Error(`tongue target ${name} has unsorted or out-of-range indices`);
+      }
+      if (!tongueMask.has(row.index)) throw new Error(`tongue target ${name} leaves the committed tongue mask`);
+      previous = row.index;
+      delta[row.index * 3] = row.delta[0];
+      delta[row.index * 3 + 1] = row.delta[1];
+      delta[row.index * 3 + 2] = row.delta[2];
+    }
+    out.set(name, delta);
+  }
+  return out;
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -536,7 +599,7 @@ function build(
   }
  
    // Per-vertex partition category drives the later glTF split. glTF keeps
-   // morph-target counts per mesh, so the bust (which carries all 27 targets)
+   // morph-target counts per mesh, so the bust (which carries all 30 targets)
    // must hold every morph-bearing primitive: 0 = bust (face/head/neck),
    // 3 = mouth interior (gums + tongue), 4 = teeth, 5 = eye trim (the
    // caruncle-corner blend shell + lacrimal fluid: kept for anatomy but split
@@ -775,7 +838,7 @@ function build(
        .setIndices(indexAcc);
    };
  
-   // Add all 27 canonical morph targets to a primitive, remapped to its verts.
+   // Add all 30 canonical morph targets to a primitive, remapped to its verts.
    const addMorphs = (prim: Primitive, src: number[]): void => {
      for (const name of targetNames) {
        const arr = geo.targets[name]!;
@@ -839,7 +902,7 @@ function build(
    // Eyes mesh: two primitives (sclera, iris), no morph targets. It shares the
    // bust's skin, so gaze-bone rotation still moves the eyeballs; the eyeball
    // verts skin to eye_l / eye_r. glTF keeps morph counts per mesh, hence the
-   // separate mesh (the bust's 27 targets would be incompatible with 0 targets).
+   // separate mesh (the bust's 30 targets would be incompatible with 0 targets).
    const scleraPrim = makePrim(sclera);
    const irisPrim = makePrim(iris);
    const scleraMat = doc
@@ -938,7 +1001,7 @@ async function main(): Promise<void> {
   const allShapes = Object.keys(manifest.files)
     .filter((f) => f !== 'generic_neutral_mesh.obj')
     .map((f) => f.replace(/\.obj$/, ''));
-  const shapesToLoad = full ? allShapes : [...shipShapes];
+  const shapesToLoad = (full ? allShapes : [...shipShapes]).filter((shape) => !(shape in TONGUE_RECIPE));
 
   const deltas = new Map<string, Float32Array>();
   for (const shape of shapesToLoad) {
@@ -951,11 +1014,12 @@ async function main(): Promise<void> {
     for (let i = 0; i < d.length; i++) d[i] = mesh.positions[i]! - neutral.positions[i]!;
     deltas.set(shape, d);
   }
+  for (const [name, delta] of loadTongueDeltas(neutral, neutralBytes)) deltas.set(name, delta);
   console.log(`[build-bust] loaded ${deltas.size} ARKit deltas`);
 
   const io = new WebIO();
 
-  // Shipped: 27 canonical targets.
+  // Shipped: 30 canonical targets.
   const shippedGeo = build(neutral, deltas, null);
   const shippedDoc = toGltf(shippedGeo, CANONICAL_ORDER);
   const shippedBytes = await io.writeBinary(shippedDoc);
@@ -966,7 +1030,7 @@ async function main(): Promise<void> {
 
   // Full-fidelity intermediate: retain every fetched source delta (design retention).
   if (full) {
-    const interNames = allShapes;
+    const interNames = [...allShapes, ...Object.keys(TONGUE_RECIPE)];
     const interGeo = build(neutral, deltas, interNames);
     const interDoc = toGltf(interGeo, interNames);
     const interBytes = await io.writeBinary(interDoc);

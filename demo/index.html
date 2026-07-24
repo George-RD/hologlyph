@@ -77,146 +77,90 @@ import { createTextSkinEngine, createStaticTextSource } from '../src/text-skin/i
 import { IdleController } from '../src/motion/idle.ts';
 import { weightsFor, lerpWeights, emptyExpressionWeights } from '../src/motion/expressions.ts';
 import { wordAt, visemeSequenceForWord } from '../src/speech/visemes.ts';
-import { RIG_VISEME_MORPHS } from '../src/contracts.ts';
+import { DEFAULT_HEAD_CONFIG, RIG_TONGUE_MORPHS, RIG_VISEME_MORPHS } from '../src/contracts.ts';
+import { bakeFeatureMasks } from '../src/asset/rig.ts';
+import { createAudioEngine } from '../src/audio/index.ts';
+import { createSpeechEngine, createDemoTTSAdapter } from '../src/speech/index.ts';
+import { visemeTap } from '../src/core/index.ts';
 import bustUrl from '../assets/hologlyph-bust.glb?url';
 
 const GRID_COLS = 96, GRID_ROWS = 64, PLANAR_DENSITY = 40;
 const SHADE_KEY_WEIGHT = 2.2, SHADE_FILL_WEIGHT = 0.8, SHADE_AMBIENT = 0.08, SHADE_FLOOR = 0.12;
 const TEXT = 'hologlyph is a web native text skinned talking head. '.repeat(40);
 
-// Zone morph groups. Lips exclude the jaw movers (jaw_open, viseme_aa): those
-// dominate the chin and were why "lip" hue spread over the whole lower face.
-const GROUPS = {
-  lips: ['viseme_pp', 'viseme_ff', 'viseme_ou', 'mouth_round', 'viseme_ss'],
-  jaw: ['jaw_open', 'viseme_aa'],
-  eyelid: ['exp_blink', 'exp_blink_l', 'exp_blink_r'],
-  brow: ['exp_brow_up', 'exp_brow_down'],
-};
-const ZONE_ATTR = { lips: 'aLips', jaw: 'aJaw', eyelid: 'aEyelid', brow: 'aBrow' };
-
 function bakeFeatures(mesh) {
-  const geo = mesh.geometry, pos = geo.attributes.position, nor = geo.attributes.normal, N = pos.count;
-  const dict = mesh.morphTargetDictionary || {}, morphs = geo.morphAttributes.position || [];
-  const out = {};
-  for (const [g, list] of Object.entries(GROUPS)) {
-    const arr = new Float32Array(N); let gmax = 0;
-    for (const nm of list) {
-      const idx = dict[nm]; if (idx === undefined || !morphs[idx]) continue;
-      const m = morphs[idx];
-      for (let i = 0; i < N; i++) { const mag = Math.hypot(m.getX(i), m.getY(i), m.getZ(i)); if (mag > arr[i]) arr[i] = mag; if (arr[i] > gmax) gmax = arr[i]; }
-    }
-    if (gmax > 0) for (let i = 0; i < N; i++) arr[i] = Math.min(1, arr[i] / gmax);
-    out[ZONE_ATTR[g]] = arr;
-  }
+  bakeFeatureMasks(mesh);
+  const geo = mesh.geometry;
+  const pos = geo?.attributes?.position;
+  if (!pos) return;
 
-  // Vermilion band: gate the lip morph mask by an ellipsoidal falloff around
-  // the lip-line centroid (weighted by the strongest 20% of the morph mask),
-  // so lip hue/darkening stays on the lips instead of spreading over the
-  // chin/cheek verts that pucker morphs also move.
-  {
-    const lips = out.aLips;
-    let cx = 0, cy = 0, cz = 0, cw = 0, wmax = 0;
-    for (let i = 0; i < N; i++) if (lips[i] > wmax) wmax = lips[i];
-    const cut = wmax * 0.8;
-    for (let i = 0; i < N; i++) {
-      const w = lips[i]; if (w < cut) continue;
-      cx += pos.getX(i) * w; cy += pos.getY(i) * w; cz += pos.getZ(i) * w; cw += w;
+  // Caruncle size attribute: side-aware distance from the inner corner.
+  if (mesh.name === 'eye_trim' || (mesh.material && mesh.material.name === 'eye_trim')) {
+    const count = pos.count;
+    const distArr = new Float32Array(count);
+    const sideMin = { l: Infinity, r: Infinity };
+    const sideMax = { l: -Infinity, r: -Infinity };
+    for (let index = 0; index < count; index++) {
+      const x = Math.abs(pos.getX(index));
+      const side = pos.getX(index) < 0 ? 'l' : 'r';
+      if (x < sideMin[side]) sideMin[side] = x;
+      if (x > sideMax[side]) sideMax[side] = x;
     }
-    if (cw > 0) {
-      cx /= cw; cy /= cw; cz /= cw;
-      const RX = 0.16, RY = 0.075, RZ = 0.12; // wider than tall: lip band shape
-      for (let i = 0; i < N; i++) {
-        const dx = (pos.getX(i) - cx) / RX, dy = (pos.getY(i) - cy) / RY, dz = (pos.getZ(i) - cz) / RZ;
-        lips[i] *= Math.exp(-(dx * dx + dy * dy + dz * dz));
-      }
+    for (let index = 0; index < count; index++) {
+      const x = Math.abs(pos.getX(index));
+      const side = pos.getX(index) < 0 ? 'l' : 'r';
+      const range = (sideMax[side] - sideMin[side]) || 1;
+      distArr[index] = Math.max(0, Math.min(1, (x - sideMin[side]) / range));
     }
+    geo.setAttribute('aTrimDistance', new THREE.BufferAttribute(distArr, 1));
   }
-
-  // Geometric cavity (one-ring concavity).
-  const cav = new Float32Array(N), idxAttr = geo.index;
-  if (idxAttr) {
-    const acc = new Float64Array(N), cnt = new Uint32Array(N), ia = idxAttr.array;
-    const add = (a, b) => {
-      const dx = pos.getX(b) - pos.getX(a), dy = pos.getY(b) - pos.getY(a), dz = pos.getZ(b) - pos.getZ(a);
-      const len = Math.hypot(dx, dy, dz) || 1;
-      acc[a] += (dx / len) * nor.getX(a) + (dy / len) * nor.getY(a) + (dz / len) * nor.getZ(a); cnt[a]++;
-    };
-    for (let t = 0; t < ia.length; t += 3) { const a = ia[t], b = ia[t + 1], c = ia[t + 2]; add(a,b);add(a,c);add(b,a);add(b,c);add(c,a);add(c,b); }
-    let cmax = 0; for (let i = 0; i < N; i++) { const v = cnt[i] ? Math.max(0, acc[i] / cnt[i]) : 0; cav[i] = v; if (v > cmax) cmax = v; }
-    if (cmax > 0) for (let i = 0; i < N; i++) cav[i] = Math.min(1, (cav[i] / cmax) * 1.3);
-  }
-  out.aCavity = cav;
-
-  // Nose zone: positional heuristic. Front-most surface in the mid-face band,
-  // fading with |x| (no morph moves the nose, so geometry is the only source).
-  const noseArr = new Float32Array(N);
-  {
-    let zmax = -1e9;
-    for (let i = 0; i < N; i++) {
-      const y = pos.getY(i);
-      if (y > 0.02 && y < 0.34 && Math.abs(pos.getX(i)) < 0.17) zmax = Math.max(zmax, pos.getZ(i));
-    }
-    if (zmax > -1e9) {
-      for (let i = 0; i < N; i++) {
-        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-        if (y <= 0.0 || y >= 0.36 || Math.abs(x) >= 0.17) continue;
-        const depth = Math.max(0, Math.min(1, (z - (zmax - 0.30)) / 0.30));
-        const lateral = Math.max(0, 1 - Math.abs(x) / 0.17);
-        const band = Math.min(1, Math.min((y - 0.0) / 0.06, (0.36 - y) / 0.06));
-        noseArr[i] = depth * depth * lateral * band;
-      }
-    }
-  }
-  out.aNose = noseArr;
-
-  // Socket zone: gaussian falloff around the per-side eyelid-mask centroid, so
-  // the head text can be cancelled over the eyeball no matter the shell shape.
-  const sockArr = new Float32Array(N);
-  {
-    const lid = out.aEyelid;
-    const c = { l: { x: 0, y: 0, z: 0, w: 0 }, r: { x: 0, y: 0, z: 0, w: 0 } };
-    for (let i = 0; i < N; i++) {
-      const w = lid[i]; if (w < 0.3) continue;
-      const s = pos.getX(i) < 0 ? c.l : c.r;
-      s.x += pos.getX(i) * w; s.y += pos.getY(i) * w; s.z += pos.getZ(i) * w; s.w += w;
-    }
-    for (const s of [c.l, c.r]) if (s.w > 0) { s.x /= s.w; s.y /= s.w; s.z /= s.w; }
-    const R = 0.16; // socket radius in bind units, scaled by the cutout-size slider
-    if (c.l.w > 0 && c.r.w > 0) {
-      for (let i = 0; i < N; i++) {
-        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-        const s = x < 0 ? c.l : c.r;
-        const d2 = (x - s.x) ** 2 + (y - s.y) ** 2 + (z - s.z) ** 2;
-        sockArr[i] = Math.exp(-d2 / (R * R));
-      }
-    }
-  }
-  out.aSocket = sockArr;
-
-  for (const [name, arr] of Object.entries(out)) geo.setAttribute(name, new THREE.BufferAttribute(arr, 1));
 }
 
-// ---- live uniforms (the draft head-config surface) ----
-// Defaults = owner-approved config, session 2026-07-21
-// (meta/sources/src.owner-approved-look-2026-07-21.md).
+// ---- live uniforms backed by the library-owned approved defaults ----
+const OWNER_LOOK = DEFAULT_HEAD_CONFIG;
+const uTrimSize = uniform(1.0);
+const uLegacyProjection = uniform(0);
 const U = {
   scroll: uniform(0),
   // opacity zones (the "clarity comes from opacity" finding)
-  baseOpacity: uniform(0.075), lipsOp: uniform(0.32), noseOp: uniform(0.38), jawOp: uniform(0.21),
-  orbitOp: uniform(0.15), browOp: uniform(0.0), socketShadow: uniform(0.64), socketMask: uniform(1.0), socketSize: uniform(1.0),
+  baseOpacity: uniform(OWNER_LOOK.skin.opacity.base),
+  lipsOp: uniform(OWNER_LOOK.skin.opacity.lips),
+  noseOp: uniform(OWNER_LOOK.skin.opacity.nose),
+  jawOp: uniform(OWNER_LOOK.skin.opacity.jaw),
+  orbitOp: uniform(OWNER_LOOK.skin.opacity.orbit),
+  browOp: uniform(OWNER_LOOK.skin.opacity.brow),
+  socketShadow: uniform(OWNER_LOOK.skin.shading.socketShadow),
+  socketMask: uniform(OWNER_LOOK.skin.opacity.socketMask),
+  socketSize: uniform(OWNER_LOOK.skin.shading.socketSize),
   // feature shading
-  cavity: uniform(0.45), lipDark: uniform(0.5), lipHue: uniform(0.6), lipGate: uniform(1.4),
-  eyelid: uniform(0.5), brow: uniform(0.3), browGate: uniform(2.2),
+  cavity: uniform(OWNER_LOOK.skin.shading.cavity),
+  lipDark: uniform(OWNER_LOOK.skin.shading.lipDark),
+  lipHue: uniform(OWNER_LOOK.skin.shading.lipHue),
+  lipGate: uniform(OWNER_LOOK.skin.shading.lipGate),
+  eyelid: uniform(OWNER_LOOK.skin.shading.eyelid),
+  brow: uniform(OWNER_LOOK.skin.shading.brow),
+  browGate: uniform(OWNER_LOOK.skin.shading.browGate),
   // text fit
-  glyphScale: uniform(0.79), hDensity: uniform(2.0), vDensity: uniform(2.0), sharp: uniform(5.5),
+  glyphScale: uniform(OWNER_LOOK.skin.glyph.scale),
+  hDensity: uniform(OWNER_LOOK.skin.glyph.horizontalDensity),
+  vDensity: uniform(OWNER_LOOK.skin.glyph.verticalDensity),
+  sharp: uniform(OWNER_LOOK.skin.glyph.sharpness),
   // tone
-  tone: uniform(0.21), toneAmt: uniform(0.65), skinWarm: uniform(0.0), rim: uniform(0.065),
-  glowGain: uniform(0.55),
+  tone: uniform(OWNER_LOOK.skin.tone.balance),
+  toneAmt: uniform(OWNER_LOOK.skin.tone.amount),
+  skinWarm: uniform(OWNER_LOOK.skin.tone.skinWarmth),
+  rim: uniform(OWNER_LOOK.skin.tone.rim),
+  glowGain: uniform(OWNER_LOOK.skin.tone.glowGain),
   // eyes
-  eyeDensity: uniform(300), scleraGlow: uniform(0.51), irisGlow: uniform(2.35), eyePresence: uniform(0.74),
-  pupil: uniform(0.24), flowDir: uniform(1), irisSize: uniform(0.43),
-  irisColor: uniform(new THREE.Color('#d78bf8')),
-  scleraColor: uniform(new THREE.Color('#e1edf9')),
+  eyeDensity: uniform(OWNER_LOOK.eyes.density),
+  scleraGlow: uniform(OWNER_LOOK.eyes.scleraGlow),
+  irisGlow: uniform(OWNER_LOOK.eyes.irisGlow),
+  eyePresence: uniform(OWNER_LOOK.eyes.presence),
+  pupil: uniform(OWNER_LOOK.eyes.pupil),
+  flowDir: uniform(OWNER_LOOK.eyes.flowDirection),
+  irisSize: uniform(OWNER_LOOK.eyes.irisSize),
+  irisColor: uniform(new THREE.Color(OWNER_LOOK.eyes.irisColor)),
+  scleraColor: uniform(new THREE.Color(OWNER_LOOK.eyes.scleraColor)),
 };
 
 function prepTexture(tex) {
@@ -228,14 +172,22 @@ function triplanarText(tex, densU, densV, scrollNode) {
   const bindNormal = normalGeometry.normalize();
   const axisW = tpow(bindNormal.abs(), U.sharp);
   const weights = axisW.div(axisW.dot(vec3(1)));
+  const px = positionGeometry.x.mul(weights.z).add(positionGeometry.z.mul(weights.x)).add(positionGeometry.x.mul(weights.y));
+  const py = positionGeometry.y.mul(weights.z.add(weights.x)).add(positionGeometry.z.mul(weights.y));
+  const projectedRow = floor(py.mul(PLANAR_DENSITY));
+  const projectedRate = float(0.75).add(fract(projectedRow.mul(0.618)).mul(0.5));
+  const interpolated = texture(tex, vec2(px.mul(densU).add(0.5).add(scrollNode.mul(projectedRate)), py.mul(densV)));
+
+  // Lab-only A/B reference for the prior three-sample projection.
   const rowY = floor(positionGeometry.y.mul(PLANAR_DENSITY));
   const rowZ = floor(positionGeometry.z.mul(PLANAR_DENSITY));
   const rateY = float(0.75).add(fract(rowY.mul(0.618)).mul(0.5));
   const rateZ = float(0.75).add(fract(rowZ.mul(0.618)).mul(0.5));
-  const sXY = texture(tex, vec2(positionGeometry.x.mul(densU).add(0.5).add(scrollNode.mul(rateY)), positionGeometry.y.mul(densV)));
-  const sZY = texture(tex, vec2(positionGeometry.z.mul(densU).add(0.5).add(scrollNode.mul(rateY)), positionGeometry.y.mul(densV)));
-  const sXZ = texture(tex, vec2(positionGeometry.x.mul(densU).add(0.5).add(scrollNode.mul(rateZ)), positionGeometry.z.mul(densV)));
-  return sXY.mul(weights.z).add(sZY.mul(weights.x)).add(sXZ.mul(weights.y));
+  const sampleXY = texture(tex, vec2(positionGeometry.x.mul(densU).add(0.5).add(scrollNode.mul(rateY)), positionGeometry.y.mul(densV)));
+  const sampleZY = texture(tex, vec2(positionGeometry.z.mul(densU).add(0.5).add(scrollNode.mul(rateY)), positionGeometry.y.mul(densV)));
+  const sampleXZ = texture(tex, vec2(positionGeometry.x.mul(densU).add(0.5).add(scrollNode.mul(rateZ)), positionGeometry.z.mul(densV)));
+  const legacy = sampleXY.mul(weights.z).add(sampleZY.mul(weights.x)).add(sampleXZ.mul(weights.y));
+  return mix(interpolated, legacy, uLegacyProjection);
 }
 
 function buildHeadMaterial(skin) {
@@ -324,7 +276,7 @@ function buildEyeballMaterial(eyeSkin, c) {
   // Donut brightness profile (owner spec): soft fade INTO the pupil void,
   // sharp edge at the OUTER iris boundary so it reads as a circle, not a torus.
   const voidFade = smoothstep(U.pupil, U.pupil.add(0.28), r);
-  const outerEdge = smoothstep(1.0, 0.955, r);
+  const outerEdge = float(1).sub(smoothstep(0.955, 1.0, r));
   const iris = U.irisColor.mul(ringText).mul(U.irisGlow).mul(voidFade).mul(outerEdge);
 
   // Sclera beyond the iris: dim white, optional micro-text (default off).
@@ -337,6 +289,19 @@ function buildEyeballMaterial(eyeSkin, c) {
   mat.colorNode = iris.add(sclera).mul(U.eyePresence).add(vec3(0.004, 0.005, 0.008));
   return mat;
 }
+function buildBlendMaskMaterial() {
+  const mat = new THREE.MeshBasicNodeMaterial();
+  const axisW = tpow(normalGeometry.normalize().abs(), U.sharp);
+  const weights = axisW.div(axisW.dot(vec3(1)));
+  const blend = weights.x.mul(weights.y)
+    .add(weights.x.mul(weights.z))
+    .add(weights.y.mul(weights.z))
+    .mul(4)
+    .clamp(0, 1);
+  mat.colorNode = vec3(blend);
+  return mat;
+}
+
 
 // ---- scene ----
 const canvas = document.getElementById('view');
@@ -364,7 +329,7 @@ eyeSkin.setSource(createStaticTextSource(TEXT));
 let eyeFrame = { cx: 0.688, cy: 0.003, cz: 0 };
 gltf.scene.traverse((o) => {
   if (!o.isMesh) return;
-  const mn = Array.isArray(o.material) ? '' : (o.material && o.material.name) || '';
+  const mn = Array.isArray(o.material) ? '' : o.material?.name || '';
   if (mn !== 'eye_sclera') return;
   const p = o.geometry.attributes.position;
   let sx = 0, sy = 0, sz = 0, n = 0;
@@ -374,26 +339,29 @@ gltf.scene.traverse((o) => {
 
 const headMat = buildHeadMaterial(skin);
 const eyeballMat = buildEyeballMaterial(eyeSkin, eyeFrame);
+const blendMaskMat = buildBlendMaskMaterial();
 
 const bones = {}; const morphMeshes = []; const originals = new Map(); const hiddenIris = []; const trimMeshes = [];
 gltf.scene.traverse((o) => {
   if (o.isBone) { if (o.name === 'head') bones.head = o; if (o.name === 'neck') bones.neck = o; if (o.name === 'eye_l') bones.eyeL = o; if (o.name === 'eye_r') bones.eyeR = o; }
   if (!o.isMesh) return;
-  const mn = Array.isArray(o.material) ? '' : (o.material && o.material.name) || '';
+  const mn = Array.isArray(o.material) ? '' : o.material?.name || '';
   if (mn === 'mouth_interior') {
     // Keep its authored dark cavity material (KEEP_MATERIALS pattern; this
-    // mesh carries gums, tongue AND teeth), but drive its viseme/expression
-    // morphs so it opens with the lips instead of freezing at bind pose.
-    // (The tongue rides the jaw here; per-phoneme tongue articulation - tip to
-    // the teeth on T/D, between teeth on TH - needs tongue morph targets the
-    // asset does not yet carry, and the rig has no tongue bone.)
+    // mesh carries gums and tongue), but drive all canonical expression,
+    // viseme, and tongue corrective morphs with the rest of the bust.
     if (o.morphTargetInfluences) morphMeshes.push(o);
     return;
   }
   if (mn === 'eye_trim') {
-    // Caruncle-corner blend shell + lacrimal fluid: keeps its authored dark
-    // material (engine KEEP_MATERIALS pattern); slider dials its opacity.
-    o.material.transparent = true;
+    const mat = new THREE.MeshBasicNodeMaterial();
+    const aTrimDist = attribute('aTrimDistance', 'float');
+    mat.colorNode = vec3(0.02, 0.03, 0.05);
+    mat.opacityNode = float(1).sub(smoothstep(uTrimSize.sub(0.08), uTrimSize, aTrimDist));
+    mat.transparent = true;
+    mat.depthTest = true;
+    mat.depthWrite = true;
+    o.material = mat;
     trimMeshes.push(o);
     return;
   }
@@ -416,7 +384,7 @@ scene.add(gltf.scene);
 
 // ---- state / controls ----
 const state = {
-  scrollSpeed: 0.02, yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0,
+  scrollSpeed: skin.scrollSpeed, yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0,
   idle: true, thinking: false, speaking: false, expression: 'neutral',
   speakGain: 0.55,
 };
@@ -427,6 +395,42 @@ let exprTarget = weightsFor('neutral');
 const VISEME_MS = 0.075;
 const speech = { seq: [], boundaryAt: 0, sawBoundary: false, words: [], wordIdx: 0, nextWordAt: 0, gen: 0 };
 
+const audioEngine = createAudioEngine();
+const demoBaseAdapter = createDemoTTSAdapter();
+let hqBaseAdapter = null;
+let activeAdapterKind = 'browser';
+const speechEngine = createSpeechEngine(audioEngine);
+const tappedWeights = {};
+let lastFrameWasSilence = true;
+
+function clearTappedWeights() {
+  for (const vn of RIG_VISEME_MORPHS) tappedWeights[vn] = 0;
+  lastFrameWasSilence = true;
+}
+
+function setSpeechAdapter(baseAdapter, isHq = false) {
+  clearTappedWeights();
+  const wrapped = visemeTap(
+    baseAdapter,
+    (frame) => {
+      clearTappedWeights();
+      let allSil = true;
+      if (frame.weights) {
+        for (const [k, v] of Object.entries(frame.weights)) {
+          if (k !== 'viseme_sil' && v > 0.001) allSil = false;
+          tappedWeights[k] = v;
+        }
+      }
+      lastFrameWasSilence = allSil;
+      state.speakUntil = performance.now() / 1000 + 0.3;
+    },
+    () => {},
+    false,
+  );
+  speechEngine.setAdapter(wrapped);
+  activeAdapterKind = isHq ? 'kokoro' : 'browser';
+}
+setSpeechAdapter(demoBaseAdapter, false);
 const panel = document.getElementById('panel');
 function group(title) { const f = document.createElement('fieldset'); const l = document.createElement('legend'); l.textContent = title; f.appendChild(l); panel.appendChild(f); return f; }
 const sliders = {};
@@ -434,17 +438,22 @@ function slider(parent, id, label, min, max, step, value, onInput) {
   const wrap = document.createElement('div'); wrap.className = 'row';
   const lab = document.createElement('label'); lab.textContent = label;
   const out = document.createElement('output'); out.textContent = (+value).toFixed(2);
-  wrap.appendChild(lab); wrap.appendChild(out);
   const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = value;
+  inp.id = `slider_${id}`;
+  lab.htmlFor = inp.id;
+  out.setAttribute('for', inp.id);
+  wrap.appendChild(lab); wrap.appendChild(out);
   parent.appendChild(wrap); parent.appendChild(inp);
   inp.addEventListener('input', () => { const v = +inp.value; out.textContent = v.toFixed(2); onInput(v); });
   if (id) sliders[id] = inp;
   return inp;
 }
+let chkSeq = 0;
 function checkbox(parent, label, value, onChange) {
   const d = document.createElement('div'); d.className = 'chk';
   const c = document.createElement('input'); c.type = 'checkbox'; c.checked = value;
-  const l = document.createElement('label'); l.textContent = label;
+  c.id = `chk_${++chkSeq}`;
+  const l = document.createElement('label'); l.textContent = label; l.htmlFor = c.id;
   d.appendChild(c); d.appendChild(l); parent.appendChild(d);
   c.addEventListener('change', () => onChange(c.checked)); return c;
 }
@@ -481,8 +490,8 @@ uslider(gOp, 'orbitOp', 'eye-orbit opacity', 0, 0.8, 0.01);
 uslider(gOp, 'browOp', 'brow opacity', 0, 0.8, 0.01);
 uslider(gOp, 'socketShadow', 'socket recess shadow (text goes in)', 0, 1, 0.01);
 uslider(gOp, 'socketMask', 'socket skin mask (hide orb behind lids)', 0, 1, 0.01);
-slider(gOp, 'trimOp', 'inner-corner trim opacity (caruncle shell)', 0, 1, 0.01, 1, (v) => {
-  for (const m of trimMeshes) { m.material.opacity = v; m.visible = v > 0.01; }
+slider(gOp, 'trimSize', 'inner-corner trim size (caruncle shell cutoff)', 0, 1, 0.01, 1, (v) => {
+  uTrimSize.value = v;
 });
 uslider(gOp, 'socketSize', 'socket size', 0.3, 2, 0.01);
 const ohint = document.createElement('p'); ohint.className = 'hint';
@@ -506,6 +515,9 @@ uslider(gFit, 'glyphScale', 'glyph size', 0.3, 2.2, 0.01);
 uslider(gFit, 'hDensity', 'horizontal density', 0.5, 2, 0.01);
 uslider(gFit, 'vDensity', 'line density', 0.5, 2, 0.01);
 uslider(gFit, 'sharp', 'projection sharpness (nose)', 1, 8, 0.1);
+checkbox(gFit, 'legacy projection overlap (A/B)', false, (on) => {
+  uLegacyProjection.value = on ? 1 : 0;
+});
 
 const gEyes = group('eyes');
 uslider(gEyes, 'pupil', 'pupil size (dilation)', 0.1, 0.75, 0.01);
@@ -531,6 +543,78 @@ uslider(gTone, 'rim', 'rim glow', 0, 0.4, 0.005);
 uslider(gTone, 'glowGain', 'glyph glow gain (brightness)', 0, 4, 0.05);
 slider(gTone, 'roughness', 'surface roughness (1 kills specular sheen)', 0.05, 1, 0.01, 0.4, (v) => { headMat.roughness = v; });
 
+const gBg = group('background & theme (lab-only)');
+const bgBtns = document.createElement('div'); bgBtns.className = 'btns'; gBg.appendChild(bgBtns);
+function setBgColor(hex) {
+  scene.background = new THREE.Color(hex);
+  document.getElementById('view').style.background = hex;
+  const isLight = new THREE.Color(hex).getHSL({}).l > 0.5;
+  document.getElementById('status').style.color = isLight ? '#233248' : '#6b7688';
+  const introPs = document.getElementById('intro').querySelectorAll('p');
+  for (const p of introPs) {
+    p.style.color = isLight ? '#1c2838' : '#8fa0b6';
+    p.style.textShadow = isLight ? 'none' : '0 1px 4px #04060b';
+  }
+}
+for (const [name, hex] of Object.entries({ dark: '#04060b', mid: '#1a2332', light: '#e5ebf5' })) {
+  const b = document.createElement('button'); b.textContent = name;
+  b.addEventListener('click', () => setBgColor(hex));
+  bgBtns.appendChild(b);
+}
+const colRow = document.createElement('div'); colRow.className = 'row';
+const colLab = document.createElement('label'); colLab.textContent = 'custom background'; colLab.htmlFor = 'customBgColor';
+const colInp = document.createElement('input'); colInp.type = 'color'; colInp.id = 'customBgColor'; colInp.value = '#04060b';
+colInp.setAttribute('aria-label', 'custom background color');
+colInp.addEventListener('input', (e) => setBgColor(e.target.value));
+colRow.appendChild(colLab); colRow.appendChild(colInp); gBg.appendChild(colRow);
+
+let coreMesh = null;
+checkbox(gBg, 'near-opaque inner core (prototype)', false, (on) => {
+  if (on) {
+    if (!coreMesh) {
+      gltf.scene.traverse((o) => {
+        if (coreMesh || !o.isMesh) return;
+        const mn = Array.isArray(o.material) ? '' : o.material?.name || '';
+        if (mn === 'bust' || (!mn && o.morphTargetInfluences)) {
+          coreMesh = o.clone();
+          coreMesh.scale.set(0.985, 0.985, 0.985);
+          const coreMat = new THREE.MeshBasicNodeMaterial();
+          coreMat.colorNode = vec3(0.03, 0.04, 0.06);
+          coreMat.depthTest = true; coreMat.depthWrite = true;
+          coreMesh.material = coreMat; coreMesh.renderOrder = 0;
+          scene.add(coreMesh);
+        }
+      });
+    }
+    if (coreMesh) coreMesh.visible = true;
+  } else {
+    if (coreMesh) coreMesh.visible = false;
+  }
+});
+
+const themeBtns = document.createElement('div'); themeBtns.className = 'btns'; gBg.appendChild(themeBtns);
+function applyThemeValues(values) {
+  for (const [id, value] of Object.entries(values)) {
+    const input = sliders[id];
+    if (input) {
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+    } else if (U[id]) {
+      U[id].value = value;
+    }
+  }
+}
+const nightBtn = document.createElement('button'); nightBtn.textContent = 'night preset';
+nightBtn.addEventListener('click', () => {
+  setBgColor('#04060b');
+  applyThemeValues({ baseOpacity: 0.075, rim: 0.065, glowGain: 0.55, tone: 0.21, toneAmt: 0.65 });
+});
+const dayBtn = document.createElement('button'); dayBtn.textContent = 'day preset';
+dayBtn.addEventListener('click', () => {
+  setBgColor('#e5ebf5');
+  applyThemeValues({ baseOpacity: 0.15, rim: 0.18, glowGain: 0.85, tone: 0.05, toneAmt: 0.45 });
+});
+themeBtns.appendChild(nightBtn); themeBtns.appendChild(dayBtn);
 // Expressions + speak live on the stage quickbar (always visible), not in
 // the tuning panel. Expressions use the real semantic map
 // (src/motion/expressions.ts); speak is a lab approximation cycling viseme
@@ -569,39 +653,129 @@ sayInput.maxLength = 240;
 sayInput.placeholder = 'type something for it to say...';
 const speakBtn = document.createElement('button');
 speakBtn.type = 'button';
+speakBtn.id = 'speakBtn';
 speakBtn.textContent = 'speak';
+
+const hqVoiceBtn = document.createElement('button');
+hqVoiceBtn.type = 'button';
+hqVoiceBtn.id = 'hqVoiceBtn';
+hqVoiceBtn.textContent = 'Load HQ voice';
+hqVoiceBtn.setAttribute('aria-label', 'Load HQ voice');
+
+const voiceStatus = document.createElement('span');
+voiceStatus.id = 'voiceStatus';
+voiceStatus.setAttribute('role', 'status');
+voiceStatus.setAttribute('aria-live', 'polite');
+voiceStatus.className = 'hint';
+voiceStatus.textContent = 'browser voice (zero-download)';
+
+const voiceProgress = document.createElement('progress');
+voiceProgress.id = 'voiceProgress';
+voiceProgress.max = 100;
+voiceProgress.value = 0;
+voiceProgress.hidden = true;
+voiceProgress.setAttribute('aria-label', 'HQ voice loading progress');
+
 saybar.appendChild(sayInput);
 saybar.appendChild(speakBtn);
+saybar.appendChild(hqVoiceBtn);
+saybar.appendChild(voiceProgress);
+saybar.appendChild(voiceStatus);
 quickbar.appendChild(saybar);
-function startSpeak() {
-  // Bump the generation on every start/stop so callbacks from a prior
-  // utterance cannot clobber the active sequence or reset the window.
+
+hqVoiceBtn.addEventListener('click', async () => {
+  if (hqVoiceBtn.disabled) return;
+  hqVoiceBtn.disabled = true;
+  hqVoiceBtn.setAttribute('aria-busy', 'true');
+  voiceProgress.hidden = false;
+  voiceProgress.value = 0;
+  voiceStatus.textContent = 'loading hq voice...';
+  let attemptAdapter = null;
+  try {
+    await audioEngine.resumeFromGesture();
+    const { createKokoroTTSAdapter } = await import('../src/speech/index.ts');
+    const customLoader = window.__kokoroLoader;
+    const customDevice = window.__kokoroDevice;
+    attemptAdapter = createKokoroTTSAdapter({
+      ...(customLoader ? { loader: customLoader } : {}),
+      ...(customDevice ? { device: customDevice } : {}),
+      onProgress: (p) => {
+        if (typeof p.progress === 'number') {
+          voiceProgress.value = Math.min(100, Math.round(p.progress));
+        }
+      },
+    });
+    await attemptAdapter.load();
+    hqBaseAdapter = attemptAdapter;
+    attemptAdapter = null;
+    setSpeechAdapter(hqBaseAdapter, true);
+    voiceStatus.textContent = 'hq voice ready (Kokoro-82M)';
+    hqVoiceBtn.textContent = 'HQ voice ready';
+    hqVoiceBtn.disabled = true;
+    hqVoiceBtn.removeAttribute('aria-busy');
+    voiceProgress.hidden = true;
+  } catch {
+    if (attemptAdapter) {
+      attemptAdapter.dispose();
+      attemptAdapter = null;
+    }
+    if (hqBaseAdapter) {
+      hqBaseAdapter.dispose();
+      hqBaseAdapter = null;
+    }
+    setSpeechAdapter(demoBaseAdapter, false);
+    voiceStatus.textContent = 'hq voice load failed: browser voice restored';
+    hqVoiceBtn.textContent = 'Retry loading HQ voice';
+    hqVoiceBtn.disabled = false;
+    hqVoiceBtn.removeAttribute('aria-busy');
+    voiceProgress.hidden = true;
+  }
+});
+
+async function startSpeak() {
   const gen = ++speech.gen;
-  if (state.speaking) { state.speakUntil = 0; speechSynthesis.cancel(); return; }
+  if (state.speaking || speechEngine.speaking) {
+    state.speakUntil = 0;
+    clearTappedWeights();
+    speechEngine.cancel();
+    return;
+  }
   const text = sayInput.value.trim() || 'hologlyph is a web native text skinned talking head.';
   const now = performance.now() / 1000;
+  clearTappedWeights();
+
   speech.seq = []; speech.sawBoundary = false;
   speech.words = text.split(/\s+/).filter(Boolean).map(visemeSequenceForWord);
   speech.wordIdx = 0; speech.nextWordAt = now + 0.25; speech.boundaryAt = now;
-  // Visual window: sized to the text; natural audio end closes it early.
-  // An audio ERROR does not (voiceless/headless contexts still animate).
-  state.speakUntil = now + Math.min(20, Math.max(2.5, text.length * 0.075));
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.onboundary = (e) => {
-    if (gen !== speech.gen) return; // stale utterance
-    const word = wordAt(text, e.charIndex, e.charLength ?? 0);
-    const seq = visemeSequenceForWord(word);
-    if (seq.length === 0) return; // punctuation-only boundary: keep mouth as-is
-    speech.seq = seq;
-    speech.boundaryAt = performance.now() / 1000;
-    speech.sawBoundary = true;
-  };
-  utt.onend = () => { if (gen === speech.gen) state.speakUntil = 0; };
-  try { speechSynthesis.speak(utt); } catch { /* keep the visual window */ }
+  state.speakUntil = now + Math.min(60, Math.max(3.0, text.length * 0.15));
+
+  try {
+    await speechEngine.speak(text);
+    if (gen === speech.gen) {
+      state.speakUntil = 0;
+      clearTappedWeights();
+    }
+  } catch {
+    if (gen === speech.gen) {
+      state.speakUntil = 0;
+      clearTappedWeights();
+    }
+    if (activeAdapterKind === 'kokoro') {
+      if (hqBaseAdapter) {
+        hqBaseAdapter.dispose();
+        hqBaseAdapter = null;
+      }
+      setSpeechAdapter(demoBaseAdapter, false);
+      voiceStatus.textContent = 'synthesis failed: browser voice restored';
+      hqVoiceBtn.textContent = 'Retry loading HQ voice';
+      hqVoiceBtn.disabled = false;
+      hqVoiceBtn.removeAttribute('aria-busy');
+      startSpeak();
+    }
+  }
 }
 speakBtn.addEventListener('click', startSpeak);
 sayInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startSpeak(); });
-
 const gPre = group('presets + export');
 const btns = document.createElement('div'); btns.className = 'btns'; gPre.appendChild(btns);
 const PRESETS = {
@@ -620,7 +794,7 @@ exp.addEventListener('click', async () => {
   const cfg = { scrollSpeed: state.scrollSpeed, expression: state.expression };
   for (const [k, u] of Object.entries(U)) {
     if (k === 'scroll') continue;
-    cfg[k] = u.value && u.value.isColor ? '#' + u.value.getHexString() : +(+u.value).toFixed(3);
+    cfg[k] = u.value?.isColor ? `#${u.value.getHexString()}` : +(+u.value).toFixed(3);
   }
   const json = JSON.stringify(cfg, null, 2);
   console.log(json);
@@ -668,7 +842,7 @@ function frame(now) {
   // Current viseme from the word-boundary cursor (75 ms per viseme). Silence
   // (past the end of a word's sequence) closes the mouth between words.
   let visemeName = null;
-  if (state.speaking) {
+  if (state.speaking && activeAdapterKind === 'browser') {
     if (!speech.sawBoundary && t >= speech.nextWordAt && speech.wordIdx < speech.words.length) {
       speech.seq = speech.words[speech.wordIdx++];
       speech.boundaryAt = t;
@@ -677,6 +851,13 @@ function frame(now) {
     const idx = Math.floor((t - speech.boundaryAt) / VISEME_MS);
     if (idx >= 0 && idx < speech.seq.length) visemeName = speech.seq[idx];
   }
+  const speechWeight = (name) =>
+    activeAdapterKind === 'kokoro' ? (tappedWeights[name] ?? 0) : (visemeName === name ? 1 : 0);
+  const tongueTargets = {
+    tongue_up: Math.max(speechWeight('viseme_dd'), speechWeight('viseme_nn'), speechWeight('viseme_ss')),
+    tongue_out: speechWeight('viseme_th'),
+    tongue_back: speechWeight('viseme_kk'),
+  };
   for (const m of morphMeshes) {
     const dict = m.morphTargetDictionary; if (!dict) continue;
     for (const [name, w] of Object.entries(exprCur)) {
@@ -688,11 +869,28 @@ function frame(now) {
     for (const vn of RIG_VISEME_MORPHS) {
       if (vn === 'viseme_sil') continue;
       const idx = dict[vn]; if (idx === undefined) continue;
-      const target = vn === visemeName ? state.speakGain : 0;
+      let target = 0;
+      if (activeAdapterKind === 'kokoro') {
+        target = (tappedWeights[vn] ?? 0) * state.speakGain;
+      } else {
+        target = vn === visemeName ? state.speakGain : 0;
+      }
       const curW = m.morphTargetInfluences[idx];
-      const tc = target > curW ? 0.05 : 0.12; // attack 50 ms, release 120 ms
+      const tc = target > curW ? 0.05 : 0.12;
       m.morphTargetInfluences[idx] += (target - curW) * Math.min(1, dt / tc);
     }
+    for (const name of RIG_TONGUE_MORPHS) {
+      const idx = dict[name]; if (idx === undefined) continue;
+      const target = tongueTargets[name] * state.speakGain;
+      const current = m.morphTargetInfluences[idx];
+      const timeConstant = target > current ? 0.05 : 0.12;
+      m.morphTargetInfluences[idx] += (target - current) * Math.min(1, dt / timeConstant);
+    }
+  }
+  const sourceMorphs = morphMeshes[0]?.morphTargetInfluences;
+  const targetMorphs = coreMesh?.morphTargetInfluences;
+  if (sourceMorphs && targetMorphs) {
+    for (let i = 0; i < sourceMorphs.length; i++) targetMorphs[i] = sourceMorphs[i];
   }
 
   controls.update();
@@ -700,7 +898,30 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 // Debug/capture handle for smoke scripts (lab-only scaffolding).
-window.__lab = { camera, controls, bones, U, state, THREE, scene, skin, headMat };
+window.__lab = {
+  camera, controls, bones, U, state, THREE, scene, skin, headMat, blendMaskMat, morphMeshes,
+  uLegacyProjection,
+  speech: {
+    get activeKind() { return activeAdapterKind; },
+    get hqLoaded() { return Boolean(hqBaseAdapter?.loaded); },
+    get frameWeights() { return { ...tappedWeights }; },
+    get speaking() { return state.speaking || speechEngine.speaking; },
+    get lastFrameWasSilence() { return lastFrameWasSilence; },
+  },
+};
+let isDisposed = false;
+function disposeAll() {
+  if (isDisposed) return;
+  isDisposed = true;
+  speechEngine.dispose();
+  if (hqBaseAdapter) {
+    hqBaseAdapter.dispose();
+    hqBaseAdapter = null;
+  }
+  demoBaseAdapter.dispose();
+  audioEngine.dispose();
+}
+window.addEventListener('beforeunload', disposeAll);
 
 // Landing shell: the tuning panel is hidden by default; "tune" (or ?tune in
 // the URL) opens it. Resize fires so the canvas reclaims/yields the width.

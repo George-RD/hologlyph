@@ -8,8 +8,22 @@
 
 import { Plane, Vector3 } from 'three';
 import type * as THREE from 'three';
-import { clamp01, type TextSkinEngine, type VFXEngine } from '../contracts';
-import { buildSkinMaterial, type ScrollUniform } from './materials';
+import {
+  clamp01,
+  DEFAULT_HEAD_CONFIG,
+  type HeadConfig,
+  type HeadConfigOverrides,
+  type TextSkinEngine,
+  type VFXEngine,
+} from '../contracts';
+import {
+  buildEyeballMaterial,
+  buildSkinMaterial,
+  normaliseHeadConfig,
+  type EyeUniforms,
+  type HeadUniforms,
+  type ScrollUniform,
+} from './materials';
 import {
   BUST_HEIGHT,
   RAMP_TAU,
@@ -21,10 +35,29 @@ import {
 interface SkinBinding {
   skin: TextSkinEngine;
   scroll: ScrollUniform;
+  uniforms: HeadUniforms;
+}
+
+interface EyeBinding {
+  skin: TextSkinEngine;
+  scroll: ScrollUniform;
+  uniforms: EyeUniforms;
 }
 
 export { BUST_HEIGHT, RAMP_TAU } from './emergence';
-export type { ScrollUniform, BuiltSkinMaterial } from './materials';
+export {
+  blendedProjectionUV,
+  buildEyeballMaterial,
+  buildSkinMaterial,
+  normaliseHeadConfig,
+} from './materials';
+export type {
+  BuiltEyeballMaterial,
+  BuiltSkinMaterial,
+  EyeUniforms,
+  HeadUniforms,
+  ScrollUniform,
+} from './materials';
 export {
   easeEmergence,
   computeRootOffsetY,
@@ -42,8 +75,10 @@ export {
 export function createVFXEngine(): VFXEngine {
   const height = BUST_HEIGHT;
   const plane = new Plane(new Vector3(0, 1, 0), 0);
-  const bindings: SkinBinding[] = [];
+  const skinBindings: SkinBinding[] = [];
+  const eyeBindings: EyeBinding[] = [];
 
+  let activeConfig: HeadConfig = DEFAULT_HEAD_CONFIG;
   let target = 0;
   let current = 0;
   let reduced = false;
@@ -60,17 +95,89 @@ export function createVFXEngine(): VFXEngine {
     plane.constant = computeClipConstant(current, height);
   }
 
+  function applyConfigToBindings(config: HeadConfig): void {
+    for (const binding of skinBindings) {
+      const u = binding.uniforms;
+      u.baseOpacity.value = config.skin.opacity.base;
+      u.lipsOp.value = config.skin.opacity.lips;
+      u.noseOp.value = config.skin.opacity.nose;
+      u.jawOp.value = config.skin.opacity.jaw;
+      u.orbitOp.value = config.skin.opacity.orbit;
+      u.browOp.value = config.skin.opacity.brow;
+      u.socketMask.value = config.skin.opacity.socketMask;
+
+      u.socketShadow.value = config.skin.shading.socketShadow;
+      u.socketSize.value = config.skin.shading.socketSize;
+      u.cavity.value = config.skin.shading.cavity;
+      u.lipDark.value = config.skin.shading.lipDark;
+      u.lipHue.value = config.skin.shading.lipHue;
+      u.lipGate.value = config.skin.shading.lipGate;
+      u.eyelid.value = config.skin.shading.eyelid;
+      u.brow.value = config.skin.shading.brow;
+      u.browGate.value = config.skin.shading.browGate;
+
+      u.glyphScale.value = config.skin.glyph.scale;
+      u.hDensity.value = config.skin.glyph.horizontalDensity;
+      u.vDensity.value = config.skin.glyph.verticalDensity;
+      u.sharp.value = config.skin.glyph.sharpness;
+
+      u.tone.value = config.skin.tone.balance;
+      u.toneAmt.value = config.skin.tone.amount;
+      u.skinWarm.value = config.skin.tone.skinWarmth;
+      u.rim.value = config.skin.tone.rim;
+      u.glowGain.value = config.skin.tone.glowGain;
+    }
+
+    for (const binding of eyeBindings) {
+      const u = binding.uniforms;
+      u.eyeDensity.value = config.eyes.density;
+      u.scleraGlow.value = config.eyes.scleraGlow;
+      u.irisGlow.value = config.eyes.irisGlow;
+      u.eyePresence.value = config.eyes.presence;
+      u.pupil.value = config.eyes.pupil;
+      u.flowDir.value = config.eyes.flowDirection;
+      u.irisSize.value = config.eyes.irisSize;
+      u.irisColor.value.set(config.eyes.irisColor);
+      u.scleraColor.value.set(config.eyes.scleraColor);
+    }
+  }
+
   const engine: VFXEngine = {
     createSkinMaterial(skin: TextSkinEngine): THREE.Material {
       if (disposed) throw new Error('VFXEngine: createSkinMaterial after dispose');
-      const built = buildSkinMaterial(skin);
-      bindings.push({ skin, scroll: built.scroll });
+      const built = buildSkinMaterial(skin, activeConfig);
+      const binding = { skin, scroll: built.scroll, uniforms: built.uniforms };
+      skinBindings.push(binding);
+      built.material.addEventListener('dispose', () => {
+        const index = skinBindings.indexOf(binding);
+        if (index >= 0) skinBindings.splice(index, 1);
+      });
       return built.material;
+    },
+
+    createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material {
+      if (disposed) throw new Error('VFXEngine: createEyeballMaterial after dispose');
+      const built = buildEyeballMaterial(eyeSkin, frame, activeConfig);
+      const binding = { skin: eyeSkin, scroll: built.uniforms.scroll, uniforms: built.uniforms };
+      eyeBindings.push(binding);
+      built.material.addEventListener('dispose', () => {
+        const index = eyeBindings.indexOf(binding);
+        if (index >= 0) eyeBindings.splice(index, 1);
+      });
+      return built.material;
+    },
+
+    setHeadConfig(overrides: HeadConfigOverrides): void {
+      activeConfig = normaliseHeadConfig(overrides, activeConfig);
+      applyConfigToBindings(activeConfig);
+    },
+
+    get headConfig(): HeadConfig {
+      return activeConfig;
     },
 
     setEmergence(progress: number): void {
       target = easeEmergence(clamp01(progress));
-      // Structural values reflect `current`; update() ramps them.
       applyFromCurrent();
     },
 
@@ -85,25 +192,25 @@ export function createVFXEngine(): VFXEngine {
     get clippingPlane(): THREE.Plane {
       return plane;
     },
+
     setReducedMotion(reducedMotion: boolean): void {
       reduced = reducedMotion;
     },
+
     update(dt: number): void {
       if (disposed) return;
       if (reduced) {
-        // Reduced motion: emergence must not animate. Snap current straight to
-        // the eased target so the bust appears/disappears immediately. The GPU
-        // UV scroll push below still runs for any registered skins.
         current = target;
       } else {
-        // Exponential smoothing toward the eased target.
         const k = 1 - Math.exp(-dt / RAMP_TAU);
         current = current + (target - current) * k;
         if (Math.abs(target - current) < 1e-4) current = target;
       }
 
-      // Drive each skin's GPU UV scroll from its engine scrollOffset.
-      for (const binding of bindings) {
+      for (const binding of skinBindings) {
+        binding.scroll.value = binding.skin.scrollOffset;
+      }
+      for (const binding of eyeBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
       }
 
@@ -113,7 +220,8 @@ export function createVFXEngine(): VFXEngine {
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      bindings.length = 0;
+      skinBindings.length = 0;
+      eyeBindings.length = 0;
       plane.constant = 0;
     },
   };

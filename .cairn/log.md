@@ -85,3 +85,12 @@
 - archive: landing-quickbar merged; no operations
 - scan: nodes=16, findings=43, errors=0
 - archive: landing-copy-lipsync merged; no operations
+- scan: nodes=16, findings=46, errors=0
+- scan: nodes=16, findings=45, errors=0
+- scan: nodes=16, findings=44, errors=0
+- scan: nodes=16, findings=44, errors=1
+- scan: nodes=16, findings=44, errors=1
+- scan: nodes=16, findings=43, errors=0
+- scan: nodes=16, findings=43, errors=0
+- scan: nodes=16, findings=43, errors=0
+- scan: nodes=16, findings=43, errors=0
