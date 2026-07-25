@@ -1,7 +1,8 @@
 ---
 id: src.feature-shading-lab-sessions
-file: ./meta/sources/src.feature-shading-lab-sessions.md
-verification: unverified
+file: demo/feature-shading-lab.html
+verification: verified
+sha256: 81b446762d0e944555ab0f0ea239e4b0b63e90d79d666c3c1e35806185633a05
 type: interactive lab sessions + empirical asset probes
 date: 2026-07-21
 ---
