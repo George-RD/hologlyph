@@ -134,3 +134,5 @@
 - scan: nodes=16, findings=2, errors=0
 - scan: nodes=16, findings=0, errors=0
 - scan: nodes=16, findings=0, errors=0
+- scan: nodes=16, findings=2, errors=0
+- scan: nodes=16, findings=2, errors=0
