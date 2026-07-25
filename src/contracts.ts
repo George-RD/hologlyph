@@ -343,10 +343,10 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
       jaw: 0.21,
       orbit: 0.15,
       brow: 0,
-      socketMask: 1,
+      socketMask: 0,
     }),
     shading: Object.freeze({
-      socketShadow: 0.64,
+      socketShadow: 0,
       socketSize: 1,
       cavity: 0.45,
       lipDark: 0.5,

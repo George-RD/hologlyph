@@ -350,6 +350,7 @@ gltf.scene.traverse((o) => {
     // Keep its authored dark cavity material (KEEP_MATERIALS pattern; this
     // mesh carries gums and tongue), but drive all canonical expression,
     // viseme, and tongue corrective morphs with the rest of the bust.
+    o.renderOrder = 1;
     if (o.morphTargetInfluences) morphMeshes.push(o);
     return;
   }
@@ -362,6 +363,7 @@ gltf.scene.traverse((o) => {
     mat.depthTest = true;
     mat.depthWrite = true;
     o.material = mat;
+    o.renderOrder = 1;
     trimMeshes.push(o);
     return;
   }
@@ -372,16 +374,50 @@ gltf.scene.traverse((o) => {
   }
   const lab = mn === 'eye_sclera' ? eyeballMat : headMat;
   originals.set(o, { orig: o.material, lab });
-  o.renderOrder = mn === 'eye_sclera' ? 0 : 1;
+  o.renderOrder = mn === 'eye_sclera' ? 1 : 2;
   o.material = lab;
+  if (mn === 'eye_sclera') {
+    eyeballMat.transparent = true;
+    eyeballMat.side = THREE.FrontSide;
+    eyeballMat.depthTest = true;
+    eyeballMat.depthWrite = true;
+  }
   if (lab === headMat && o.morphTargetInfluences) morphMeshes.push(o);
 });
+
+let primaryMesh = null;
+gltf.scene.traverse((o) => {
+  if (o.isMesh && o.morphTargetInfluences && !primaryMesh) primaryMesh = o;
+});
+if (primaryMesh) {
+  const occlusionMaskMaterial = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.FrontSide,
+  });
+  let maskMesh;
+  if (primaryMesh.isSkinnedMesh) {
+    maskMesh = new THREE.SkinnedMesh(primaryMesh.geometry, occlusionMaskMaterial);
+    if (primaryMesh.skeleton) {
+      maskMesh.bindMode = primaryMesh.bindMode;
+      maskMesh.bind(primaryMesh.skeleton, primaryMesh.bindMatrix);
+    }
+  } else {
+    maskMesh = new THREE.Mesh(primaryMesh.geometry, occlusionMaskMaterial);
+  }
+  maskMesh.position.copy(primaryMesh.position);
+  maskMesh.rotation.copy(primaryMesh.rotation);
+  maskMesh.scale.copy(primaryMesh.scale);
+  maskMesh.morphTargetDictionary = primaryMesh.morphTargetDictionary;
+  maskMesh.morphTargetInfluences = primaryMesh.morphTargetInfluences;
+  maskMesh.renderOrder = 0;
+  const maskParent = primaryMesh.parent ?? gltf.scene;
+  maskParent.add(maskMesh);
+}
+
 const restHead = bones.head ? bones.head.rotation.clone() : null;
 scene.add(gltf.scene);
-
-// (The eye occlusion membrane and lash cards are gone from the asset itself
-// - dropped in build-bust.ts, PR #44 - so no runtime aperture mask is needed.)
-
 // ---- state / controls ----
 const state = {
   scrollSpeed: skin.scrollSpeed, yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0,

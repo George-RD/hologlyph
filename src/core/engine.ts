@@ -13,7 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
-import { FrontSide } from 'three';
+import { FrontSide, Mesh, MeshBasicMaterial, SkinnedMesh } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -52,9 +52,15 @@ import { createPlaceholderAvatar } from './placeholder-avatar.js';
 // including any teeth-named or unnamed placeholder material.
 const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior', 'eye_trim']);
 function isEyeMesh(mesh: THREE.Mesh): boolean {
+  if (mesh.parent?.name === 'eyes' || mesh.name.startsWith('eyes_') || mesh.name.startsWith('eye_')) {
+    return true;
+  }
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   return materials.some(
-    (material) => material?.name === "eye_sclera" || material?.name === "eye_iris",
+    (material) =>
+      material?.name === 'eye_sclera' ||
+      material?.name === 'eye_iris' ||
+      (material as unknown as Record<string, unknown>)?.isEyeball === true,
   );
 }
 
@@ -135,6 +141,7 @@ class EngineImpl implements Engine {
 
   private avatar: LoadedAvatar | null = null;
   private skinMaterial: THREE.Material | null = null;
+  private occlusionMaskMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
   private readonly displacedMaterials = new Set<THREE.Material>();
   private mountGeneration = 0;
   private mountSerial: Promise<void> = Promise.resolve();
@@ -309,6 +316,14 @@ class EngineImpl implements Engine {
     this.sysSpeech.dispose();
     this.sysTextSkin.dispose();
     this.eyeTextSkin.dispose();
+    if (this.occlusionMaskMesh) {
+      this.occlusionMaskMesh.removeFromParent();
+      const mats = Array.isArray(this.occlusionMaskMesh.material)
+        ? this.occlusionMaskMesh.material
+        : [this.occlusionMaskMesh.material];
+      for (const m of mats) m?.dispose();
+      this.occlusionMaskMesh = null;
+    }
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -400,6 +415,14 @@ class EngineImpl implements Engine {
   }
 
   private replaceAvatar(candidateAvatar: LoadedAvatar): void {
+    if (this.occlusionMaskMesh) {
+      this.occlusionMaskMesh.removeFromParent();
+      const mats = Array.isArray(this.occlusionMaskMesh.material)
+        ? this.occlusionMaskMesh.material
+        : [this.occlusionMaskMesh.material];
+      for (const m of mats) m?.dispose();
+      this.occlusionMaskMesh = null;
+    }
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -411,20 +434,6 @@ class EngineImpl implements Engine {
     this.sysRenderer.scene.add(this.avatar.root);
     this.sysMotion.attach(this.avatar);
 
-    // Place the translucent shell in front of transparent eye materials.
-    for (const mesh of this.avatar.morphMeshes) mesh.renderOrder = 1;
-    this.avatar.root.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh || !isEyeMesh(mesh)) return;
-      mesh.renderOrder = 2;
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of materials) {
-        material.transparent = true;
-        material.side = FrontSide;
-        material.depthTest = true;
-        material.depthWrite = true;
-      }
-    });
     let eyeFrame = { cx: 0.688, cy: 0.003, cz: 0 };
     this.avatar.root.traverse((o) => {
       const mesh = o as THREE.Mesh;
@@ -472,6 +481,11 @@ class EngineImpl implements Engine {
           this.displacedMaterials.add(original);
         }
         mesh.material = mat;
+        mesh.renderOrder = 1;
+        mat.transparent = true;
+        mat.side = FrontSide;
+        mat.depthTest = true;
+        mat.depthWrite = true;
         continue;
       }
       if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
@@ -489,6 +503,64 @@ class EngineImpl implements Engine {
         mesh.material = this.skinMaterial;
       }
     }
+
+    // Full-head occlusion depth mask (renderOrder = 0). Writes outer surface depth
+    // with colorWrite = false to cull internal geometry (eyeballs, mouth cavity)
+    // before rendering translucent skin or eye textures.
+    const primaryMesh = this.avatar.morphMeshes[0];
+    if (primaryMesh) {
+      const occlusionMaskMaterial = new MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: true,
+        depthTest: true,
+        side: FrontSide,
+      });
+      let maskMesh: THREE.Mesh | THREE.SkinnedMesh;
+      if ('isSkinnedMesh' in primaryMesh && (primaryMesh as THREE.SkinnedMesh).isSkinnedMesh) {
+        const skinned = primaryMesh as THREE.SkinnedMesh;
+        const skinnedMask = new SkinnedMesh(skinned.geometry, occlusionMaskMaterial);
+        if (skinned.skeleton) {
+          skinnedMask.bindMode = skinned.bindMode;
+          skinnedMask.bind(skinned.skeleton, skinned.bindMatrix);
+        }
+        maskMesh = skinnedMask;
+      } else {
+        maskMesh = new Mesh(primaryMesh.geometry, occlusionMaskMaterial);
+      }
+      maskMesh.position.copy(primaryMesh.position);
+      maskMesh.rotation.copy(primaryMesh.rotation);
+      maskMesh.scale.copy(primaryMesh.scale);
+      maskMesh.morphTargetDictionary = primaryMesh.morphTargetDictionary;
+      maskMesh.morphTargetInfluences = primaryMesh.morphTargetInfluences;
+      maskMesh.renderOrder = 0;
+      this.occlusionMaskMesh = maskMesh;
+      const maskParent = primaryMesh.parent ?? this.avatar.root;
+      maskParent.add(maskMesh);
+    }
+
+    // Set render orders:
+    // Layer 0: occlusionMaskMesh (renderOrder = 0)
+    // Layer 1: internal geometry (eyeballs, mouth interior, eye trim) (renderOrder = 1)
+    // Layer 2: translucent face skin (renderOrder = 2)
+    this.avatar.root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || mesh === this.occlusionMaskMesh) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const isInternal =
+        isEyeMesh(mesh) ||
+        materials.some((m) => m?.name === 'mouth_interior' || m?.name === 'eye_trim');
+      if (isInternal) {
+        mesh.renderOrder = 1;
+        for (const mat of materials) {
+          if (mat) {
+            mat.depthTest = true;
+            mat.depthWrite = true;
+          }
+        }
+      } else {
+        mesh.renderOrder = 2;
+      }
+    });
   }
 
   private applyMotionAndObservation(host: Element): void {

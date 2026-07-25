@@ -238,10 +238,10 @@ describe('owner-approved head configuration', () => {
       skin: {
         opacity: {
           base: 0.075, lips: 0.32, nose: 0.38, jaw: 0.21, orbit: 0.15, brow: 0,
-          socketMask: 1,
+          socketMask: 0,
         },
         shading: {
-          socketShadow: 0.64, socketSize: 1, cavity: 0.45, lipDark: 0.5,
+          socketShadow: 0, socketSize: 1, cavity: 0.45, lipDark: 0.5,
           lipHue: 0.6, lipGate: 1.4, eyelid: 0.5, brow: 0.3, browGate: 2.2,
         },
         glyph: {

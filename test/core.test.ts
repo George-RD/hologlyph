@@ -1020,3 +1020,40 @@ describe('displaced materials', () => {
     expect(texture.dispose).toHaveBeenCalledTimes(1);
   });
 });
+describe('occlusion depth mask', () => {
+  it('creates an occlusion depth mask at renderOrder = 0 on avatar replace', async () => {
+    const primaryMesh = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    const eyeMesh = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'eye_sclera' } as THREE.Material);
+    const group = new THREE.Group();
+    group.add(primaryMesh, eyeMesh);
+
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [primaryMesh],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const mask = group.children.find((child) => child !== primaryMesh && child !== eyeMesh) as THREE.Mesh;
+    expect(mask).toBeDefined();
+    expect(mask.renderOrder).toBe(0);
+
+    const maskMat = mask.material as THREE.MeshBasicMaterial;
+    expect(maskMat.colorWrite).toBe(false);
+    expect(maskMat.depthWrite).toBe(true);
+    expect(maskMat.depthTest).toBe(true);
+
+    expect(eyeMesh.renderOrder).toBe(1);
+    expect(primaryMesh.renderOrder).toBe(2);
+
+    engine.dispose();
+  });
+});

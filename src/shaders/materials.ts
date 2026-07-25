@@ -431,10 +431,11 @@ export function buildEyeballMaterial(
   config: HeadConfig = DEFAULT_HEAD_CONFIG,
 ): BuiltEyeballMaterial {
   const material = new MeshBasicNodeMaterial();
+  material.name = 'eye_sclera';
+  (material as unknown as Record<string, unknown>).isEyeball = true;
   material.transparent = false;
   material.depthTest = true;
   material.depthWrite = true;
-
   prepTexture(eyeSkin.texture);
 
   const uScroll = uniform(0);
