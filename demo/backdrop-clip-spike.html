@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>spike: backdrop-filter clipped to a live silhouette</title>
+    <style>
+      /*
+        Lab spike (not library code). Two questions:
+        1. Does clip-path actually clip the backdrop-filter region, or do we get
+           a rectangular blur? (WebKit 142662, Firefox 1579957 history.)
+        2. What does rewriting the clip-path polygon every frame cost, given
+           backdrop-filter re-rasterises its captured backdrop on invalidation?
+      */
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 16px/1.5 system-ui, sans-serif;
+        color: #10202f;
+        background: #fff;
+      }
+      .page {
+        padding: 2rem;
+        display: grid;
+        gap: 1.5rem;
+      }
+      .band {
+        padding: 2rem;
+        border-radius: 1rem;
+        background: linear-gradient(115deg, #ff7a59, #6cc6ff 45%, #b39bff);
+        color: #06121d;
+      }
+      .band h2 { margin: 0 0 0.5rem; }
+      .tiny { font-size: 12px; letter-spacing: 0.02em; }
+      .rows { columns: 3; column-gap: 1.5rem; }
+      .rows p { break-inside: avoid; margin: 0 0 0.75rem; }
+
+      #glass {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 420px;
+        height: 520px;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        backdrop-filter: blur(12px) saturate(1.25);
+        -webkit-backdrop-filter: blur(12px) saturate(1.25);
+        background: rgba(255, 255, 255, 0.06);
+        z-index: 5;
+      }
+      #hud {
+        position: fixed;
+        left: 1rem;
+        top: 1rem;
+        z-index: 10;
+        background: #0b1622;
+        color: #d8e6ff;
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        font: 13px/1.45 ui-monospace, monospace;
+        white-space: pre;
+      }
+      #hud button {
+        font: inherit;
+        margin-top: 0.5rem;
+        padding: 0.35rem 0.7rem;
+        border-radius: 0.35rem;
+        border: 1px solid #6cc6ff;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">spike ready<button id="run">run benchmark</button></div>
+    <div id="glass"></div>
+    <div class="page" id="page"></div>
+
+    <script type="module">
+      // Busy page content so the blur has real work to capture.
+      const page = document.getElementById('page');
+      const words =
+        'refraction silhouette meniscus surface tension viscosity emergence caustic parallax glyph lattice'.split(
+          ' ',
+        );
+      for (let i = 0; i < 12; i += 1) {
+        const band = document.createElement('section');
+        band.className = 'band';
+        band.innerHTML =
+          `<h2>section ${i + 1}</h2><div class="rows">` +
+          Array.from(
+            { length: 9 },
+            (_, j) =>
+              `<p class="tiny">${Array.from({ length: 18 }, () => words[(i + j) % words.length]).join(' ')}</p>`,
+          ).join('') +
+          '</div>';
+        page.append(band);
+      }
+
+      const glass = document.getElementById('glass');
+      const hud = document.getElementById('hud');
+      const POINTS = 60;
+
+      /** Head-ish blob outline: an egg with a jaw taper, wobbling per frame. */
+      function polygon(t, wobble) {
+        const pts = [];
+        for (let i = 0; i < POINTS; i += 1) {
+          const a = (i / POINTS) * Math.PI * 2;
+          const egg = 1 - 0.18 * Math.cos(a) - 0.12 * Math.cos(2 * a);
+          const ripple = wobble ? 0.035 * Math.sin(6 * a + t * 3) : 0;
+          const r = 0.42 * (egg + ripple);
+          pts.push(`${(50 + Math.cos(a) * r * 100).toFixed(2)}% ${(50 + Math.sin(a) * r * 100).toFixed(2)}%`);
+        }
+        return `polygon(${pts.join(',')})`;
+      }
+
+      /** Mean and 95th-percentile frame interval over `frames` rAF ticks. */
+      function measure(frames, onFrame) {
+        return new Promise((resolve) => {
+          const samples = [];
+          let last = performance.now();
+          let n = 0;
+          const tick = (now) => {
+            samples.push(now - last);
+            last = now;
+            onFrame(now / 1000);
+            n += 1;
+            if (n < frames) requestAnimationFrame(tick);
+            else {
+              samples.sort((a, b) => a - b);
+              const mean = samples.reduce((s, v) => s + v, 0) / samples.length;
+              resolve({
+                mean: +mean.toFixed(2),
+                p95: +samples[Math.floor(samples.length * 0.95)].toFixed(2),
+                long: samples.filter((v) => v > 20).length,
+              });
+            }
+          };
+          requestAnimationFrame(tick);
+        });
+      }
+
+      async function run() {
+        const results = {};
+
+        // Baseline: no backdrop-filter at all.
+        glass.style.backdropFilter = 'none';
+        glass.style.webkitBackdropFilter = 'none';
+        glass.style.clipPath = 'none';
+        results.noFilter = await measure(180, () => {});
+
+        // Backdrop-filter, rectangular, untouched per frame.
+        glass.style.backdropFilter = 'blur(12px) saturate(1.25)';
+        glass.style.webkitBackdropFilter = 'blur(12px) saturate(1.25)';
+        results.filterRect = await measure(180, () => {});
+
+        // Backdrop-filter clipped to a static blob.
+        glass.style.clipPath = polygon(0, false);
+        results.filterStaticClip = await measure(180, () => {});
+
+        // Backdrop-filter with the polygon rewritten every frame.
+        results.filterAnimatedClip = await measure(180, (t) => {
+          glass.style.clipPath = polygon(t, true);
+        });
+
+        // Same, while the page scrolls under it.
+        let y = 0;
+        results.filterAnimatedClipScrolling = await measure(180, (t) => {
+          glass.style.clipPath = polygon(t, true);
+          y = (y + 6) % (document.body.scrollHeight - innerHeight);
+          scrollTo(0, y);
+        });
+
+        window.__spikeResults = results;
+        hud.textContent = Object.entries(results)
+          .map(([k, v]) => `${k.padEnd(28)} mean ${String(v.mean).padStart(6)}ms  p95 ${String(v.p95).padStart(6)}ms  >20ms ${v.long}`)
+          .join('\n');
+        return results;
+      }
+
+      document.getElementById('run').addEventListener('click', run);
+      window.__runSpike = run;
+      glass.style.clipPath = polygon(0, false);
+    </script>
+  </body>
+</html>
