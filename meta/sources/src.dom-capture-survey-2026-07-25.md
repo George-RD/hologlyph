@@ -53,3 +53,33 @@ An earlier vsync-locked Chrome run reported 8.33 ms for every mode including the
 no-filter baseline, which establishes only that the effect fits inside a frame.
 In the uncapped run a static clip path generates no damage and stays throttled,
 so only the animated rows carry information.
+
+## HTML-in-Canvas measurements
+
+Sources: WICG/html-in-canvas README, https://html-in-canvas.dev/docs/browser-support/,
+https://developer.chrome.com/blog/html-in-canvas-origin-trial (origin trial
+Chrome 148 to 150, flag `chrome://flags/#canvas-draw-element`, no Firefox or
+WebKit implementation announced).
+
+Run against Google Chrome 150.0.7871.129 with
+`--enable-blink-features=CanvasDrawElement`, page `demo/html-in-canvas-spike.html`,
+driver `tools/smoke/html-in-canvas-spike.mjs`.
+
+| Probe | Result |
+| --- | --- |
+| Live DOM into a WebGL2 texture per frame | works, 480 frames at 8.33 ms mean, 9.3 ms p95, vsync-bound |
+| Draw an ancestor (`document.body`) | `InvalidStateError: Only immediate children of the <canvas> element can be ...` |
+| Draw an element outside any canvas subtree | same `InvalidStateError` |
+| Same-origin control region | differing 424/9216, mean rgba 57,172,255,255, canvas readable |
+| Cross-origin `img` (loaded successfully) | differing 0/2304, mean rgba 51,170,255,255: silently omitted |
+| Cross-origin `iframe` | differing 6400/6400, mean rgba 255,255,255,255: blank box |
+| Click at the refracted position | hits the container, `activeElement` stays `BODY` |
+| Focus programmatically then type | works, value becomes `ZZrefraction` |
+
+API shape as built: `texElementImage2D` has arity 3,
+`(target, internalformat, element)`, internalformat must be sized. The
+six-argument form in the Chrome blog throws
+`TypeError: The provided value is not of type '(Element or ElementImage)'`.
+`HTMLCanvasElement` exposes `onpaint`, `requestPaint`, `captureElementImage`,
+`getElementTransform`. Drawing an element with no paint record throws
+`InvalidStateError: No cached paint record for element`.

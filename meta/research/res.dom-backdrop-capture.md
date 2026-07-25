@@ -88,3 +88,54 @@ CSS glass follows whatever shape the simulation takes, including a blob
 squeezing around page elements. The outline must come from an offline-baked
 low-poly hull projected through the head pose on the CPU. Reading canvas alpha
 back per frame to derive it would stall the GPU harder than the effect costs.
+
+## HTML-in-Canvas (`drawElementImage` / `texElementImage2D`), measured 2026-07-25
+
+Chromium's HTML-in-Canvas API is the one candidate that puts live DOM into a GPU
+texture with no prompt. It is present in the installed Google Chrome 150 behind
+`--enable-blink-features=CanvasDrawElement` (also `chrome://flags/#canvas-draw-element`,
+origin trial Chrome 148 to 150). Measured with `demo/html-in-canvas-spike.html`
+and `tools/smoke/html-in-canvas-spike.mjs`.
+
+What works, verified:
+
+- Live DOM uploads straight into a WebGL2 texture every frame and refracts
+  correctly through a lens shader with chromatic aberration. A CSS-animated
+  spinner, a per-frame text ticker, and a real `input` value all appear in the
+  refracted output. 480 frames at 8.33 ms, vsync-bound at 120 Hz.
+- Same-origin content does not taint: `getImageData` after `drawElementImage`
+  returns pixels. Control region reads mean rgba 57,172,255 against a `#33aaff`
+  background, with the text as the differing pixels.
+
+What does not, verified:
+
+- **It cannot draw the page behind the canvas.** Only immediate children of the
+  canvas being drawn into are permitted. Passing `document.body` (an ancestor)
+  or any element outside the canvas subtree throws
+  `InvalidStateError: Only immediate children of the <canvas> element can be ...`.
+  So this is not backdrop capture: it is "move the content inside our canvas".
+- **Cross-origin images are silently omitted.** A cross-origin `img` that loaded
+  successfully contributed 0 of 2304 differing pixels; the region read as pure
+  background. No error is raised.
+- **Cross-origin iframes paint blank.** The region read 6400 of 6400 pixels at
+  mean rgba 255,255,255: the frame box, no content.
+- **Hit-testing follows the layout box, not the drawn pixels.** Clicking where
+  the refracted input appears hit the container and left `document.activeElement`
+  on `BODY`; the input only focuses at its undistorted layout rect, after which
+  typing works normally. `getElementTransform` returns a `DOMMatrix`, so it can
+  reconcile affine placement only. A lens or fluid distortion is not affine and
+  therefore cannot be reconciled at all.
+
+API note: the published blog example is wrong for this build. The real signature
+has arity 3, `texElementImage2D(target, internalformat, element)`, and
+internalformat must be sized (`RGBA8`, `SRGB8_ALPHA8`); the six-argument
+`texImage2D` shape throws a `TypeError`. Canvas also exposes `requestPaint()`,
+`onpaint`, `captureElementImage()` and `getElementTransform()`. An element with
+no paint record yet throws `InvalidStateError: No cached paint record`.
+
+`THREE.HTMLTexture` (three PR 31233) is not present in the pinned three 0.178;
+only the older `examples/jsm/interactive/HTMLMesh.js` exists.
+
+Consequence: HTML-in-Canvas does not unlock the drop-in case at all. It unlocks
+the owned-page case while keeping real DOM semantics, on Chromium only, with
+cross-origin content silently missing and distorted regions not clickable.
