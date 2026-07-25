@@ -1,9 +1,10 @@
 ---
-id: src.owner-approved-look-2026-07-21
-file: ./meta/sources/src.owner-approved-look-2026-07-21.md
-verification: unverified
-type: owner session config export
 date: 2026-07-21
+file: demo/feature-shading-lab.html
+id: src.owner-approved-look-2026-07-21
+sha256: 81b446762d0e944555ab0f0ea239e4b0b63e90d79d666c3c1e35806185633a05
+type: owner session config export
+verification: verified
 ---
 
 # Owner-approved text-skin look (feature-shading lab, 2026-07-21)

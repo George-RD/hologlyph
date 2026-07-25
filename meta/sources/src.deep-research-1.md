@@ -1,7 +1,8 @@
 ---
 id: src.deep-research-1
 file: ./deep-research-report-1.md
-verification: unverified
+verification: verified
+sha256: 23079159ef20ba0b325b9c7ab0227fa1bf5f3c97bab77633dbbc45172f2984b7
 type: deep-research synthesis (AI-generated)
 date: 2026-07-08
 ---
