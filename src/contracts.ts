@@ -300,11 +300,49 @@ export interface SkinToneConfig {
   readonly glowGain: number;
 }
 
+/**
+ * View-dependent glass response. All terms are backdrop-independent: they
+ * describe how the surface behaves as a refractive shell, not how it reacts to
+ * the page behind it (see `SkinBackdropConfig` for that).
+ */
+export interface SkinGlassConfig {
+  /** Master mix of every glass term; 0 restores the flat translucent skin. */
+  readonly amount: number;
+  /** Opacity added at grazing angles so the silhouette thickens like glass. */
+  readonly fresnel: number;
+  /** Fresnel falloff exponent; higher keeps the effect nearer the silhouette. */
+  readonly fresnelPower: number;
+  /** Key-light specular intensity. */
+  readonly specular: number;
+  /** Specular lobe tightness. */
+  readonly sheen: number;
+  /** Grazing-angle displacement of the sampled glyph coordinates, world units. */
+  readonly refraction: number;
+  /** Hex body tint of the glass, used for the specular highlight. */
+  readonly tint: string;
+}
+
+/**
+ * Host page background awareness (dec.glass-backdrop-adaptive). The canvas is
+ * transparent, so the page shows through the head; these values tell the skin
+ * what it is sitting on so glyphs stay legible on any backdrop.
+ */
+export interface SkinBackdropConfig {
+  /** Effective host page background as a `#rrggbb` hex colour. */
+  readonly color: string;
+  /** Adaptation strength; 0 pins the dark-page look on every backdrop. */
+  readonly adapt: number;
+  /** Sample the host element's computed background colour on mount. */
+  readonly auto: boolean;
+}
+
 export interface HeadSkinConfig {
   readonly opacity: SkinOpacityConfig;
   readonly shading: SkinShadingConfig;
   readonly glyph: SkinGlyphConfig;
   readonly tone: SkinToneConfig;
+  readonly glass: SkinGlassConfig;
+  readonly backdrop: SkinBackdropConfig;
 }
 
 export interface HeadEyeConfig {
@@ -330,6 +368,8 @@ export type HeadConfigOverrides = {
     shading?: Partial<SkinShadingConfig>;
     glyph?: Partial<SkinGlyphConfig>;
     tone?: Partial<SkinToneConfig>;
+    glass?: Partial<SkinGlassConfig>;
+    backdrop?: Partial<SkinBackdropConfig>;
   };
   eyes?: Partial<HeadEyeConfig>;
 };
@@ -368,6 +408,20 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
       skinWarmth: 0,
       rim: 0.065,
       glowGain: 0.55,
+    }),
+    glass: Object.freeze({
+      amount: 1,
+      fresnel: 0.65,
+      fresnelPower: 2.6,
+      specular: 0.55,
+      sheen: 40,
+      refraction: 0.03,
+      tint: '#bfe6ff',
+    }),
+    backdrop: Object.freeze({
+      color: '#05070d',
+      adapt: 1,
+      auto: true,
     }),
   }),
   eyes: Object.freeze({

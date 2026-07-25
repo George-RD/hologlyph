@@ -23,6 +23,7 @@ import {
   U_SCALE,
   V_SCALE,
 } from '../src/shaders/materials';
+import { adaptToBackdrop } from '../src/shaders/glass';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type { TextSkinEngine } from '../src/contracts';
 
@@ -250,6 +251,11 @@ describe('owner-approved head configuration', () => {
         tone: {
           balance: 0.21, amount: 0.65, skinWarmth: 0, rim: 0.065, glowGain: 0.55,
         },
+        glass: {
+          amount: 1, fresnel: 0.65, fresnelPower: 2.6, specular: 0.55,
+          sheen: 40, refraction: 0.03, tint: '#bfe6ff',
+        },
+        backdrop: { color: '#05070d', adapt: 1, auto: true },
       },
       eyes: {
         density: 300, scleraGlow: 0.51, irisGlow: 2.35, presence: 0.74,
@@ -263,6 +269,8 @@ describe('owner-approved head configuration', () => {
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glass)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.backdrop)).toBe(true);
   });
 
   it('deep-merges partial overrides, clamps values, and rejects malformed colours', () => {
@@ -333,5 +341,46 @@ describe('buildSkinMaterial (no GPU objects)', () => {
     buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
     expect(skin.texture.wrapS).toBe(THREE.RepeatWrapping);
     expect(skin.texture.wrapT).toBe(THREE.RepeatWrapping);
+  });
+
+  it('seeds the glass uniforms and the backdrop adaptation from the config', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+    expect(uniforms.fresnel.value).toBe(DEFAULT_HEAD_CONFIG.skin.glass.fresnel);
+    expect(uniforms.refraction.value).toBe(DEFAULT_HEAD_CONFIG.skin.glass.refraction);
+    expect(uniforms.sheen.value).toBe(DEFAULT_HEAD_CONFIG.skin.glass.sheen);
+    // The default backdrop is the dark page the look was approved on, so the
+    // adaptation is the identity: full glow, no ink, no opacity floor.
+    expect(uniforms.inkMix.value).toBe(0);
+    expect(uniforms.glowScale.value).toBeGreaterThan(0.99);
+    expect(uniforms.opacityFloor.value).toBeLessThan(0.01);
+  });
+
+  it('writes the adaptation into the live material when the backdrop turns light', () => {
+    const vfx = createVFXEngine();
+    const skin = { texture: new THREE.CanvasTexture(), scrollOffset: 0 } as unknown as TextSkinEngine;
+    const material = vfx.createSkinMaterial(skin);
+    const setRGB = vi.spyOn(THREE.Color.prototype, 'setRGB');
+
+    vfx.setHeadConfig({ skin: { backdrop: { color: '#ffffff' } } });
+
+    const adaptation = adaptToBackdrop('#ffffff', 1);
+    expect(vfx.headConfig.skin.backdrop.color).toBe('#ffffff');
+    // The ink and rim colours are pushed into the existing uniforms rather
+    // than rebuilding the material.
+    expect(setRGB).toHaveBeenCalledWith(...adaptation.inkColor);
+    expect(setRGB).toHaveBeenCalledWith(...adaptation.rimColor);
+    setRGB.mockRestore();
+    material.dispose();
+    vfx.dispose();
+  });
+
+  it('keeps the dark-page look when adaptation is switched off', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const config = normaliseHeadConfig({ skin: { backdrop: { color: '#ffffff', adapt: 0 } } });
+    const { uniforms } = buildSkinMaterial(skin, config);
+    expect(uniforms.inkMix.value).toBe(0);
+    expect(uniforms.glowScale.value).toBe(1);
+    expect(uniforms.opacityFloor.value).toBe(0);
   });
 });

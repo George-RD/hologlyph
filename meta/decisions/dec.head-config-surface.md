@@ -10,6 +10,6 @@ informed_by: [src.owner-approved-look-2026-07-21, res.feature-shading-exploratio
 
 The owner-approved feature-shading values become one immutable library default exposed through a typed `HeadConfig`. Callers may provide partial overrides through `EngineOptions`, and the VFX engine updates existing uniforms in place rather than rebuilding materials.
 
-`HeadConfig` contains visual shader and eye controls only. Text scroll speed remains owned by `TextSkinEngine`, expression remains owned by `MotionEngine`, and experimental background, opaque-core, day/night, and caruncle-size controls remain demo-only until separately approved.
+`HeadConfig` contains visual shader and eye controls only. Text scroll speed remains owned by `TextSkinEngine`, expression remains owned by `MotionEngine`, and experimental background, opaque-core, day/night, and caruncle-size controls remain demo-only until separately approved. Background controls were separately approved on 2026-07-25 and now live in `HeadConfig.skin.backdrop` (see `dec.glass-backdrop-adaptive`); opaque-core and caruncle-size stay demo-only.
 
 Feature masks are derived once in `buildLoadedAvatar`. Missing attributes or morphs degrade to zero-weight zones rather than rejecting the avatar.

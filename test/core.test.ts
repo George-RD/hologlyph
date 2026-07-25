@@ -343,6 +343,8 @@ vi.mock('../src/shaders', () => ({
             shading: { ...this._headConfig.skin.shading, ...config.skin?.shading },
             glyph: { ...this._headConfig.skin.glyph, ...config.skin?.glyph },
             tone: { ...this._headConfig.skin.tone, ...config.skin?.tone },
+            glass: { ...this._headConfig.skin.glass, ...config.skin?.glass },
+            backdrop: { ...this._headConfig.skin.backdrop, ...config.skin?.backdrop },
           },
           eyes: { ...this._headConfig.eyes, ...config.eyes },
         };

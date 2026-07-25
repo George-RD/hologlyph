@@ -24,6 +24,7 @@ import {
   type HeadUniforms,
   type ScrollUniform,
 } from './materials';
+import { adaptToBackdrop } from './glass';
 import {
   BUST_HEIGHT,
   RAMP_TAU,
@@ -58,6 +59,13 @@ export type {
   HeadUniforms,
   ScrollUniform,
 } from './materials';
+export {
+  adaptToBackdrop,
+  backdropLuminance,
+  parseHexColor,
+  srgbToLinear,
+} from './glass';
+export type { BackdropAdaptation } from './glass';
 export {
   easeEmergence,
   computeRootOffsetY,
@@ -126,6 +134,21 @@ export function createVFXEngine(): VFXEngine {
       u.skinWarm.value = config.skin.tone.skinWarmth;
       u.rim.value = config.skin.tone.rim;
       u.glowGain.value = config.skin.tone.glowGain;
+
+      u.glassAmount.value = config.skin.glass.amount;
+      u.fresnel.value = config.skin.glass.fresnel;
+      u.fresnelPow.value = config.skin.glass.fresnelPower;
+      u.specular.value = config.skin.glass.specular;
+      u.sheen.value = config.skin.glass.sheen;
+      u.refraction.value = config.skin.glass.refraction;
+      u.glassTint.value.set(config.skin.glass.tint);
+
+      const adaptation = adaptToBackdrop(config.skin.backdrop.color, config.skin.backdrop.adapt);
+      u.inkMix.value = adaptation.inkMix;
+      u.inkColor.value.setRGB(...adaptation.inkColor);
+      u.glowScale.value = adaptation.glowScale;
+      u.opacityFloor.value = adaptation.opacityFloor;
+      u.rimColor.value.setRGB(...adaptation.rimColor);
     }
 
     for (const binding of eyeBindings) {

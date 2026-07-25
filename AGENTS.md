@@ -140,7 +140,7 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 - `src/contracts.ts` - the contract spine (see Architecture).
 - `src/core/engine.ts` - composition root and frame loop.
 - `src/core/default-avatar.ts` - resolves the bundled bust GLB; Vite lib mode
-  inlines it as a lazy data-URL chunk so the main bundle stays ~11 kB gzip.
+  inlines it as a lazy data-URL chunk so the main bundle stays ~20 kB gzip.
 - `cairn.blueprint` / `cairn.config.yaml` - architecture and gate config.
 - `vite.config.ts` (library, four entries, `three` externalised),
   `demo/vite.config.ts` (demo app), `vitest.config.ts` (happy-dom).

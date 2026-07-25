@@ -45,6 +45,7 @@ import { createTextSkinEngine } from '../text-skin';
 import { createVFXEngine, buildEyeballMaterial } from '../shaders';
 import { createEmitter } from './emitter.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
+import { resolveBackdropColor } from './backdrop.js';
  
 // Materials the engine must not replace with the text skin. The mouth cavity
 // and the eye trim (caruncle-corner blend shell + lacrimal fluid) keep their
@@ -404,6 +405,7 @@ class EngineImpl implements Engine {
 
       this.replaceAvatar(candidateAvatar);
       this.applyMotionAndObservation(host);
+      this.applyHostBackdrop(host);
 
       // Start or suspend the loop from tab visibility and behaviour state.
       this.syncLoop();
@@ -580,6 +582,19 @@ class EngineImpl implements Engine {
       this.observed = true;
       document.addEventListener('visibilitychange', this.onVisibility);
     }
+  }
+
+  /**
+   * Feed the host page's own background colour into the skin so the glass
+   * stays legible on it (dec.glass-backdrop-adaptive). Explicitly configuring
+   * `skin.backdrop.auto = false` keeps whatever colour the caller supplied.
+   */
+  private applyHostBackdrop(host: Element): void {
+    const backdrop = this.sysVfx.headConfig.skin.backdrop;
+    if (!backdrop.auto) return;
+    const color = resolveBackdropColor(host, backdrop.color);
+    if (color === backdrop.color) return;
+    this.sysVfx.setHeadConfig({ skin: { backdrop: { color } } });
   }
 
   private disposeDisplacedMaterials(): void {

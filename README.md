@@ -2,7 +2,17 @@
 
 A web-native, text-skinned talking head for interactive pages.
 
-Three.js is externalised from the hologlyph bundles and should be provided by the consuming app as a peer dependency. By default, `createEngine()` (or the `<hologlyph-head>` element with no `src`) loads a packaged realistic head bust lazy-loaded as a ~720 kB gzip chunk; the main bundle stays at ~10.8 kB gzip. The bust is built from ICT-FaceKit (USC-ICT, MIT) -- the licence survives sublicensing of the derived binary. Pass `avatarUrl` to override with your own GLB. Set `avatarUrl: ''` to force the lightweight procedural placeholder. Load failures degrade gracefully to the placeholder with a console warning.
+Three.js is externalised from the hologlyph bundles and should be provided by the consuming app as a peer dependency. By default, `createEngine()` (or the `<hologlyph-head>` element with no `src`) loads a packaged realistic head bust lazy-loaded as a ~720 kB gzip chunk; the main bundle stays at ~20 kB gzip. The bust is built from ICT-FaceKit (USC-ICT, MIT) -- the licence survives sublicensing of the derived binary. Pass `avatarUrl` to override with your own GLB. Set `avatarUrl: ''` to force the lightweight procedural placeholder. Load failures degrade gracefully to the placeholder with a console warning.
+
+The canvas is transparent and the head renders as glass, so it sits directly on your page background. On mount the engine samples the first opaque background colour at or above its host element and adapts the skin to it: glyphs glow on dark pages, cross over to dark ink on light ones, and the opacity floor lifts on mid tones. Override the detection when your background is painted somewhere the walk cannot see it, for example a canvas or an image:
+
+```ts
+const engine = createEngine({
+  headConfig: { skin: { backdrop: { color: '#1b3a6b', auto: false } } },
+});
+```
+
+Set `skin.backdrop.adapt` to `0` to pin the dark-page look on every background, and tune the glass itself through `skin.glass` (`fresnel`, `specular`, `refraction`, `tint`).
 
 ## Declarative web component
 
