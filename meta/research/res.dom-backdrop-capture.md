@@ -2,17 +2,7 @@
 id: res.dom-backdrop-capture
 date: 2026-07-25
 nodes: [hologlyph.runtime.shaders, hologlyph.runtime.renderer, hologlyph.runtime.core]
-sources:
-  - https://w3c.github.io/mediacapture-screen-share/#dom-mediadevices-getdisplaymedia
-  - https://developer.mozilla.org/en-US/docs/Web/API/BrowserCaptureMediaStreamTrack/restrictTo
-  - https://bugs.webkit.org/show_bug.cgi?id=245510
-  - https://bugs.webkit.org/show_bug.cgi?id=142662
-  - https://bugzilla.mozilla.org/show_bug.cgi?id=1579957
-  - https://github.com/w3c/csswg-drafts/issues/10568
-  - https://github.com/naughtyduk/liquidGL
-  - https://github.com/zumerlab/snapdom
-  - https://developer.mozilla.org/en-US/docs/Web/CSS/backdrop-filter
-  - https://developer.mozilla.org/en-US/docs/Web/SVG/Element/foreignObject
+sources: [src.dom-capture-survey-2026-07-25]
 ---
 
 # Refracting the host page: what the platform actually allows
