@@ -13,7 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
-import { FrontSide, Matrix4, Mesh, MeshBasicMaterial, NoBlending, SkinnedMesh } from 'three';
+import { FrontSide, Matrix4, Mesh, MeshBasicMaterial, NoBlending, SkinnedMesh, Vector3 } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -50,6 +50,7 @@ import { DEFAULT_GRID } from '../text-skin/grid.js';
 import {
   createVFXEngine,
   buildEyeballMaterial,
+  fluidDrive,
   poolRadialProfile,
   poolRippleDrive,
   poolWaterlineRadius,
@@ -307,6 +308,17 @@ class EngineImpl implements Engine {
   private interiorBody: InteriorBody | null = null;
   /** Reused frame-to-world matrix; recomposed once per frame, never allocated. */
   private readonly interiorFrameMatrix = new Matrix4();
+
+  /**
+   * Tier 3 carrier tracking (dec.liquid-glass-fluidity). The head-carrying
+   * bone's world position last frame, and whether it has one yet. Sampled only
+   * while `fluid.amount` is above 0, so a shipped head recomposes no matrix
+   * and reads no bone.
+   */
+  private readonly fluidCarrierLast = new Vector3();
+  private fluidCarrierSeeded = false;
+  /** Reused carrier velocity, world units per second. Never reallocated. */
+  private readonly fluidCarrierVelocity: [number, number, number] = [0, 0, 0];
 
   /**
    * The bound lens (dec.liquid-glass-architecture, rung 3, items 4 and 5).
@@ -624,6 +636,7 @@ class EngineImpl implements Engine {
     this.poolProfile = null;
     this.disposeInteriorGlyphs();
     this.interiorBody = null;
+    this.fluidCarrierSeeded = false;
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -724,6 +737,10 @@ class EngineImpl implements Engine {
     this.disposeOverlayMeshes();
     this.disposeInteriorGlyphs();
     this.interiorBody = null;
+    // A new body is a new carrier: differencing the next pose against the old
+    // avatar's would hand the fluid solver a teleport
+    // (dec.liquid-glass-fluidity).
+    this.fluidCarrierSeeded = false;
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -1236,9 +1253,9 @@ class EngineImpl implements Engine {
     // fast the body is crossing the plane. Travel is consumed here so a frame
     // that renders nothing cannot bank scroll into a later splash.
     const emergence = this.sysVfx.emergence;
+    const scrollVelocity = dt > 0 ? this.scrollTravel / dt : 0;
+    const emergenceVelocity = dt > 0 ? (emergence - this.lastEmergence) / dt : 0;
     if (this.pool) {
-      const scrollVelocity = dt > 0 ? this.scrollTravel / dt : 0;
-      const emergenceVelocity = dt > 0 ? (emergence - this.lastEmergence) / dt : 0;
       const rootOffsetY = this.sysVfx.rootOffsetY;
       this.pool.update(dt, {
         rootOffsetY,
@@ -1263,6 +1280,58 @@ class EngineImpl implements Engine {
         camera: this.sysRenderer.camera,
         reduced: this.reducedMotion,
       });
+    }
+
+    // Tier 3 fluidity drive (dec.liquid-glass-fluidity). Written at the end of
+    // the frame, after motion, so the carrier velocity is this frame's pose;
+    // `sysVfx.update` consumes it on the next tick, which costs one frame of
+    // latency on an already damped spring and is not visible.
+    //
+    // Everything here is gated on the configured amount rather than on the
+    // behaviour-gained one: at 0 no matrix is recomposed, no bone is read and
+    // the solver is never entered.
+    //
+    // `interiorFrame` is reused rather than widening `MotionEngine` with a
+    // readable pose. What it returns is the bind-to-world frame the interior
+    // glyph field already needs, so its translation column is not literally
+    // the head bone's world position; it is a world-space point that tracks
+    // the carrier rigidly, which is exactly the signal a drag term wants.
+    // Recomposing it twice in a frame is safe: the field reads `.elements`
+    // synchronously and retains nothing.
+    //
+    // Emergence therefore reaches the solver twice, once as the saturated
+    // drive and once as vertical carrier motion. That is wanted: a head
+    // bursting out of the water should slosh harder than a scrolled one.
+    if (this.sysVfx.headConfig.fluid.amount > 0) {
+      const body = this.interiorBody;
+      if (body && dt > 0) {
+        const carrier = this.interiorFrame(body);
+        const cx = carrier.elements[12] ?? 0;
+        const cy = carrier.elements[13] ?? 0;
+        const cz = carrier.elements[14] ?? 0;
+        if (this.fluidCarrierSeeded) {
+          this.fluidCarrierVelocity[0] = (cx - this.fluidCarrierLast.x) / dt;
+          this.fluidCarrierVelocity[1] = (cy - this.fluidCarrierLast.y) / dt;
+          this.fluidCarrierVelocity[2] = (cz - this.fluidCarrierLast.z) / dt;
+        } else {
+          // First sample after a mount or an avatar swap has no previous pose,
+          // and differencing against the origin would fling the surface.
+          this.fluidCarrierVelocity[0] = 0;
+          this.fluidCarrierVelocity[1] = 0;
+          this.fluidCarrierVelocity[2] = 0;
+          this.fluidCarrierSeeded = true;
+        }
+        this.fluidCarrierLast.set(cx, cy, cz);
+      } else {
+        this.fluidCarrierVelocity[0] = 0;
+        this.fluidCarrierVelocity[1] = 0;
+        this.fluidCarrierVelocity[2] = 0;
+      }
+      this.sysVfx.setFluidDrive(
+        this.sysBehavior.state,
+        fluidDrive(scrollVelocity, emergenceVelocity, this.reducedMotion),
+        this.fluidCarrierVelocity,
+      );
     }
     this.sysRenderer.render();
 

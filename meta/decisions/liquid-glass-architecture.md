@@ -112,17 +112,33 @@ not from `cairn brief`. Items 1 to 5 were `status: open` and mutually
 independent; the rest are `status: blocked` until their prerequisite lands.
 
 Landed so far: item 1 (2026-07-26), item 2 (2026-07-26), item 3 (2026-07-26),
-item 4 (2026-07-26), item 5 (2026-07-26), item 10 (2026-07-26). **Nothing is
-both open and unblocked.** Items 7 and 8 have had their stated prerequisite,
-item 3, land, but both still want the owner's ruling on the pool lab before
-they start, so they stay `blocked` until it comes. Item 6 waits on
-`todo.liquid-glass-firefox-verify`, which needs a host where the Firefox build
-starts. Item 9 is `blocked` behind item 8 and may never be entered at all.
+item 4 (2026-07-26), item 5 (2026-07-26), item 8 (2026-07-27), item 10
+(2026-07-26).
 
-So the next unit of work in this programme is not a todo: it is an owner look
-session over the three labs that now ship gated off, `demo/pool-lab.html`,
-`demo/lens-lab.html` and `demo/interior-glyph-lab.html`. A ruling on the pool
-unblocks items 7 and 8, which are most of what is left.
+**Next unit of work, in order of how actionable it is right now:**
+
+1. **Item 7, `todo.liquid-glass-stage-participants`.** Its prerequisite (item
+   3) landed, and item 8 has now given it something to push against: the tier 3
+   solver is what participants feed as colliders. It is the only remaining item
+   with no external blocker. Note that one global mode cannot squeeze against a
+   page element on one side only, so this item also grows `FLUID_MODES` from
+   one to a small basis (`dec.liquid-glass-fluidity`, Rationale). Both this and
+   item 8 were held for an owner ruling on the pool lab; item 8 was recorded
+   below as needing no gate beyond the usual lab approval and has landed, but
+   item 7 still touches the pool, so confirm the ruling before starting if one
+   has not arrived.
+2. **An owner look session** over the four labs that now ship gated off:
+   `demo/pool-lab.html`, `demo/lens-lab.html`, `demo/interior-glyph-lab.html`
+   and `demo/fluid-lab.html`. Nothing in the programme turns on by default
+   until these are approved.
+3. **Item 6, `todo.liquid-glass-live-css-layer`**, once
+   `todo.liquid-glass-firefox-verify` is answered. That todo now names its
+   exact blocker: Screen Recording permission for the agent process, or a human
+   reading the spike page in Firefox.
+4. **Item 9, `todo.liquid-glass-topology-fluid`**, is unblocked in principle
+   now that item 8 has landed, but it is the one stage that gives up authored
+   visemes and may never be entered. Do not start it without an explicit
+   decision.
 
 1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
    unit of cost, one extra draw call, independent of every backdrop question.
@@ -150,6 +166,10 @@ unblocks items 7 and 8, which are most of what is left.
 8. `todo.liquid-glass-fluidity-driver` - the fluidity knob and the simulation
    that writes it. Needs item 3. No viseme cost, so no owner gate beyond the
    usual lab approval.
+   Landed 2026-07-27. The simulation is a damped modal solver integrated on
+   the CPU rather than a WebGPU compute pass; `dec.liquid-glass-fluidity`
+   supersedes the compute clause for this tier only and records the price.
+   Shipped gated at `fluid.amount: 0` and lab-only.
 9. `todo.liquid-glass-topology-fluid` - the only stage that gives up authored
    visemes, and only where there is no face. Possibly never.
 10. `todo.liquid-glass-interior-glyphs` - LANDED 2026-07-26. Sparse glyphs

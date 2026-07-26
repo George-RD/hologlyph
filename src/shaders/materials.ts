@@ -32,6 +32,7 @@ import {
   LinearFilter,
   RepeatWrapping,
   Vector2,
+  Vector3,
   Vector4,
 } from 'three';
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
@@ -78,6 +79,7 @@ import {
   type TextSkinEngine,
 } from '../contracts';
 import { adaptToBackdrop } from './glass';
+import { FLUID_SOFT_EPS } from './fluid';
 import { INTERIOR_GLYPH_MAX } from './interior-glyphs';
 
 /** Default glyph grid shape (mirrors DEFAULT_GRID in text-skin). */
@@ -222,6 +224,23 @@ export interface HeadUniforms {
   poolWaterY: { value: number };
   /** Monotonic seconds, written every frame; phases the breathe. */
   poolTime: { value: number };
+  /**
+   * Tier 3 fluidity, the master knob after the behaviour gain
+   * (dec.liquid-glass-fluidity). 0 multiplies the whole displacement term out.
+   */
+  fluidAmount: { value: number };
+  /** Exponent on the face weight: how hard the feature regions refuse to flow. */
+  fluidCrisp: { value: number };
+  /** Height above the waterline over which the flow dies away, world units. */
+  fluidReach: { value: number };
+  /** The modal solver's flow vector in bind space, written every frame. */
+  fluidFlow: { value: THREE.Vector3 };
+  /**
+   * Crossfade to the fluid-deformed shading normal, 0 or 1. Derived from the
+   * effective amount for the same reason `poolNormalGate` is derived from the
+   * breathe: at 0 the shipped normal chain must be reproduced, not approached.
+   */
+  fluidNormalGate: { value: number };
   /**
    * Crossfade to the lensed composite on the interior pass, 0 or 1. Derived,
    * not configured: at 0 the material emits `output` unchanged, so a head
@@ -458,6 +477,20 @@ export function normaliseHeadConfig(
       strength: finiteOr(overrides.lens?.strength, base.lens.strength),
       recaptureMs: Math.max(0, overrides.lens?.recaptureMs ?? base.lens.recaptureMs),
     },
+    fluid: {
+      // `finiteOr` throughout, for the same reason the interior field uses it:
+      // the solver integrates its own last offset, so one NaN from a host
+      // config would poison the flow vector permanently.
+      amount: clamp01(finiteOr(overrides.fluid?.amount, base.fluid.amount)),
+      sag: Math.max(0, finiteOr(overrides.fluid?.sag, base.fluid.sag)),
+      wobble: Math.max(0, finiteOr(overrides.fluid?.wobble, base.fluid.wobble)),
+      tension: clamp01(finiteOr(overrides.fluid?.tension, base.fluid.tension)),
+      crisp: Math.max(0, finiteOr(overrides.fluid?.crisp, base.fluid.crisp)),
+      // Floored, not merely defaulted: the shader divides by this, and a zero
+      // reach would put the whole body in the flowing band via a division by
+      // zero rather than by intent.
+      reach: Math.max(1e-3, finiteOr(overrides.fluid?.reach, base.fluid.reach)),
+    },
   };
   Object.freeze(config.skin.opacity);
   Object.freeze(config.skin.shading);
@@ -470,6 +503,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.pool);
   Object.freeze(config.interior);
   Object.freeze(config.lens);
+  Object.freeze(config.fluid);
   return Object.freeze(config);
 }
 
@@ -586,6 +620,15 @@ export function buildSkinMaterial(
   const uPoolWaterY = uniform(0);
   const uPoolTime = uniform(0);
 
+  // Tier 3 fluidity (dec.liquid-glass-fluidity). `uFluidFlow` is the modal
+  // solver's displacement vector in bind space, written every frame by the
+  // VFX engine; the shader only evaluates the field it implies.
+  const uFluidAmount = uniform(config.fluid.amount);
+  const uFluidCrisp = uniform(config.fluid.crisp);
+  const uFluidReach = uniform(config.fluid.reach);
+  const uFluidFlow = uniform(new Vector3(0, 0, 0));
+  const uFluidNormalGate = uniform(clamp01(config.fluid.amount));
+
   // Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4). The gate
   // opens only once the engine binds a real texture, so a head with nothing
   // named to refract never evaluates the composite below.
@@ -640,6 +683,11 @@ export function buildSkinMaterial(
     poolFade: uPoolFade as unknown as { value: number },
     poolWaterY: uPoolWaterY as unknown as { value: number },
     poolTime: uPoolTime as unknown as { value: number },
+    fluidAmount: uFluidAmount as unknown as { value: number },
+    fluidCrisp: uFluidCrisp as unknown as { value: number },
+    fluidReach: uFluidReach as unknown as { value: number },
+    fluidFlow: uFluidFlow as unknown as { value: THREE.Vector3 },
+    fluidNormalGate: uFluidNormalGate as unknown as { value: number },
     lensGate: uLensGate as unknown as { value: number },
     lensAmount: uLensAmount as unknown as { value: number },
     lensWindow: uLensWindow as unknown as { value: THREE.Vector4 },
@@ -684,7 +732,64 @@ export function buildSkinMaterial(
   const breatheShape = breatheSinX.mul(breatheSinZ).mul(0.5).add(0.5);
   const breatheAmp = uPoolBreathe.mul(uPoolAmount);
   const breatheOffset = breatheAmp.mul(breatheWeight).mul(breatheShape);
-  const breathePosition = positionLocal.add(normalLocal.mul(breatheOffset));
+
+  // ---------------------------------------------------------------------
+  // Tier 3 fluidity (dec.liquid-glass-fluidity).
+  //
+  // Same three rules as the breathe above: build on `positionLocal`, take the
+  // direction from `normalLocal`, and keep the offset non-negative so the
+  // shell never moves inward of the depth-only occlusion mask. The one-sided
+  // ramp in `dot(N, F)` is what buys that last one: the surface piles up on
+  // the side the liquid is flowing towards and is untouched on the other,
+  // which is what a viscous blob does and is also the only formulation of
+  // "sag" that cannot break the four-pass depth scheme.
+  //
+  // The ramp is `fluidSoftRamp`, not `max(0, .)`. A hard clamp creases along
+  // the contour where the surface turns away from the flow, and on the ears
+  // and jawline of the shipped bust that crease reads as faceting. Softening
+  // in COSINE space rather than in the dot product keeps the soft band the
+  // same angular width whatever the flow magnitude, and multiplying the
+  // length back in afterwards keeps a still body at exactly zero.
+  //
+  // `uPoolWaterY` is the bind-space waterline, written every frame whether or
+  // not the pool is built, so reading it here couples the two features to one
+  // reference height rather than coupling the fluid to the pool.
+  const fluidAbove = positionLocal.y.sub(uPoolWaterY).max(0);
+  const fluidWeight = exp(fluidAbove.div(uFluidReach).negate());
+  // The six masks that already drive per-zone opacity, reused rather than
+  // re-baked: whichever feature claims this vertex most strongly is how hard
+  // it refuses to flow. Both interleaved attribute buffers are full, so a
+  // seventh mask would have meant a third buffer and an asset rebuild for a
+  // weight these six already describe.
+  const fluidFeature = aLips.max(aJaw).max(aEyelid).max(aBrow).max(aNose).max(aSocket);
+  const fluidFace = pow(saturate(float(1).sub(fluidFeature)), uFluidCrisp);
+  const fluidMask = fluidWeight.mul(fluidFace);
+  const fluidLength = uFluidFlow.length();
+  const fluidCos = dot(normalLocal, uFluidFlow).div(fluidLength.max(1e-6));
+  const fluidTowards = fluidCos
+    .add(fluidCos.mul(fluidCos).add(FLUID_SOFT_EPS * FLUID_SOFT_EPS).sqrt())
+    .mul(0.5)
+    .mul(fluidLength);
+  const fluidOffset = uFluidAmount.mul(fluidMask).mul(fluidTowards);
+
+  // Gradient of the fluid field, to first order in the height weight only.
+  // The exact Jacobian of `N * d(p)` also carries the shape operator `dN/dp`
+  // and the gradients of six baked masks; neither is available in the shader,
+  // and both are dropped deliberately (dec.liquid-glass-fluidity, Decision).
+  // The surviving term is the one that matters, because the height weight is
+  // what varies fastest across the flowing band.
+  const fluidWeightSlope = fluidWeight.div(uFluidReach).negate().mul(smoothstep(0, 1e-4, fluidAbove));
+  const fluidGradient = vec3(
+    0,
+    uFluidAmount.mul(fluidFace).mul(fluidTowards).mul(fluidWeightSlope),
+    0,
+  );
+
+  // One displacement and one gradient for both features. Each term multiplies
+  // through its own `amount` uniform, so the feature that is off contributes
+  // exact zero and `x + 0` leaves the other bit for bit unchanged.
+  const surfaceOffset = breatheOffset.add(fluidOffset);
+  const surfacePosition = positionLocal.add(normalLocal.mul(surfaceOffset));
 
   // Analytic gradient of the same field, so the shading normal follows the
   // deformation instead of reading as texture swim
@@ -694,11 +799,11 @@ export function buildSkinMaterial(
     .mul(smoothstep(0, 1e-4, breatheAbove));
   const breatheShapeDx = cos(breathePhaseX).mul(BREATHE_KX).mul(breatheSinZ).mul(0.5);
   const breatheShapeDz = breatheSinX.mul(cos(breathePhaseZ).mul(BREATHE_KZ)).mul(0.5);
-  const breatheGradient = vec3(
+  const surfaceGradient = vec3(
     breatheWeight.mul(breatheShapeDx),
     breatheWeightSlope.mul(breatheShape),
     breatheWeight.mul(breatheShapeDz),
-  ).mul(breatheAmp);
+  ).mul(breatheAmp).add(fluidGradient);
   // Perturb in LOCAL space, then transform once. Two traps live here, and
   // both cost the whole head when they fire.
   //
@@ -715,16 +820,20 @@ export function buildSkinMaterial(
   // re-exported from `three/tsl`, and the per-fragment `faceDirection` sign is
   // not the same thing, so the two sides get their own node below. Get this
   // wrong and the interior wall shades against a normal pointing outward.
-  const breatheTangential = breatheGradient.sub(normalLocal.mul(dot(breatheGradient, normalLocal)));
-  const breatheNormalLocal = normalLocal.sub(breatheTangential);
+  const surfaceTangential = surfaceGradient.sub(normalLocal.mul(dot(surfaceGradient, normalLocal)));
+  const breatheNormalLocal = normalLocal.sub(surfaceTangential);
   const breatheNormalViewRaw = transformNormalToView(breatheNormalLocal);
   // At gate 0 the second operand is exactly how three builds `normalView`
   // itself, and `mix(a, b, 0)` is `a` bit for bit, so the shipped shading
   // chain is reproduced rather than approximated. `normalView` inside each
   // material's own normal sub-build already carries that material's side
   // flip, so the two operands are always like for like.
-  const breatheNormalFront = mix(normalView, breatheNormalViewRaw, uPoolNormalGate);
-  const breatheNormalInterior = mix(normalView, breatheNormalViewRaw.negate(), uPoolNormalGate);
+  //
+  // One gate for two features: `max(x, 0)` is exactly `x`, so a head with the
+  // pool on and the fluid off still lands on the tier 1 value it shipped with.
+  const surfaceNormalGate = uPoolNormalGate.max(uFluidNormalGate);
+  const breatheNormalFront = mix(normalView, breatheNormalViewRaw, surfaceNormalGate);
+  const breatheNormalInterior = mix(normalView, breatheNormalViewRaw.negate(), surfaceNormalGate);
 
   // Waterline fade (work item 5). The clip plane cuts the body at world Y 0
   // and the shell is hollow, so the cut exposes the interior wall. Fading the
@@ -824,7 +933,7 @@ export function buildSkinMaterial(
     .add(bodyShare.mul(waterFadeMix))
     .clamp(0, 1);
   material.opacityNode = totalAlpha;
-  material.positionNode = breathePosition;
+  material.positionNode = surfacePosition;
   material.normalNode = breatheNormalFront;
 
   // Blinn highlight against the scene key light, in world space so it tracks
@@ -860,7 +969,7 @@ export function buildSkinMaterial(
     .clamp(0, 1);
   // The interior rides the same displacement as the front, or the two halves
   // of one body separate at the seam.
-  interior.positionNode = breathePosition;
+  interior.positionNode = surfacePosition;
   interior.normalNode = breatheNormalInterior;
 
   // ---------------------------------------------------------------------

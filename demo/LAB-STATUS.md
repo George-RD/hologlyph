@@ -204,6 +204,19 @@ this file tracks their purpose and what remains owner-session-only.
   path contributes nothing), an untouched page outside the silhouette,
   reachable and unreachable controls, and a clean fall-through to the snapshot
   lens with the flag off. Needs a real Chrome; nothing in CI runs it.
+- `demo/fluid-lab.html` - item 8, tier 3: the fluidity knob. Live controls for
+  every field of `HeadFluidConfig` (`amount`, `sag`, `wobble`, `tension`,
+  `crisp`, `reach`), a rigid/molten pair for A/B-ing the gate, the pool lab's
+  raised camera so the flowing band at the base is not viewed edge on, a shake
+  scenario that drives the carrier bone hard from side to side, pointer drag on
+  `MotionEngine.setHeadTarget`, a "pool on" button so tiers 1 and 3 can be
+  judged together, a scroll kick, a reduced-motion toggle and a frame-time
+  readout. `window.__hologlyphEngine` is the handle, as on the other labs.
+  Dev-only, deliberately absent from `demo/vite.config.ts`. The look to judge:
+  at `amount 0` the render must be the approved look exactly (`bun run eval`
+  agrees, overall pass); at 1 the base and shoulders should sag, wobble and
+  slosh while the face stays crisp and the glyphs stay welded to the skin.
+  `fluid.amount` ships at 0: the look is not owner-approved yet.
 - `demo/interior-glyph-lab.html` plus `tools/smoke/interior-glyph-shot.mjs` -
   item 10: glyphs suspended inside the glass, with live controls for every
   field of `HeadInteriorConfig`, a skin-opacity and glass pair for looking at

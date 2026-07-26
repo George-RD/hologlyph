@@ -342,6 +342,9 @@ describe('owner-approved head configuration', () => {
       lens: {
         amount: 1, strength: 0.06, recaptureMs: 250,
       },
+      fluid: {
+        amount: 0, sag: 0.05, wobble: 1, tension: 0.55, crisp: 2, reach: 0.6,
+      },
     });
     // `pool.amount` is the tier 1 gate. It ships at 0 on purpose: the pool is
     // lab-only until the owner approves the look, and at 0 the engine builds

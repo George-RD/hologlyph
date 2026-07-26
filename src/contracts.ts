@@ -454,6 +454,46 @@ export interface HeadInteriorConfig {
 }
 
 /**
+ * Tier 3 fluidity (`dec.liquid-glass-fluidity`): how molten the body behaves.
+ * The head stays the head; a damped modal solver on the CPU writes a flow
+ * vector, and the shader bulges the shell one-sidedly along it, weighted so
+ * the base and shoulders flow while the mouth and eyes stay crisp.
+ *
+ * `amount` is a hard gate, not a fade: at 0 the displacement term multiplies
+ * out to exactly zero, the shading normal stays on the shipped chain and the
+ * solver is never integrated, so the approved configuration is reproduced
+ * exactly.
+ */
+export interface HeadFluidConfig {
+  /** Master fluidity; 0 is rigid and is the shipped default, 1 is molten. */
+  readonly amount: number;
+  /**
+   * Resting droop in world units, held by gravity against the mode. Read at
+   * full fluidity in the flowing band, and scaled down by both `amount` and
+   * the spatial weight everywhere else.
+   */
+  readonly sag: number;
+  /** Gain on the response to scroll, emergence and carrier motion. */
+  readonly wobble: number;
+  /**
+   * Stiffness of the mode in [0,1]. Stiffness is the liquidity: 1 twitches and
+   * settles like a solid with a skin on it, 0 wallows.
+   */
+  readonly tension: number;
+  /**
+   * How hard the baked feature regions refuse to flow, as an exponent on the
+   * face weight. Higher keeps more of the face rigid.
+   */
+  readonly crisp: number;
+  /**
+   * Height above the waterline, world units, over which the flow dies away.
+   * The bust is about 1.8 tall, so this is what keeps the swell in the base
+   * and the shoulders.
+   */
+  readonly reach: number;
+}
+
+/**
  * Opt-in true lensing of a host-named subtree (`dec.liquid-glass-architecture`,
  * rung 3, item 4). No browser API hands rendered page pixels to WebGL, so the
  * only cross-engine route to per-pixel refraction is to rasterise a subtree
@@ -538,6 +578,7 @@ export interface HeadConfig {
   readonly pool: HeadPoolConfig;
   readonly interior: HeadInteriorConfig;
   readonly lens: HeadLensConfig;
+  readonly fluid: HeadFluidConfig;
 }
 
 export type HeadConfigOverrides = {
@@ -553,6 +594,7 @@ export type HeadConfigOverrides = {
   pool?: Partial<HeadPoolConfig>;
   interior?: Partial<HeadInteriorConfig>;
   lens?: Partial<HeadLensConfig>;
+  fluid?: Partial<HeadFluidConfig>;
 };
 
 export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
@@ -647,6 +689,17 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     strength: 0.06,
     recaptureMs: 250,
   }),
+  // As with the pool and the interior field, every non-zero value here is a
+  // lab starting point. `amount: 0` is what ships, and at 0 the material graph
+  // is the approved look bit for bit (dec.liquid-glass-fluidity).
+  fluid: Object.freeze({
+    amount: 0,
+    sag: 0.05,
+    wobble: 1,
+    tension: 0.55,
+    crisp: 2,
+    reach: 0.6,
+  }),
 });
 
 /**
@@ -681,6 +734,19 @@ export interface VFXEngine extends Disposable {
    * is nothing to sample, so `skin.lens.amount` alone must never switch it on.
    */
   setLens(lens: LensBinding | null): void;
+  /**
+   * Feed the tier 3 modal solver for the coming frame
+   * (`dec.liquid-glass-fluidity`). `state` picks the behaviour gain,
+   * `drive` is the saturated scroll/emergence impulse, and
+   * `carrierVelocity` is the head-carrying bone's world velocity, which is
+   * what makes a turned head slosh sideways. Ignored entirely while
+   * `fluid.amount` is 0, so a host that never calls it is the shipped head.
+   */
+  setFluidDrive(
+    state: BehaviorState,
+    drive: number,
+    carrierVelocity: readonly [number, number, number],
+  ): void;
   update(dt: number): void;
   /** Shorten or snap emergence ramps when reduced motion is requested. */
   setReducedMotion(reduced: boolean): void;
