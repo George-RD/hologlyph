@@ -41,4 +41,12 @@
 - [x] Fix the two defects the browser found: the hole in the water never closed
       after full submersion, and the height field was point-sampled into
       visible stair steps.
-- [x] Independent review; findings fixed or recorded.
+- [x] Review. NOT independent: both delegated reviewers, one adversarial on
+      another model family, died on a provider usage limit, so this was a
+      self-review against the checklist written for them. It found five
+      defects, all fixed: the NaN shading normal, `faceDirection` used where
+      `directionToFaceDirection` was meant, a per-frame hex parse in the pool
+      reconciler, a position read that breaks on an interleaved attribute, and
+      an unbounded simulation carry. A genuinely independent pass over
+      `src/shaders/pool-surface.ts` and the breathe block in
+      `src/shaders/materials.ts` is still owed.

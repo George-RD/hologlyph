@@ -16,7 +16,7 @@ rendered page pixels to script without a permission prompt, so this rung is a
 rasterisation the host opts into, not a capture. It needs no new asset and no
 contract beyond a way to name the subtree.
 
-Two follow-ups this change deliberately left open, either of which is a
+Three follow-ups this change deliberately left open, any of which is a
 legitimate next unit instead:
 
 - The pool is lab-only. `pool.amount` ships at 0 and the look has not been
@@ -26,6 +26,11 @@ legitimate next unit instead:
   builds fade at the waterline; the authored `mouth_interior` and `eye_trim`
   materials and the eyeball still terminate at the hard clip. The reasoning is
   in the module header of `src/shaders/materials.ts`.
+- The tier 1 change never got an independent review. Both delegated reviewers
+  died on a provider usage limit and it shipped on a self-review, which found
+  five defects but is not the same thing. `src/shaders/pool-surface.ts` and
+  the breathe block in `src/shaders/materials.ts` are the parts worth another
+  pair of eyes; both are new TSL graphs that no unit test can execute.
 
 Four things this change leaves you:
 
