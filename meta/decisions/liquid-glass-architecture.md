@@ -107,9 +107,9 @@ that way later; the library will not assume it.
 ## Recommended order
 
 Cairn orders open todos alphabetically, which is not the intended sequence, so
-each todo carries an `Order N of 9` line matching this list. Items 1 to 5 are
-`status: open` and mutually independent; items 6 to 9 are `status: blocked`
-until their prerequisite lands.
+each todo carries an `Order N` line matching this list. Items 1 to 5 are
+`status: open` and mutually independent; the rest are `status: blocked` until
+their prerequisite lands.
 
 1. `todo.liquid-glass-solid-body` - largest look gain per unit of cost, one
    extra draw call, independent of every backdrop question. Start here.
@@ -130,6 +130,9 @@ until their prerequisite lands.
    usual lab approval.
 9. `todo.liquid-glass-topology-fluid` - the only stage that gives up authored
    visemes, and only where there is no face. Possibly never.
+10. `todo.liquid-glass-interior-glyphs` - lab exploration, deliberately last.
+    Sparse glyphs drifting inside the glass, dragged off course when the head
+    moves. Needs item 1 for the thickness bake and the backface pass.
 
 Items 1 to 4 need no host-facing contract and no new public surface, so they can
 proceed without committing to any of the integration rungs.

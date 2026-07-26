@@ -6,7 +6,7 @@ created: 2026-07-25
 
 # Silhouette hull bake and per-frame CPU projection
 
-Order 2 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+Order 2 (`dec.liquid-glass-architecture`). No prerequisite; may run in
 parallel with the other unblocked items.
 
 Blocking dependency of the live CSS glass layer (item 6) and the physics

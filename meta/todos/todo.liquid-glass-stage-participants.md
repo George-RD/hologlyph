@@ -6,7 +6,7 @@ created: 2026-07-25
 
 # Stage participants: the opt-in contract that lets the fluid touch the page
 
-Order 7 of 9 (`dec.liquid-glass-architecture`). Blocked on
+Order 7 (`dec.liquid-glass-architecture`). Blocked on
 `todo.liquid-glass-tier1-pool`.
 
 Rung 4 of the backdrop ladder (`dec.liquid-glass-architecture`). This is what

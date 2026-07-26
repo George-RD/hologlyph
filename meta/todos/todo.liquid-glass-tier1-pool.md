@@ -6,7 +6,7 @@ created: 2026-07-25
 
 # Tier 1 fluid: pool, ripples, meniscus at the waterline
 
-Order 3 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+Order 3 (`dec.liquid-glass-architecture`). No prerequisite; may run in
 parallel with the other unblocked items.
 
 Recommended first fluid step (`dec.liquid-glass-architecture`). Lab prototype

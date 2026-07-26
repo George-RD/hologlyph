@@ -6,7 +6,7 @@ created: 2026-07-25
 
 # Live compositor glass: backdrop-filter clipped to the silhouette
 
-Order 6 of 9 (`dec.liquid-glass-architecture`). Blocked on
+Order 6 (`dec.liquid-glass-architecture`). Blocked on
 `todo.liquid-glass-silhouette-hull` and `todo.liquid-glass-firefox-verify`.
 
 Rung 2 of the backdrop ladder (`dec.liquid-glass-architecture`), and the

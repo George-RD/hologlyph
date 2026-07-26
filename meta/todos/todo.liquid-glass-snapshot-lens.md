@@ -6,7 +6,7 @@ created: 2026-07-25
 
 # Opt-in lensing of a declared subtree via a DOM rasteriser
 
-Order 4 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+Order 4 (`dec.liquid-glass-architecture`). No prerequisite; may run in
 parallel with the other unblocked items.
 
 Rung 3 of the backdrop ladder, cross-browser half

@@ -6,7 +6,7 @@ created: 2026-07-25
 
 # Solid-body glass: backfaces, thickness, absorption
 
-Order 1 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+Order 1 (`dec.liquid-glass-architecture`). No prerequisite; may run in
 parallel with the other unblocked items.
 
 Highest perceptual gain per unit of cost, and independent of every backdrop
