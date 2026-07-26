@@ -26,8 +26,7 @@ Three things the solid-body change leaves you:
   array before capturing, and MUST establish its own noise floor by repeating
   the same capture on the same code first. See `tools/smoke/solid-body-shot.mjs`
   and the measurement-trap section of
-  `meta/changes/2026-07-26-liquid-glass-solid-body/implementation-notes.md`
-  (under `meta/changes/archive/` once that change is archived):
+  `meta/changes/archive/2026-07-26-2026-07-26-liquid-glass-solid-body/implementation-notes.md`:
   `setMotionFrozen` leaves the head wherever idle motion had drifted to, so any
   change to load-time work shifts every bind-pose-welded glyph and reads as a
   5% pixel diff that is not there.
