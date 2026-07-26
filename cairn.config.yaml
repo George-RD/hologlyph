@@ -7,3 +7,12 @@ targets:
 - language: typescript
   node: hologlyph.asset.loader
   path: ./assets
+gates:
+- name: typecheck
+  command: bunx tsc --noEmit
+- name: test
+  command: bunx vitest run
+- name: lint
+  command: bun run lint
+- name: build
+  command: bun run build

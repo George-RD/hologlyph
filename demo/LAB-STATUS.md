@@ -25,6 +25,18 @@ this file tracks their purpose and what remains owner-session-only.
 - `demo/feature-shading-variants.html` - older static side-by-side grid
   (superseded by the lab, kept for comparison).
 - `demo/TEXT-LAYERS.md` - explainer of the text layers and their sliders.
+- `demo/backdrop-clip-spike.html` plus `tools/smoke/backdrop-clip-spike.mjs` -
+  spike for the liquid-glass direction: can a CSS `backdrop-filter` be confined
+  to the head silhouette with `clip-path`, and what does rewriting that polygon
+  every frame cost. Chrome and real Safari pass; Firefox is unverified because
+  its Playwright build will not start on this host. Findings and the wider
+  platform survey: meta/research/res.dom-backdrop-capture.md.
+- `demo/html-in-canvas-spike.html` plus `tools/smoke/html-in-canvas-spike.mjs` -
+  measures Chromium's HTML-in-Canvas API as a refraction source: live DOM into a
+  WebGL texture at vsync, but only for immediate children of the canvas being
+  drawn into, with cross-origin images and iframes silently dropped and clicks
+  landing on the undistorted layout box. Needs Chrome with
+  `--enable-blink-features=CanvasDrawElement`.
 - `tools/smoke/feature-variants-shot.mjs`, `tools/smoke/lab-shot.mjs`,
   `tools/smoke/landing-shot.mjs` - Playwright captures for the demo pages
   (landing-shot also asserts the speak pipeline animates distinct visemes).

@@ -91,12 +91,13 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
   architecture change and requires a paired decision artefact under
   `meta/decisions/` (`cairn decision new <slug> --node <id>`).
 - Fresh session: run `cairn brief` (no arguments) to fuse the next open todo
-  with its binding decisions and gates. Then: branch from main
-  (`git checkout -b <type>/<slug>`), set the todo `status: in_progress`, TDD,
-  record decision artefacts BEFORE building on resolved open decisions, log
-  cairn friction to `meta/cairn-feedback.jsonl` as it happens, run the full
-  gate, set the todo `status: done`, tick the change's `tasks.md`, land via
-  squash-merged PR.
+  with its binding decisions and gates. Then: branch from the current
+  integration base (`git checkout -b <type>/<slug> glass` for liquid-glass
+  work, otherwise `main`), set the todo `status: in_progress`, TDD, record
+  decision artefacts BEFORE building on resolved open decisions, log cairn
+  friction to `meta/cairn-feedback.jsonl` as it happens, run the full gate, set
+  the todo `status: done`, tick the change's `tasks.md`, land via squash-merged
+  PR into that same base.
 - Keep a running `implementation-notes.md` in the active change directory
   logging every deviation from the plan and every discovered edge case.
 
@@ -125,7 +126,13 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 
 ### Git conventions
 
-- Feature branch + squash-merge PR; never commit directly to main.
+- Feature branch + squash-merge PR; never commit directly to main or to an
+  integration branch.
+- `glass` is the integration branch for the liquid-glass programme
+  (`dec.liquid-glass-architecture`). Every item in that backlog branches from
+  `glass` and its PR targets `glass`, NOT `main`. Pushing to `main` redeploys
+  the live demo via `.github/workflows/pages.yml`, so `main` only receives
+  `glass` once the owner is happy with the look end to end.
 - Stage explicit paths (`git add src/foo.ts`); never `git add -A` or
   `git add .`.
 - Commit with a message file: write the message to a temp file, review it, then
