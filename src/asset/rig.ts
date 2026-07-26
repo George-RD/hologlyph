@@ -21,6 +21,7 @@ import {
   clamp01,
   type LoadedAvatar,
 } from '../contracts';
+import { readSilhouetteHull } from './hull';
 
 /** Canonical morph-target names every conformant rig must expose. */
 const CANONICAL_MORPHS: readonly string[] = [
@@ -680,6 +681,7 @@ export function buildLoadedAvatar(
   });
 
   const bones = collectBones(root);
+  const silhouetteHull = readSilhouetteHull(root);
 
   let disposed = false;
 
@@ -730,6 +732,7 @@ export function buildLoadedAvatar(
     root: root as THREE.Group,
     morphMeshes,
     bones,
+    silhouetteHull,
     animations,
     setMorph,
     getMorph,

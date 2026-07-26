@@ -44,6 +44,11 @@ const BLINK_NAMES: Record<string, true> = {
 /** Attack/release time constants (seconds) for mouth-region smoothing. */
 const TAU_ATTACK = 0.05;
 const TAU_RELEASE = 0.12;
+/**
+ * Total mouth weight the baked silhouette hull is an outer bound for: one
+ * viseme releasing while the next attacks. Diagnostic only; nothing is clamped.
+ */
+const MOUTH_BLEND_BUDGET = 2;
 /** Head-drag target limits (radians), kept within a natural look range. */
 const DRAG_YAW_LIMIT = 0.5;
 const DRAG_PITCH_LIMIT = 0.35;
@@ -120,6 +125,8 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
   let fadeDuration = 0.35;
 
   let visemeFrame: VisemeFrame | null = null;
+  /** Per engine, so the diagnostic is deterministic under test. */
+  let warnedMouthBlend = false;
 
   const gaze = new GazeController(rng, clockOpt, { followTimeout: options.gazeFollowTimeout });
   const idleOpt = options.idle;
@@ -156,8 +163,28 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
     fadeDuration = reduced ? Math.min(fadeSeconds, 0.1) : fadeSeconds;
   }
 
+  /**
+   * Accept a mouth frame unchanged. Weights are never rescaled: an adapter that
+   * hands us a heavier blend gets exactly what it asked for.
+   *
+   * The baked silhouette hull assumes at most two significant mouth morphs at
+   * once, which is what the library's own speech path and the smoothing between
+   * frames produce. Warn once past that so a host driving a heavier blend can
+   * see why anything clipping to the hull falls short of the mouth, rather than
+   * meeting a silent cosmetic bug.
+   */
   function applyVisemeFrame(frame: VisemeFrame): void {
     visemeFrame = frame;
+    if (warnedMouthBlend) return;
+    let total = 0;
+    for (const name of MOUTH_NAMES) total += clamp01(frame.weights[name] ?? 0);
+    if (total <= MOUTH_BLEND_BUDGET) return;
+    warnedMouthBlend = true;
+    console.warn(
+      `[hologlyph] Viseme frame drives ${total.toFixed(2)} of mouth weight, over the ` +
+        `${MOUTH_BLEND_BUDGET} the silhouette hull is baked for. The face renders as asked; ` +
+        'anything clipped to the hull may fall short of the mouth.',
+    );
   }
 
   function clearVisemes(): void {

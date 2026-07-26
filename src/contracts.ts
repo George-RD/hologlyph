@@ -90,6 +90,17 @@ export type BlendshapeWeights = Record<string, number>;
 export interface VisemeFrame {
   /** Seconds from utterance audio start. */
   time: number;
+  /**
+   * Mouth-region weights for one frame. A viseme frame is a mouth *shape*, so
+   * the library's own speech path emits a single viseme at full weight and
+   * relies on MotionEngine's attack/release smoothing to cross-fade.
+   *
+   * The baked silhouette hull is an outer bound on that behaviour: at most two
+   * mouth morphs significant at once. A frame that drives more is accepted and
+   * rendered, but the hull can then under-cover the outline, so anything
+   * clipping to it (the compositor glass layer) will fall short of the chin or
+   * the lips. MotionEngine warns once when a frame exceeds it.
+   */
   weights: BlendshapeWeights;
 }
 
@@ -214,12 +225,40 @@ export const RIG_BONES = {
   eyeR: 'eye_r',
 } as const;
 
+/**
+ * One rigidly-skinned piece of the baked silhouette hull
+ * (dec.liquid-glass-architecture). Points are bind-space xyz triples; the
+ * runtime transforms them by `bone.matrixWorld * inverseBind`, exactly as
+ * three skins a vertex weighted wholly to that joint.
+ */
+export interface SilhouetteHullGroup {
+  readonly joint: string;
+  /** Column-major inverse bind matrix for `joint`. */
+  readonly inverseBind: readonly number[];
+  /** Flat xyz triples in bind space. */
+  readonly points: readonly number[];
+}
+
+/**
+ * Low-poly outline hull baked beside the avatar geometry. It is an outer bound
+ * on every position the rig can reach, so the 2D convex hull of its projected
+ * points contains the rendered silhouette at any pose.
+ */
+export interface SilhouetteHull {
+  readonly version: number;
+  readonly groups: readonly SilhouetteHullGroup[];
+  /** Joints the bake proved stay inside the hull; carried for provenance. */
+  readonly containedJoints: readonly string[];
+}
+
 export interface LoadedAvatar extends Disposable {
   readonly root: THREE.Group;
   /** Meshes carrying the canonical morph targets. */
   readonly morphMeshes: THREE.Mesh[];
   readonly bones: Partial<Record<keyof typeof RIG_BONES, THREE.Bone>>;
   readonly animations: THREE.AnimationClip[];
+  /** Baked outline hull, when the asset carries one. */
+  readonly silhouetteHull?: SilhouetteHull | null;
   /** Set a canonical morph weight across all morph meshes, clamped [0,1]. */
   setMorph(name: string, weight: number): void;
   getMorph(name: string): number;

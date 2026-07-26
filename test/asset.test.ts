@@ -6,6 +6,8 @@ import {
   RIG_EXPRESSION_MORPHS,
   RIG_BONES,
   type LoadedAvatar,
+  type SilhouetteHull,
+  type SilhouetteHullGroup,
 } from '../src/contracts';
 import {
   bakeFeatureMasks,
@@ -18,6 +20,12 @@ import {
   validateRig,
   type RigReport,
 } from '../src/asset/rig';
+import {
+  readSilhouetteHull,
+  SilhouetteProjector,
+  SILHOUETTE_HULL_KEY,
+  SILHOUETTE_HULL_VERSION,
+} from '../src/asset/hull';
 import { createAssetLoader } from '../src/asset/loader';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
@@ -423,5 +431,221 @@ describe('bakeFeatureMasks and bakeThickness', () => {
     const mesh = new THREE.Mesh(makeNearestHitProbe(), new THREE.MeshStandardMaterial());
     expect(() => bakeThickness(mesh)).not.toThrow();
     expect(mesh.geometry.attributes.aThickness).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Silhouette hull (todo.liquid-glass-silhouette-hull)
+// ---------------------------------------------------------------------------
+
+/** A unit cube hull rigidly bound to one bone at the origin. */
+function cubeHull(joint = 'head'): SilhouetteHull {
+  const points: number[] = [];
+  for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) points.push(x, y, z);
+  return {
+    version: SILHOUETTE_HULL_VERSION,
+    groups: [{ joint, inverseBind: new THREE.Matrix4().toArray(), points }],
+    containedJoints: [],
+  };
+}
+
+/** Minimal avatar exposing only what SilhouetteProjector reads. */
+function hullAvatar(boneName: string): { avatar: LoadedAvatar; bone: THREE.Bone } {
+  const root = new THREE.Group();
+  const bone = new THREE.Bone();
+  bone.name = boneName;
+  root.add(bone);
+  root.updateMatrixWorld(true);
+  const avatar = {
+    root,
+    morphMeshes: [],
+    bones: {},
+    animations: [],
+    setMorph: () => {},
+    getMorph: () => 0,
+    dispose: () => {},
+  } satisfies LoadedAvatar;
+  return { avatar, bone };
+}
+
+function orthoCamera(): THREE.OrthographicCamera {
+  const camera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 100);
+  camera.position.set(0, 0, 10);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+  return camera;
+}
+
+function polygonArea(xy: Float32Array, count: number): number {
+  let area = 0;
+  for (let i = 0; i < count; i++) {
+    const j = (i + 1) % count;
+    area += (xy[i * 2] as number) * (xy[j * 2 + 1] as number) - (xy[j * 2] as number) * (xy[i * 2 + 1] as number);
+  }
+  return Math.abs(area) / 2;
+}
+
+describe('readSilhouetteHull', () => {
+  it('reads a well-formed hull from scene userData', () => {
+    const root = new THREE.Group();
+    root.userData[SILHOUETTE_HULL_KEY] = cubeHull();
+    const hull = readSilhouetteHull(root);
+    expect(hull?.groups).toHaveLength(1);
+    expect(hull?.groups[0]?.points).toHaveLength(24);
+  });
+
+  it('returns null for an absent, mis-versioned or malformed hull', () => {
+    expect(readSilhouetteHull(new THREE.Group())).toBeNull();
+
+    const wrongVersion = new THREE.Group();
+    wrongVersion.userData[SILHOUETTE_HULL_KEY] = { ...cubeHull(), version: 99 };
+    expect(readSilhouetteHull(wrongVersion)).toBeNull();
+
+    const shortMatrix = new THREE.Group();
+    const bad = cubeHull();
+    shortMatrix.userData[SILHOUETTE_HULL_KEY] = {
+      ...bad,
+      groups: [{ ...bad.groups[0], inverseBind: [1, 0, 0] }],
+    };
+    expect(readSilhouetteHull(shortMatrix)).toBeNull();
+
+    const raggedPoints = new THREE.Group();
+    raggedPoints.userData[SILHOUETTE_HULL_KEY] = {
+      ...bad,
+      groups: [{ ...bad.groups[0], points: [0, 1] }],
+    };
+    expect(readSilhouetteHull(raggedPoints)).toBeNull();
+  });
+
+  it('is wired into buildLoadedAvatar', () => {
+    const root = new THREE.Group();
+    root.add(makeMorphMesh(ALL_CANONICAL));
+    for (const key of Object.keys(RIG_BONES) as (keyof typeof RIG_BONES)[]) root.add(makeBone(key));
+    expect(buildLoadedAvatar(root).silhouetteHull).toBeNull();
+
+    root.userData[SILHOUETTE_HULL_KEY] = cubeHull();
+    expect(buildLoadedAvatar(root).silhouetteHull?.groups).toHaveLength(1);
+  });
+});
+
+describe('SilhouetteProjector', () => {
+  it('projects an axis-aligned cube to its screen-space square', () => {
+    const { avatar } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    expect(projector.usable).toBe(true);
+    expect(projector.update(orthoCamera(), 400, 400)).toBe(true);
+    // Ortho half-extent 2 over 400px: the cube's +/-1 corners land 100px from
+    // the centre, so the outline is the 200px square centred in the viewport.
+    expect(projector.count).toBe(4);
+    const xs = [...projector.xy.slice(0, 8)].filter((_, i) => i % 2 === 0).sort((a, b) => a - b);
+    const ys = [...projector.xy.slice(0, 8)].filter((_, i) => i % 2 === 1).sort((a, b) => a - b);
+    expect(xs).toEqual([100, 100, 300, 300]);
+    expect(ys).toEqual([100, 100, 300, 300]);
+    expect(polygonArea(projector.xy, 4)).toBeCloseTo(40_000, 6);
+  });
+
+  it('follows the bone pose', () => {
+    const { avatar, bone } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = orthoCamera();
+    projector.update(camera, 400, 400);
+    const square = polygonArea(projector.xy, projector.count);
+
+    // A 45 degree yaw widens the cube's shadow by root two.
+    bone.rotation.y = Math.PI / 4;
+    avatar.root.updateMatrixWorld(true);
+    expect(projector.update(camera, 400, 400)).toBe(true);
+    expect(polygonArea(projector.xy, projector.count) / square).toBeCloseTo(Math.SQRT2, 3);
+
+    // Translating the bone slides the outline without resizing it.
+    bone.rotation.y = 0;
+    bone.position.x = 0.5;
+    avatar.root.updateMatrixWorld(true);
+    projector.update(camera, 400, 400);
+    expect(polygonArea(projector.xy, projector.count)).toBeCloseTo(square, 6);
+    const minX = Math.min(...[...projector.xy.slice(0, projector.count * 2)].filter((_, i) => i % 2 === 0));
+    expect(minX).toBeCloseTo(150, 6);
+  });
+
+  it('emits a CSS polygon, and none when there is no outline', () => {
+    const { avatar } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    projector.update(orthoCamera(), 400, 400);
+    expect(projector.polygon()).toBe('polygon(100px 100px, 300px 100px, 300px 300px, 100px 300px)');
+
+    // Zero-sized viewport: nothing to clip, and the previous polygon must not
+    // leak through as a stale outline.
+    expect(projector.update(orthoCamera(), 0, 0)).toBe(false);
+    expect(projector.count).toBe(0);
+    expect(projector.polygon()).toBe('none');
+  });
+
+  it('degrades when the camera sits inside the hull', () => {
+    const { avatar } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    camera.position.set(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    expect(projector.update(camera, 400, 400)).toBe(false);
+    expect(projector.count).toBe(0);
+  });
+
+  it('is unusable when any group fails to resolve, never partially resolved', () => {
+    const { avatar } = hullAvatar('head');
+    expect(new SilhouetteProjector(cubeHull('absent_bone'), avatar).usable).toBe(false);
+
+    // A half-resolved hull would emit an outline missing whatever the absent
+    // group bounded, which is worse than no outline at all.
+    const partial = cubeHull();
+    const both: SilhouetteHull = {
+      ...partial,
+      groups: [...partial.groups, { ...partial.groups[0], joint: 'absent_bone' } as SilhouetteHullGroup],
+    };
+    const projector = new SilhouetteProjector(both, avatar);
+    expect(projector.usable).toBe(false);
+    expect(projector.update(orthoCamera(), 400, 400)).toBe(false);
+  });
+
+  it('will not accept a non-bone standing in for the joint', () => {
+    const { avatar } = hullAvatar('head');
+    const impostor = new THREE.Group();
+    impostor.name = 'jaw';
+    avatar.root.add(impostor);
+    avatar.root.updateMatrixWorld(true);
+    expect(new SilhouetteProjector(cubeHull('jaw'), avatar).usable).toBe(false);
+  });
+
+  it('resolves a joint through the loader-sanitised name', () => {
+    const root = new THREE.Group();
+    const bone = new THREE.Bone();
+    // What GLTFLoader does to a glTF node named "head bone".
+    bone.name = 'head_bone';
+    bone.userData.name = 'head bone';
+    root.add(bone);
+    root.updateMatrixWorld(true);
+    const avatar = {
+      root,
+      morphMeshes: [],
+      bones: {},
+      animations: [],
+      setMorph: () => {},
+      getMorph: () => 0,
+      dispose: () => {},
+    } satisfies LoadedAvatar;
+    expect(new SilhouetteProjector(cubeHull('head bone'), avatar).usable).toBe(true);
+  });
+
+  it('allocates no buffers per update', () => {
+    const { avatar, bone } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = orthoCamera();
+    projector.update(camera, 400, 400);
+    const buffer = projector.xy;
+    for (let i = 0; i < 8; i++) {
+      bone.rotation.y = i * 0.1;
+      avatar.root.updateMatrixWorld(true);
+      projector.update(camera, 400, 400);
+      expect(projector.xy).toBe(buffer);
+    }
   });
 });
