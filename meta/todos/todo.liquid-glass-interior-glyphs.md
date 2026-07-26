@@ -12,6 +12,23 @@ in `src/asset/rig.ts`) and the backface pass (`buildSkinMaterial().interior`,
 drawn at `renderOrder -1`). Lab exploration, last in the queue, decorative
 only.
 
+## Handoff, 2026-07-26
+
+You are picking this up straight after `todo.liquid-glass-chromium-lens`, which
+closed item 5. This is now the only todo that is both `open` and unblocked, so
+`cairn brief` will hand you exactly this. Items 7 and 8 have had their stated
+prerequisite land but stay `blocked` on the owner's ruling about the pool lab;
+item 6 stays blocked on `todo.liquid-glass-firefox-verify`, which needs a host
+where the Firefox build starts.
+
+What is already in place for you: the thickness bake (`aThickness`, baked in
+`bakeThickness` and consumed by the glass material), the interior backface pass
+at `renderOrder -1` from `buildSkinMaterial().interior`, and the layering
+reconciler `EngineImpl.applyGlassLayering`, which is where a third pass would
+have to be slotted. The lab precedents to copy are `demo/pool-lab.html` and
+`demo/live-lens-lab.html` with their smoke scripts; both gate their feature at
+zero so the shipped head is untouched, which is the pattern to follow here too.
+
 Owner direction (2026-07-25): scatter a few glyphs inside the head, suspended
 between the near and far surfaces, and let them move as though they were
 floating in fluid. Moving or shaking the head should drag them off course and

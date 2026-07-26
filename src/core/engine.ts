@@ -56,7 +56,14 @@ import {
 } from '../shaders';
 import { createPoolSurface } from '../shaders/pool-surface.js';
 import { createEmitter } from './emitter.js';
-import { createPageLens, type PageLens } from './page-lens.js';
+import {
+  countInteractiveDescendants,
+  createElementLens,
+  lensRegionsOverlap,
+  resolveLiveLens,
+} from './element-lens.js';
+import { documentRect, type LensSource } from './lens.js';
+import { createPageLens } from './page-lens.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
 import { resolveBackdropColor } from './backdrop.js';
  
@@ -229,11 +236,13 @@ class EngineImpl implements Engine {
   private lastEmergence = 0;
 
   /**
-   * Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4). Built only
-   * once a host names a subtree, so nothing here loads a rasteriser, allocates
-   * a texture or reads layout for a head that refracts nothing.
+   * The bound lens (dec.liquid-glass-architecture, rung 3, items 4 and 5).
+   * Built only once a host names a subtree, so nothing here loads a
+   * rasteriser, allocates a texture or reads layout for a head that refracts
+   * nothing. Either flavour: a rasterised snapshot everywhere, or live DOM
+   * where Chromium's HTML-in-Canvas is detected.
    */
-  private pageLens: PageLens | null = null;
+  private lens: LensSource | null = null;
   private lensSource: Element | null = null;
   private lensOptions: LensSourceOptions | undefined;
   /** The mounted canvas: the lens needs it to know which part of the page shows. */
@@ -432,12 +441,19 @@ class EngineImpl implements Engine {
   }
 
   captureLens(): void {
-    this.pageLens?.capture();
+    this.lens?.capture();
   }
 
   /**
    * Build the lens if a source and a canvas are both present. Idempotent and
    * safe to call before either exists.
+   *
+   * Two flavours, and the choice is made here rather than inside either one.
+   * Where Chromium's HTML-in-Canvas is detected AND the host has already put
+   * the subtree inside a `<canvas layoutsubtree>`, the live path uploads real
+   * DOM every frame. Everywhere else, which is the normal case, the snapshot
+   * path rasterises on demand exactly as before. A host-supplied rasteriser
+   * always wins: naming one is an explicit choice of the snapshot path.
    *
    * Statically imported, and the lazy alternative was built and measured
    * rather than waved away. First-load gzip: 28.32 kB on `glass`, 30.93 kB
@@ -455,34 +471,60 @@ class EngineImpl implements Engine {
    * it.
    */
   private buildLens(): void {
-    if (this.disposed || this.pageLens) return;
+    if (this.disposed || this.lens) return;
     const element = this.lensSource;
     const canvas = this.canvas;
     if (!element || !canvas) return;
     const rasterise = this.lensOptions?.rasterise;
-    this.pageLens = createPageLens({
-      element,
-      canvas,
-      recaptureMs: this.sysVfx.headConfig.lens.recaptureMs,
-      // A rasteriser that cannot load, or a page that will not rasterise, is a
-      // lens failure, not a mount failure: the head keeps rendering over the
-      // live page exactly as it did before the source was named.
-      onError: (err) => {
-        console.warn('[hologlyph] page lens capture failed; refraction stays off.', err);
-        this.emitter.emit('error', err);
-      },
-      ...(rasterise === undefined ? {} : { rasterise }),
-    });
-    this.pageLens.capture();
+    // A lens failure is not a mount failure: the head keeps rendering over the
+    // live page exactly as it did before the source was named.
+    const onError = (err: Error): void => {
+      console.warn('[hologlyph] lens source failed; refraction stays off.', err);
+      this.emitter.emit('error', err);
+    };
+    const live = rasterise === undefined ? resolveLiveLens(element) : null;
+    if (live) {
+      this.warnIfLensTrapsControls(element, canvas);
+      this.lens = createElementLens({ element, canvas, source: live, onError });
+    } else {
+      this.lens = createPageLens({
+        element,
+        canvas,
+        recaptureMs: this.sysVfx.headConfig.lens.recaptureMs,
+        onError,
+        ...(rasterise === undefined ? {} : { rasterise }),
+      });
+    }
+    this.lens.capture();
+  }
+
+  /**
+   * The live subtree stays interactive where it is LAID OUT, and hit-testing
+   * follows that undistorted box, not the refracted pixels. A head canvas over
+   * it therefore swallows every click meant for a control inside, and no
+   * transform can reconcile the two because a lens is not affine.
+   *
+   * Overlap alone is normal and silent: refracting decorative live content is
+   * the whole point, and there is nothing to warn about until a CONTROL is
+   * caught under the distortion. The library cannot move the host's DOM, so
+   * when one is, it says so.
+   */
+  private warnIfLensTrapsControls(element: Element, canvas: HTMLCanvasElement): void {
+    if (!lensRegionsOverlap(documentRect(canvas), documentRect(element))) return;
+    const trapped = countInteractiveDescendants(element);
+    if (trapped === 0) return;
+    console.warn(
+      `[hologlyph] the head covers ${trapped} interactive control(s) inside the live refract source; hit-testing follows their undistorted layout box, so they are unreachable under the head.`,
+    );
   }
 
   private teardownLens(): void {
-    if (!this.pageLens) return;
+    if (!this.lens) return;
     // Unbind BEFORE disposing: `setLens(null)` rebinds the placeholder, so the
     // sampler never holds a texture whose GPU resources have been freed.
     this.sysVfx.setLens(null);
-    this.pageLens.dispose();
-    this.pageLens = null;
+    this.lens.dispose();
+    this.lens = null;
   }
 
   dispose(): void {
@@ -1015,12 +1057,12 @@ class EngineImpl implements Engine {
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
 
-    // Snapshot lens. Two layout reads a frame, and only while a host has named
-    // a subtree: the sampled window has to follow the canvas wherever the page
-    // puts it, and the source rect is what says the snapshot went stale.
-    if (this.pageLens) {
-      this.pageLens.sync(this.sysVfx.headConfig.lens.strength);
-      this.sysVfx.setLens(this.pageLens.binding);
+    // Lens. Two layout reads a frame, and only while a host has named a
+    // subtree: the sampled window has to follow the canvas wherever the page
+    // puts it, and the source rect is what says a snapshot went stale.
+    if (this.lens) {
+      this.lens.sync(this.sysVfx.headConfig.lens.strength);
+      this.sysVfx.setLens(this.lens.binding);
     }
 
     // Pool drive. Both inputs are speeds: how fast the page is moving and how

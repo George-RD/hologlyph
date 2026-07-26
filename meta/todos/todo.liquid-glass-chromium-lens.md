@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.renderer
-status: open
+status: done
 created: 2026-07-25
 ---
 
@@ -31,13 +31,40 @@ Four constraints, all measured, that shape how it can be used:
 - Chromium only, behind a flag, origin trial Chrome 148 to 150. Nothing shipped
   against the trial keeps working when it lapses.
 
-Work, when a showcase build wants it:
+Work, as landed 2026-07-26:
 
-1. Capability check on `gl.texElementImage2D`, off by default, absence is normal.
-2. Real signature is arity 3: `texElementImage2D(target, internalformat, element)`
-   with a sized internalformat. The Chrome blog's six-argument form throws.
-3. Track the trial and `THREE.HTMLTexture`, which is not in the pinned three
-   0.178; only the older `examples/jsm/interactive/HTMLMesh.js` exists.
+1. Capability check on both halves of the flag,
+   `CanvasRenderingContext2D.prototype.drawElementImage` and
+   `WebGL2RenderingContext.prototype.texElementImage2D`, probed at the
+   prototype so nothing constructs a context. Off by default; absence is
+   normal.
+2. Second gate on the SHAPE of the named subtree: an immediate child of a
+   `<canvas layoutsubtree>`, which is the only arrangement the spike measured
+   and the only one the platform allows. Miss either gate and the engine builds
+   the snapshot lens as before.
+3. The upload goes through the 2D `drawElementImage` into the source canvas,
+   not `texElementImage2D` into a raw GL texture: the head renders through
+   three's `WebGPURenderer`, which owns every texture in the TSL graph and may
+   be running either backend. Reasons in the module header.
+4. Hit-testing: the engine warns when the head covers an interactive control
+   inside the refracted subtree. Overlap alone is silent, because refracting
+   decorative live content is the point.
 
-Acceptance: the enhancement engages only where detected, its absence changes
-nothing, and no interactive control is ever placed inside a distorted region.
+Delivered: `src/core/element-lens.ts`, the shared `LensSource` shape in
+`src/core/lens.ts`, engine selection in `buildLens`, 33 cases in
+`test/core-element-lens.test.ts` plus 5 in `test/core.test.ts`,
+`demo/live-lens-lab.html` and `tools/smoke/live-lens-shot.mjs`.
+
+Acceptance, measured against Chrome 150 on 2026-07-26 (all legs pass, see
+`tools/smoke/out/live-lens-shot.json`): the capability is detected only with
+the flag, the live subtree refracts through the head (46,482 px over 3 luma),
+the refracted content keeps moving while the DOM moves (1,904 px against a
+0 px floor) where the snapshot path contributes 0, the page outside the
+silhouette is untouched, a control under the head is unreachable at its own
+layout box and warned about while one beside it focuses normally, and with the
+flag off the same page falls through to the snapshot lens with no errors.
+
+Still true, and still the reason this is an enhancement: Chromium only, behind
+a flag, origin trial Chrome 148 to 150. `THREE.HTMLTexture` is not in the
+pinned three 0.178; only the older `examples/jsm/interactive/HTMLMesh.js`
+exists.

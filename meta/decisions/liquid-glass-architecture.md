@@ -112,8 +112,12 @@ not from `cairn brief`. Items 1 to 5 were `status: open` and mutually
 independent; the rest are `status: blocked` until their prerequisite lands.
 
 Landed so far: item 1 (2026-07-26), item 2 (2026-07-26), item 3 (2026-07-26),
-item 4 (2026-07-26). **Next is item 5.** Items 7 and 8 are unblocked by item 3
-but both want the owner's ruling on the pool lab before they start.
+item 4 (2026-07-26), item 5 (2026-07-26). **Next is item 10**, which is the
+only remaining todo that is both open and unblocked. Items 7 and 8 have had
+their stated prerequisite, item 3, land, but both still want the owner's ruling
+on the pool lab before they start, so they stay `blocked` until it comes. Item
+6 waits on `todo.liquid-glass-firefox-verify`, which needs a host where the
+Firefox build starts.
 
 1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
    unit of cost, one extra draw call, independent of every backdrop question.
@@ -127,7 +131,12 @@ but both want the owner's ruling on the pool lab before they start.
 4. `todo.liquid-glass-snapshot-lens` - LANDED 2026-07-26. Opt-in true lensing
    on every engine: `refract="#hero"` binds a rasterised snapshot the interior
    glass pass samples displaced by the view normal and the baked thickness.
-5. `todo.liquid-glass-chromium-lens` - enhancement only, never load-bearing.
+5. `todo.liquid-glass-chromium-lens` - LANDED 2026-07-26. Enhancement only,
+   never load-bearing: where `drawElementImage` and `texElementImage2D` are
+   both present AND the named subtree is an immediate child of a
+   `<canvas layoutsubtree>`, `refract` uploads live DOM every frame instead of
+   a snapshot. Either gate missing, and on every other engine, the snapshot
+   lens is built exactly as before.
 6. `todo.liquid-glass-live-css-layer` - live page content inside the head,
    cross-browser. Needs item 2, and needs `todo.liquid-glass-firefox-verify`
    resolved before it lands in `src/`.

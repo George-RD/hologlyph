@@ -1562,3 +1562,158 @@ describe('snapshot lens lifecycle (dec.liquid-glass-architecture, item 4)', () =
     expect(vfx.lensBindings.at(-1)).toBeNull();
   });
 });
+
+/**
+ * The Chromium HTML-in-Canvas enhancement, seen from the engine
+ * (dec.liquid-glass-architecture, item 5). What matters here is only which
+ * lens gets built: the upload path itself is covered in
+ * `test/core-element-lens.test.ts`.
+ */
+describe('live lens selection (dec.liquid-glass-architecture, item 5)', () => {
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 0.1, 0.5, 0, -0.1, 1, 0], 3),
+    );
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  async function mountHead(canvas = document.createElement('canvas')) {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(canvas, document.createElement('div'));
+    return engine;
+  }
+
+  /** A subtree shaped for the enhancement: an immediate child of a drawable canvas. */
+  function liveSubtree(options: { control?: boolean } = {}): HTMLElement {
+    const holder = document.createElement('canvas');
+    holder.setAttribute('layoutsubtree', '');
+    holder.width = 512;
+    holder.height = 512;
+    holder.getContext = (() => ({
+      clearRect() {},
+      setTransform() {},
+      drawElementImage() {},
+    })) as unknown as HTMLCanvasElement['getContext'];
+    const child = document.createElement('div');
+    child.getBoundingClientRect = () => ({ left: 0, top: 0, width: 512, height: 512 }) as DOMRect;
+    if (options.control) child.appendChild(document.createElement('input'));
+    holder.appendChild(child);
+    return child;
+  }
+
+  /**
+   * Turn the flag on. Torn down in `afterEach` rather than at the end of a
+   * test body, or a failed assertion would leak the fake capability into every
+   * later suite in this file and silently reroute the snapshot lens.
+   */
+  const scope = globalThis as unknown as {
+    CanvasRenderingContext2D?: unknown;
+    WebGL2RenderingContext?: unknown;
+  };
+  function withCapability(): void {
+    scope.CanvasRenderingContext2D = { prototype: { drawElementImage(): void {} } };
+    scope.WebGL2RenderingContext = { prototype: { texElementImage2D(): void {} } };
+  }
+  afterEach(() => {
+    delete scope.CanvasRenderingContext2D;
+    delete scope.WebGL2RenderingContext;
+  });
+
+  const stubRasteriser = () =>
+    vi.fn(async () => ({ width: 4, height: 4 }) as unknown as CanvasImageSource);
+
+  it('takes the snapshot path for the same subtree when the capability is absent', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    const rasterise = stubRasteriser();
+    engine.setLensSource(liveSubtree(), { rasterise });
+    await settle();
+    rafCb?.(16);
+
+    expect(rasterise).toHaveBeenCalledTimes(1);
+    expect(vfx.lensBindings.at(-1)).not.toBeNull();
+    engine.dispose();
+  });
+
+  it('uploads live DOM instead, with no rasteriser at all, where it is detected', async () => {
+    withCapability();
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+
+    engine.setLensSource(liveSubtree());
+    await settle();
+    rafCb?.(16);
+
+    const bound = vfx.lensBindings.at(-1);
+    expect(bound).not.toBeNull();
+    expect(bound?.texture).toBeDefined();
+    engine.dispose();
+  });
+
+  it('honours an explicit rasteriser over the enhancement', async () => {
+    withCapability();
+    const engine = await mountHead();
+    const rasterise = stubRasteriser();
+
+    engine.setLensSource(liveSubtree(), { rasterise });
+    await settle();
+
+    // Naming a rasteriser is an explicit choice of the snapshot path.
+    expect(rasterise).toHaveBeenCalledTimes(1);
+    engine.dispose();
+  });
+
+  it('warns when the head covers a control inside the subtree it refracts', async () => {
+    withCapability();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const canvas = document.createElement('canvas');
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 }) as DOMRect;
+    const engine = await mountHead(canvas);
+
+    // Hit-testing follows the undistorted layout box, so a head over the live
+    // subtree makes a control inside it unreachable, and no transform can
+    // reconcile that: a lens is not affine.
+    engine.setLensSource(liveSubtree({ control: true }));
+    expect(warn.mock.calls.flat().join(' ')).toContain('interactive control(s)');
+
+    warn.mockRestore();
+    engine.dispose();
+  });
+
+  it('says nothing about decorative live content under the head', async () => {
+    withCapability();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const canvas = document.createElement('canvas');
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 }) as DOMRect;
+    const engine = await mountHead(canvas);
+
+    // Overlap is the normal, intended arrangement: the head refracts what is
+    // behind it. Only a trapped CONTROL is worth a word.
+    engine.setLensSource(liveSubtree());
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+    engine.dispose();
+  });
+});

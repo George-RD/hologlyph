@@ -28,6 +28,16 @@ python3 -m http.server 8932 --directory .      # repo root (dist consumer fixtur
   outside the silhouette, the response to flipping `lens.strength`, and exact
   restoration when the source is dropped. Exits non-zero on any failed leg and
   writes `out/lens-shot.json`.
+- `live-lens-shot.mjs` (node): drives `demo/live-lens-lab.html` for the
+  Chromium HTML-in-Canvas enhancement (`dec.liquid-glass-architecture`, rung 3,
+  item 5). Launches the installed Google Chrome twice, once with
+  `--enable-blink-features=CanvasDrawElement` and once without, and measures
+  the capability, a residual-motion floor, engagement, liveness against a
+  frozen snapshot over the same interval, an untouched page outside the
+  silhouette, hit-testing for a control under the head and one beside it, and a
+  silent fall-through to the snapshot lens with the flag off. Point `--chrome`
+  at another executable if yours is elsewhere. Exits non-zero on any failed leg
+  and writes `out/live-lens-shot.json`.
 - `demo/textskin-variants.html` (served by the vite dev server) renders the real
   bust under grid/colour/emissive variants for owner review; the 2026-07-17 pass
   kept DEFAULT_GRID (variant A) for the best readability/density balance.
