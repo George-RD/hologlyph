@@ -13,7 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
-import { FrontSide, Mesh, MeshBasicMaterial, SkinnedMesh } from 'three';
+import { FrontSide, Mesh, MeshBasicMaterial, NoBlending, SkinnedMesh } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -35,6 +35,7 @@ import type {
   VisemeFrame,
 } from '../contracts.js';
 import { createAssetLoader } from '../asset';
+import { bakeThickness, createThicknessBudget } from '../asset/rig.js';
 import { createAudioEngine } from '../audio';
 import { createBehaviorMachine } from '../behavior';
 import { createMotionEngine } from '../motion';
@@ -63,6 +64,38 @@ function isEyeMesh(mesh: THREE.Mesh): boolean {
       material?.name === 'eye_iris' ||
       (material as unknown as Record<string, unknown>)?.isEyeball === true,
   );
+}
+
+/**
+ * Clone the primary morph mesh as a colour-free or interior overlay pass:
+ * same geometry, skeleton, pose and morph influence array, different material
+ * and render order. Sharing `morphTargetInfluences` by reference is what keeps
+ * the overlay welded to the face without a second animation path.
+ */
+function cloneOverlayMesh(
+  primary: THREE.Mesh,
+  material: THREE.Material,
+  renderOrder: number,
+): THREE.Mesh | THREE.SkinnedMesh {
+  let overlay: THREE.Mesh | THREE.SkinnedMesh;
+  if ('isSkinnedMesh' in primary && (primary as THREE.SkinnedMesh).isSkinnedMesh) {
+    const skinned = primary as THREE.SkinnedMesh;
+    const skinnedOverlay = new SkinnedMesh(skinned.geometry, material);
+    if (skinned.skeleton) {
+      skinnedOverlay.bindMode = skinned.bindMode;
+      skinnedOverlay.bind(skinned.skeleton, skinned.bindMatrix);
+    }
+    overlay = skinnedOverlay;
+  } else {
+    overlay = new Mesh(primary.geometry, material);
+  }
+  overlay.position.copy(primary.position);
+  overlay.rotation.copy(primary.rotation);
+  overlay.scale.copy(primary.scale);
+  overlay.morphTargetDictionary = primary.morphTargetDictionary;
+  overlay.morphTargetInfluences = primary.morphTargetInfluences;
+  overlay.renderOrder = renderOrder;
+  return overlay;
 }
 
 const DEFAULT_TEXT =
@@ -143,7 +176,17 @@ class EngineImpl implements Engine {
   private avatar: LoadedAvatar | null = null;
   private skinMaterial: THREE.Material | null = null;
   private occlusionMaskMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
+  private interiorMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
   private readonly displacedMaterials = new Set<THREE.Material>();
+  /**
+   * The occlusion mask plus the authored internals that were opaque as
+   * loaded. They only join the transparent render list while the interior
+   * glass pass needs `renderOrder` to govern the whole draw
+   * (dec.liquid-glass-architecture, item 1).
+   */
+  private readonly layeredMaterials = new Set<THREE.Material>();
+  /** Last layering state pushed to those materials; null forces a re-apply. */
+  private glassLayeringActive: boolean | null = null;
   private mountGeneration = 0;
   private mountSerial: Promise<void> = Promise.resolve();
 
@@ -317,14 +360,7 @@ class EngineImpl implements Engine {
     this.sysSpeech.dispose();
     this.sysTextSkin.dispose();
     this.eyeTextSkin.dispose();
-    if (this.occlusionMaskMesh) {
-      this.occlusionMaskMesh.removeFromParent();
-      const mats = Array.isArray(this.occlusionMaskMesh.material)
-        ? this.occlusionMaskMesh.material
-        : [this.occlusionMaskMesh.material];
-      for (const m of mats) m?.dispose();
-      this.occlusionMaskMesh = null;
-    }
+    this.disposeOverlayMeshes();
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -417,14 +453,7 @@ class EngineImpl implements Engine {
   }
 
   private replaceAvatar(candidateAvatar: LoadedAvatar): void {
-    if (this.occlusionMaskMesh) {
-      this.occlusionMaskMesh.removeFromParent();
-      const mats = Array.isArray(this.occlusionMaskMesh.material)
-        ? this.occlusionMaskMesh.material
-        : [this.occlusionMaskMesh.material];
-      for (const m of mats) m?.dispose();
-      this.occlusionMaskMesh = null;
-    }
+    this.disposeOverlayMeshes();
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -452,7 +481,8 @@ class EngineImpl implements Engine {
       if (n > 0) eyeFrame = { cx: sx / n, cy: sy / n, cz: sz / n };
     });
 
-    const headMat = this.sysVfx.createSkinMaterial(this.sysTextSkin);
+    const skinMats = this.sysVfx.createSkinMaterial(this.sysTextSkin);
+    const headMat = skinMats.front;
     let eyeballMat: THREE.Material | null = null;
     const getEyeballMat = () => {
       if (!eyeballMat) {
@@ -467,6 +497,16 @@ class EngineImpl implements Engine {
       if ((obj as THREE.Mesh).isMesh) allMeshes.add(obj as THREE.Mesh);
     });
 
+    // One allowance for the whole avatar: a rig of many individually legal
+    // meshes must not add up to an unbounded synchronous stall.
+    const thicknessBudget = createThicknessBudget();
+    const bakedGeometries = new Set<THREE.BufferGeometry>();
+    // The far wall is cloned from a mesh the glass skin actually dresses.
+    // `morphMeshes[0]` is only guaranteed to carry canonical morphs, so on a
+    // custom rig it can be the mouth cavity or an eye, which would clone the
+    // wrong surface and sample zero thickness.
+    let morphingBody: THREE.Mesh | null = null;
+    let anyBody: THREE.Mesh | null = null;
     for (const mesh of allMeshes) {
       const original = mesh.material;
       const name = (Array.isArray(original) ? undefined : original?.name) as string | undefined;
@@ -503,50 +543,62 @@ class EngineImpl implements Engine {
           this.displacedMaterials.add(original);
         }
         mesh.material = this.skinMaterial;
+      } else {
+        continue;
       }
+      // Only the glass skin reads body thickness, and the raycast that fills
+      // it is the costliest part of mask baking, so it runs here rather than
+      // on every mesh in the scene. Instanced nodes share one geometry and one
+      // attribute, so baking the second instance would only spend the shared
+      // allowance and could overwrite a good bake with zeros.
+      if (!bakedGeometries.has(mesh.geometry)) {
+        bakedGeometries.add(mesh.geometry);
+        bakeThickness(mesh, thicknessBudget);
+      }
+      if (!morphingBody && mesh.morphTargetInfluences) morphingBody = mesh;
+      anyBody ??= mesh;
     }
 
-    // Full-head occlusion depth mask (renderOrder = 0). Writes outer surface depth
-    // with colorWrite = false to cull internal geometry (eyeballs, mouth cavity)
-    // before rendering translucent skin or eye textures.
-    const primaryMesh = this.avatar.morphMeshes[0];
-    if (primaryMesh) {
+    // Overlay passes cloned off the body mesh. Both track its pose, skeleton
+    // and morph influences, so they deform with the face for free.
+    //
+    // Draw order, back to front (dec.liquid-glass-architecture, item 1):
+    //   -1 interior   back-facing far wall, blended, no depth write
+    //    0 mask       front surface depth only, no colour
+    //    1 internals  eyeballs, mouth cavity, eye trim, culled by the mask
+    //    2 skin       translucent front surface
+    //
+    // That ordering only holds if every layer is in one render list, because
+    // three draws the whole opaque list before the transparent one and
+    // `renderOrder` sorts only within a list. Moving the mask and the authored
+    // internals across is observable in its own right: with the jaw open it
+    // shifts the mouth cavity by about 15 luma over the aperture. So the move
+    // is not unconditional. `applyGlassLayering` performs it only while the
+    // interior pass has something to show, which keeps `glass.amount = 0`
+    // pixel-identical to the look before this change.
+    // Prefer a morph-bearing body mesh so the overlays deform with the face.
+    const bodyMesh = morphingBody ?? anyBody;
+    this.layeredMaterials.clear();
+    this.glassLayeringActive = null;
+    if (bodyMesh) {
       const occlusionMaskMaterial = new MeshBasicMaterial({
         colorWrite: false,
         depthWrite: true,
         depthTest: true,
+        blending: NoBlending,
         side: FrontSide,
       });
-      let maskMesh: THREE.Mesh | THREE.SkinnedMesh;
-      if ('isSkinnedMesh' in primaryMesh && (primaryMesh as THREE.SkinnedMesh).isSkinnedMesh) {
-        const skinned = primaryMesh as THREE.SkinnedMesh;
-        const skinnedMask = new SkinnedMesh(skinned.geometry, occlusionMaskMaterial);
-        if (skinned.skeleton) {
-          skinnedMask.bindMode = skinned.bindMode;
-          skinnedMask.bind(skinned.skeleton, skinned.bindMatrix);
-        }
-        maskMesh = skinnedMask;
-      } else {
-        maskMesh = new Mesh(primaryMesh.geometry, occlusionMaskMaterial);
-      }
-      maskMesh.position.copy(primaryMesh.position);
-      maskMesh.rotation.copy(primaryMesh.rotation);
-      maskMesh.scale.copy(primaryMesh.scale);
-      maskMesh.morphTargetDictionary = primaryMesh.morphTargetDictionary;
-      maskMesh.morphTargetInfluences = primaryMesh.morphTargetInfluences;
-      maskMesh.renderOrder = 0;
-      this.occlusionMaskMesh = maskMesh;
-      const maskParent = primaryMesh.parent ?? this.avatar.root;
-      maskParent.add(maskMesh);
+      this.occlusionMaskMesh = cloneOverlayMesh(bodyMesh, occlusionMaskMaterial, 0);
+      this.interiorMesh = cloneOverlayMesh(bodyMesh, skinMats.interior, -1);
+      this.layeredMaterials.add(occlusionMaskMaterial);
+      const overlayParent = bodyMesh.parent ?? this.avatar.root;
+      overlayParent.add(this.occlusionMaskMesh);
+      overlayParent.add(this.interiorMesh);
     }
 
-    // Set render orders:
-    // Layer 0: occlusionMaskMesh (renderOrder = 0)
-    // Layer 1: internal geometry (eyeballs, mouth interior, eye trim) (renderOrder = 1)
-    // Layer 2: translucent face skin (renderOrder = 2)
     this.avatar.root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh || mesh === this.occlusionMaskMesh) return;
+      if (!mesh.isMesh || mesh === this.occlusionMaskMesh || mesh === this.interiorMesh) return;
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       const isInternal =
         isEyeMesh(mesh) ||
@@ -554,15 +606,47 @@ class EngineImpl implements Engine {
       if (isInternal) {
         mesh.renderOrder = 1;
         for (const mat of materials) {
-          if (mat) {
-            mat.depthTest = true;
-            mat.depthWrite = true;
-          }
+          if (!mat) continue;
+          mat.depthTest = true;
+          mat.depthWrite = true;
+          // Already-transparent internals (the eyeball) keep their blending
+          // and their list. Only the opaque ones move, and they move as a
+          // straight write so the pixels they produce never change.
+          if (mat.transparent) continue;
+          mat.blending = NoBlending;
+          this.layeredMaterials.add(mat);
         }
       } else {
         mesh.renderOrder = 2;
       }
     });
+
+    this.applyGlassLayering();
+  }
+
+  /**
+   * Switch the glass draw order on or off to match `skin.glass.amount`.
+   *
+   * The interior wall needs the mask and the authored internals in the same
+   * render list as itself, and that move is observable through an open mouth
+   * even when the interior draws nothing. So it happens only while the glass
+   * is on. Called every frame and guarded on the last applied state, because
+   * `engine.vfx.setHeadConfig` is a public surface that renders nothing itself:
+   * reconciling from the live config is what makes the layering hold however
+   * the amount was changed.
+   */
+  private applyGlassLayering(): void {
+    // No interior pass means nothing needs the single-list ordering, so the
+    // authored internals stay exactly where the avatar put them. A rig made
+    // only of kept mouth and eye materials lands here.
+    const active = this.interiorMesh !== null && this.sysVfx.headConfig.skin.glass.amount > 0;
+    if (active === this.glassLayeringActive) return;
+    this.glassLayeringActive = active;
+    if (this.interiorMesh) this.interiorMesh.visible = active;
+    for (const material of this.layeredMaterials) {
+      material.transparent = active;
+      material.needsUpdate = true;
+    }
   }
 
   private applyMotionAndObservation(host: Element): void {
@@ -595,6 +679,27 @@ class EngineImpl implements Engine {
     const color = resolveBackdropColor(host, backdrop.color);
     if (color === backdrop.color) return;
     this.sysVfx.setHeadConfig({ skin: { backdrop: { color } } });
+  }
+
+  /**
+   * Tear down the occlusion mask and interior overlay passes. Idempotent, and
+   * safe to call before the avatar itself is disposed: the overlays only ever
+   * borrow the primary mesh's geometry, so only their materials are owned.
+   */
+  private disposeOverlayMeshes(): void {
+    for (const overlay of [this.occlusionMaskMesh, this.interiorMesh]) {
+      if (!overlay) continue;
+      overlay.removeFromParent();
+      const mats = Array.isArray(overlay.material) ? overlay.material : [overlay.material];
+      for (const mat of mats) mat?.dispose();
+    }
+    this.occlusionMaskMesh = null;
+    this.interiorMesh = null;
+    // The mask material is gone and the authored internals are about to be
+    // disposed or re-collected, so holding either would pin textures for the
+    // rest of a disposed engine's life.
+    this.layeredMaterials.clear();
+    this.glassLayeringActive = null;
   }
 
   private disposeDisplacedMaterials(): void {
@@ -690,6 +795,7 @@ class EngineImpl implements Engine {
     } else if (state === 'departing' && this.sysVfx.emergence <= 0.001) {
       this.sysBehavior.dispatch({ type: 'submerge-complete' });
     }
+    this.applyGlassLayering();
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
     // While frozen, skip the motion update entirely: idle and gaze phase off

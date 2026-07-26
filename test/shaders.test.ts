@@ -27,6 +27,38 @@ import { adaptToBackdrop } from '../src/shaders/glass';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type { TextSkinEngine } from '../src/contracts';
 
+/**
+ * The slice of `MeshStandardNodeMaterial` these tests read. `buildSkinMaterial`
+ * returns `THREE.Material` so the contract stays free of the WebGPU node
+ * types, but every skin material is a node material underneath.
+ */
+interface TslNode {
+  traverse(callback: (node: unknown) => void): void;
+}
+interface NodeMaterialShape {
+  colorNode: TslNode;
+  emissiveNode: TslNode;
+  opacityNode: TslNode;
+}
+
+/** True when `target` appears anywhere in `root`'s node graph. */
+function reachesNode(root: TslNode, target: unknown): boolean {
+  let found = false;
+  root.traverse((node) => {
+    if (node === target) found = true;
+  });
+  return found;
+}
+
+/** The first node in `root`'s graph matching `predicate`, if any. */
+function findNode(root: TslNode, predicate: (node: unknown) => boolean): unknown {
+  let hit: unknown;
+  root.traverse((node) => {
+    if (hit === undefined && predicate(node)) hit = node;
+  });
+  return hit;
+}
+
 describe('emergence mapping maths (pure)', () => {
   it('easeEmergence is monotonic, bounded, and pinned at the ends', () => {
     expect(easeEmergence(0)).toBe(0);
@@ -138,15 +170,51 @@ describe('VFX engine (no GPU objects)', () => {
         return 0;
       },
     } as unknown as TextSkinEngine;
-    const skinMaterial = vfx.createSkinMaterial(skin);
+    const skinMaterials = vfx.createSkinMaterial(skin);
     const eyeMaterial = vfx.createEyeballMaterial(skin, { cx: 0.688, cy: 0.003, cz: 0 });
 
-    skinMaterial.dispose();
+    skinMaterials.front.dispose();
+    skinMaterials.interior.dispose();
     eyeMaterial.dispose();
     bindingsLive = false;
 
     expect(() => vfx.update(0.016)).not.toThrow();
     vfx.dispose();
+  });
+
+  it('keeps the skin binding alive while either half of the pair survives', () => {
+    // The two materials share one uniform set, and the engine drops the
+    // interior overlay on avatar replace while the front keeps rendering. If
+    // the binding retired on the first dispose, the survivor would stop
+    // receiving scroll and config updates.
+    for (const disposeFirst of ['front', 'interior'] as const) {
+      const vfx = createVFXEngine();
+      let scrollReads = 0;
+      const skin = {
+        texture: new THREE.CanvasTexture(),
+        get scrollOffset() {
+          scrollReads++;
+          return 0.25;
+        },
+      } as unknown as TextSkinEngine;
+      const pair = vfx.createSkinMaterial(skin);
+      const survivor = disposeFirst === 'front' ? pair.interior : pair.front;
+
+      pair[disposeFirst].dispose();
+      // A repeated dispose must not retire the binding either.
+      pair[disposeFirst].dispose();
+      vfx.update(0.016);
+      expect(scrollReads, `${disposeFirst} disposed first`).toBeGreaterThan(0);
+
+      vfx.setHeadConfig({ skin: { glass: { amount: 0.4 } } });
+      expect(vfx.headConfig.skin.glass.amount).toBe(0.4);
+
+      const before = scrollReads;
+      survivor.dispose();
+      vfx.update(0.016);
+      expect(scrollReads, `${disposeFirst}: binding retired once both are gone`).toBe(before);
+      vfx.dispose();
+    }
   });
 });
 describe('VFX reduced motion', () => {
@@ -343,6 +411,90 @@ describe('buildSkinMaterial (no GPU objects)', () => {
     expect(skin.texture.wrapT).toBe(THREE.RepeatWrapping);
   });
 
+  it('pairs the front surface with a back-facing interior wall', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    expect(interior).not.toBe(material);
+    expect(material.side).toBe(THREE.FrontSide);
+    expect(interior.side).toBe(THREE.BackSide);
+    expect(interior.transparent).toBe(true);
+    // The interior draws behind the occlusion mask, so it must not contribute
+    // depth or the eyeballs and mouth cavity would resolve against it.
+    expect(interior.depthWrite).toBe(false);
+    expect(material.depthWrite).toBe(true);
+  });
+
+  it('wires the baked thickness into both Beer-Lambert terminals', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+    const front = material as unknown as NodeMaterialShape;
+    const back = interior as unknown as NodeMaterialShape;
+
+    const thickness = findNode(
+      front.opacityNode,
+      (node) => (node as { _attributeName?: string })._attributeName === 'aThickness',
+    );
+    expect(thickness, 'aThickness reaches the front opacity').toBeDefined();
+
+    // Absorption is the half of the feature that cannot be seen in the
+    // material's shape: thick body hides more of the page, and the light that
+    // does reach the far wall is tinted on the way through. Remove either and
+    // this fails while every other test here stays green.
+    expect(reachesNode(back.colorNode, thickness)).toBe(true);
+    expect(reachesNode(back.colorNode, uniforms.glassTint)).toBe(true);
+    // The front stays achromatic: tinting it flattened the glyph field and
+    // failed the visual eval's yaw legibility, so the tint must not be there.
+    expect(reachesNode(front.colorNode, uniforms.glassTint)).toBe(false);
+  });
+
+  it('drives both halves of the body from one shared uniform node', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    // `buildSkinMaterial` returns THREE.Material to keep the contract free of
+    // the WebGPU node types; both are MeshStandardNodeMaterial in fact.
+    const front = material as unknown as NodeMaterialShape;
+    const back = interior as unknown as NodeMaterialShape;
+
+    // The interior graph is built from the same uniform objects rather than
+    // cloned off the front material, so `applyConfigToBindings` needs no
+    // fan-out and the two halves cannot drift on `setHeadConfig`. This is a
+    // representative sample across the config groups the interior reads, not
+    // an exhaustive enumeration of its graph.
+    const shared = [
+      ['glassAmount', uniforms.glassAmount],
+      ['glassTint', uniforms.glassTint],
+      ['glowGain', uniforms.glowGain],
+      ['glowScale', uniforms.glowScale],
+      ['scroll', uniforms.scroll],
+      ['tone', uniforms.tone],
+      ['inkColor', uniforms.inkColor],
+      ['glyphScale', uniforms.glyphScale],
+      ['cavity', uniforms.cavity],
+      ['baseOpacity', uniforms.baseOpacity],
+    ] as const;
+    for (const [name, node] of shared) {
+      const inFront =
+        reachesNode(front.colorNode, node) ||
+        reachesNode(front.emissiveNode, node) ||
+        reachesNode(front.opacityNode, node);
+      const inInterior =
+        reachesNode(back.colorNode, node) ||
+        reachesNode(back.emissiveNode, node) ||
+        reachesNode(back.opacityNode, node);
+      expect(inFront, `${name} reachable from the front graph`).toBe(true);
+      expect(inInterior, `${name} reachable from the interior graph`).toBe(true);
+    }
+
+    // Negative control. The rim colour is a silhouette term with no meaning on
+    // an inside face, so a graph search that always succeeded is caught here.
+    expect(reachesNode(front.emissiveNode, uniforms.rimColor)).toBe(true);
+    expect(reachesNode(back.emissiveNode, uniforms.rimColor)).toBe(false);
+    expect(reachesNode(back.colorNode, uniforms.rimColor)).toBe(false);
+    expect(reachesNode(back.opacityNode, uniforms.rimColor)).toBe(false);
+  });
+
   it('seeds the glass uniforms and the backdrop adaptation from the config', () => {
     const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
     const { uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
@@ -359,7 +511,7 @@ describe('buildSkinMaterial (no GPU objects)', () => {
   it('writes the adaptation into the live material when the backdrop turns light', () => {
     const vfx = createVFXEngine();
     const skin = { texture: new THREE.CanvasTexture(), scrollOffset: 0 } as unknown as TextSkinEngine;
-    const material = vfx.createSkinMaterial(skin);
+    const materials = vfx.createSkinMaterial(skin);
     const setRGB = vi.spyOn(THREE.Color.prototype, 'setRGB');
 
     vfx.setHeadConfig({ skin: { backdrop: { color: '#ffffff' } } });
@@ -371,7 +523,8 @@ describe('buildSkinMaterial (no GPU objects)', () => {
     expect(setRGB).toHaveBeenCalledWith(...adaptation.inkColor);
     expect(setRGB).toHaveBeenCalledWith(...adaptation.rimColor);
     setRGB.mockRestore();
-    material.dispose();
+    materials.front.dispose();
+    materials.interior.dispose();
     vfx.dispose();
   });
 

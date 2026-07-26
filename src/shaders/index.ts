@@ -13,6 +13,7 @@ import {
   DEFAULT_HEAD_CONFIG,
   type HeadConfig,
   type HeadConfigOverrides,
+  type SkinMaterials,
   type TextSkinEngine,
   type VFXEngine,
 } from '../contracts';
@@ -166,16 +167,26 @@ export function createVFXEngine(): VFXEngine {
   }
 
   const engine: VFXEngine = {
-    createSkinMaterial(skin: TextSkinEngine): THREE.Material {
+    createSkinMaterial(skin: TextSkinEngine): SkinMaterials {
       if (disposed) throw new Error('VFXEngine: createSkinMaterial after dispose');
       const built = buildSkinMaterial(skin, activeConfig);
       const binding = { skin, scroll: built.scroll, uniforms: built.uniforms };
       skinBindings.push(binding);
-      built.material.addEventListener('dispose', () => {
+      // The pair shares one uniform set, so the binding must outlive whichever
+      // half is disposed first: the engine drops the interior overlay on
+      // avatar replace while the front material lives on. Counting materials
+      // rather than events keeps a repeated `dispose()` from retiring the
+      // binding while its other half is still rendering.
+      const live = new Set<THREE.Material>([built.material, built.interior]);
+      const retire = (material: THREE.Material) => (): void => {
+        live.delete(material);
+        if (live.size > 0) return;
         const index = skinBindings.indexOf(binding);
         if (index >= 0) skinBindings.splice(index, 1);
-      });
-      return built.material;
+      };
+      built.material.addEventListener('dispose', retire(built.material));
+      built.interior.addEventListener('dispose', retire(built.interior));
+      return { front: built.material, interior: built.interior };
     },
 
     createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material {

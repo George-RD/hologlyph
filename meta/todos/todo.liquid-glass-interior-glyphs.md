@@ -1,13 +1,15 @@
 ---
 node: hologlyph.runtime.shaders
-status: blocked
+status: open
 created: 2026-07-25
 ---
 
 # Sparse interior glyphs drifting inside the glass
 
-Order 10 (`dec.liquid-glass-architecture`). Blocked on
-`todo.liquid-glass-solid-body`. Lab exploration, last in the queue, decorative
+Order 10 (`dec.liquid-glass-architecture`). Unblocked on 2026-07-26 by
+`todo.liquid-glass-solid-body`, which landed the thickness bake (`aThickness`
+in `src/asset/rig.ts`) and the backface pass (`buildSkinMaterial().interior`,
+drawn at `renderOrder -1`). Lab exploration, last in the queue, decorative
 only.
 
 Owner direction (2026-07-25): scatter a few glyphs inside the head, suspended

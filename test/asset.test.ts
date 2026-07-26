@@ -7,7 +7,17 @@ import {
   RIG_BONES,
   type LoadedAvatar,
 } from '../src/contracts';
-import { buildLoadedAvatar, validateRig, type RigReport } from '../src/asset/rig';
+import {
+  bakeFeatureMasks,
+  bakeThickness,
+  buildLoadedAvatar,
+  computeThickness,
+  createThicknessBudget,
+  THICKNESS_WORK_BUDGET,
+  THICKNESS_VERTEX_BUDGET,
+  validateRig,
+  type RigReport,
+} from '../src/asset/rig';
 import { createAssetLoader } from '../src/asset/loader';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
@@ -223,5 +233,195 @@ describe('feature mask baking (buildLoadedAvatar)', () => {
     expect(aLips.data).toBe(aBrow.data);
     expect(aCavity.data).toBe(aSocket.data);
     expect(aLips.data).not.toBe(aCavity.data);
+  });
+});
+
+/**
+ * A ray from `probeNear` travels +x and must stop at the near wall (t = 0.3),
+ * not at the slanted far wall (t = 0.715).
+ *
+ * The far wall's bounding box overlaps the probe's own grid cell while its
+ * actual intersection lies four cells downrange, so a grid traversal that
+ * accepts the first bucket hit picks the wrong surface. The near wall lives in
+ * the next cell along and is only found by continuing the walk.
+ *
+ * `probeFar` marches the length of the box to the back wall (t = 0.95), which
+ * pins the normalisation divisor so the assertion reads in absolute distance.
+ */
+function makeNearestHitProbe(): THREE.BufferGeometry {
+  const positions = [
+    // 0-2 near prober: a sliver in the plane x = 0.1, looking along +x.
+    0.1, 0.5, 0.45, 0.1, 0.502, 0.45, 0.1, 0.5, 0.452,
+    // 3-5 far prober: a sliver in the plane x = 0, looking along +x.
+    0, 0.05, 0.05, 0, 0.052, 0.05, 0, 0.05, 0.052,
+    0.4, 0.3, 0.3, 0.4, 0.7, 0.3, 0.4, 0.5, 0.8, // 6-8 near wall, plane x = 0.4
+    0.9, 0.4, 0.4, 0.9, 0.6, 0.4, 0.05, 0.5, 0.9, // 9-11 far wall, slanted
+    0.95, 0, 0, 0.95, 1, 0, 0.95, 0, 1, // 12-14 back wall, plane x = 0.95
+  ];
+  // Probers look along -x so their inward ray runs +x. Every wall vertex looks
+  // along +y, so its own ray leaves through the floor without hitting anything
+  // and cannot disturb the normalisation. The probers are slivers rather than
+  // loose points because a vertex no face references casts no ray at all.
+  const normals: number[] = [];
+  for (let i = 0; i < 6; i++) normals.push(-1, 0, 0);
+  for (let i = 0; i < 9; i++) normals.push(0, 1, 0);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geo.setIndex([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  return geo;
+}
+
+/** Index of the near prober and the far prober in that fixture. */
+const PROBE_NEAR = 0;
+const PROBE_FAR = 3;
+
+describe('computeThickness', () => {
+  it('takes the nearest surface even when a farther one shares the origin cell', () => {
+    const thickness = computeThickness(makeNearestHitProbe());
+
+    // Normalised by the longest hit in the mesh, which is the far prober's 0.95.
+    expect(thickness[PROBE_FAR]).toBeCloseTo(1, 5);
+    expect(thickness[PROBE_NEAR]).toBeCloseTo(0.3 / 0.95, 4);
+    // The slanted far wall at 0.715 is the wrong answer, not merely imprecise.
+    expect(thickness[PROBE_NEAR]).toBeLessThan(0.5);
+  });
+
+  it('leaves thickness at zero when a ray finds no opposing surface', () => {
+    // A single triangle: every ray escapes, so there is no body to measure.
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3),
+    );
+    geo.setAttribute(
+      'normal',
+      new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3),
+    );
+    geo.setIndex([0, 1, 2]);
+    expect(Array.from(computeThickness(geo))).toEqual([0, 0, 0]);
+  });
+
+  it('skips the raycast entirely for meshes over the vertex budget', () => {
+    const count = THICKNESS_VERTEX_BUDGET + 1;
+    const positions = new Float32Array(count * 3);
+    const normals = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = i % 7;
+      positions[i * 3 + 1] = (i % 5) - 2;
+      positions[i * 3 + 2] = (i % 3) - 1;
+      normals[i * 3 + 2] = 1;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geo.setIndex(Array.from({ length: count }, (_, i) => i));
+
+    // Over budget the bake bails out rather than stalling the page, so every
+    // vertex reads zero thickness and Beer-Lambert absorption switches off.
+    const thickness = computeThickness(geo);
+    expect(thickness).toHaveLength(count);
+    expect(thickness.every((v) => v === 0)).toBe(true);
+  });
+
+  it('skips the raycast when triangle bounding boxes flood the grid', () => {
+    // Well under the triangle budget, but every triangle spans the whole
+    // bounding box, so each one files itself under every cell. Without the
+    // reference cap the bucket table alone would be hundreds of megabytes.
+    const tris = 6_000;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([-1, -1, -1, 1, 1, -1, 1, -1, 1], 3),
+    );
+    geo.setAttribute(
+      'normal',
+      new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3),
+    );
+    const index: number[] = [];
+    for (let t = 0; t < tris; t++) index.push(0, 1, 2);
+    geo.setIndex(index);
+
+    // Zero output alone would not prove the cap fired, because these rays find
+    // nothing anyway. Spending no work budget does: the bail happens while the
+    // grid is still being counted, before a single ray is cast.
+    const budget = createThicknessBudget();
+    expect(Array.from(computeThickness(geo, budget))).toEqual([0, 0, 0]);
+    expect(budget.remaining).toBe(THICKNESS_WORK_BUDGET);
+  });
+
+  it('abandons the bake when the shared work budget runs out', () => {
+    const geo = makeNearestHitProbe();
+    // The probe needs a handful of intersection tests; one is not enough.
+    const spent = { remaining: 1 };
+    expect(Array.from(computeThickness(geo, spent))).toEqual(new Array(15).fill(0));
+
+    // One allowance covers the whole avatar, so a second mesh sharing an
+    // exhausted budget gets nothing even though it is individually legal.
+    const budget = createThicknessBudget();
+    expect(computeThickness(makeNearestHitProbe(), budget)[PROBE_FAR]).toBeCloseTo(1, 5);
+    expect(budget.remaining).toBeLessThan(THICKNESS_WORK_BUDGET);
+    budget.remaining = 0;
+    expect(Array.from(computeThickness(makeNearestHitProbe(), budget))).toEqual(
+      new Array(15).fill(0),
+    );
+  });
+
+  it('bakes non-indexed triangle soup by treating position triples as faces', () => {
+    // A custom GLB may well arrive without an index buffer, and refusing it
+    // would silently disable absorption on that avatar. Three source vertices
+    // look along +z at a wall four cells downrange that strictly contains all
+    // three projections, so every hit is interior: no grazing, no vertex-exact
+    // intersection, and the same layout indexed or not.
+    const positions = [
+      0, 0, 0, 0.2, 0, 0, 0, 0.2, 0, // 0-2 source, looking along +z
+      -1, -1, 1, 3, -1, 1, -1, 3, 1, // 3-5 wall at z = 1, looking along -z
+    ];
+    const normals = [0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
+    const indexed = new THREE.BufferGeometry();
+    indexed.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    indexed.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    indexed.setIndex([0, 1, 2, 3, 4, 5]);
+    const soup = indexed.toNonIndexed();
+    expect(soup.index).toBeNull();
+
+    const withIndex = computeThickness(indexed);
+    const withoutIndex = computeThickness(soup);
+
+    // Every source ray travels exactly one unit, the longest hit in the mesh,
+    // so the normalised thickness is 1. The wall's own rays escape.
+    for (const result of [withIndex, withoutIndex]) {
+      expect(Array.from(result.slice(0, 3)).map((v) => Math.round(v * 1000) / 1000)).toEqual([
+        1, 1, 1,
+      ]);
+      expect(Array.from(result.slice(3))).toEqual([0, 0, 0]);
+    }
+  });
+});
+
+describe('bakeFeatureMasks and bakeThickness', () => {
+  it('declares thickness empty and fills it only when explicitly baked', () => {
+    const mesh = new THREE.Mesh(makeNearestHitProbe(), new THREE.MeshStandardMaterial());
+    bakeFeatureMasks(mesh);
+
+    const thickness = mesh.geometry.attributes.aThickness;
+    expect(thickness).toBeDefined();
+    expect(thickness?.itemSize).toBe(1);
+    expect(thickness?.count).toBe(15);
+    // Mask baking must not pay for the raycast: the attribute exists so the
+    // shader compiles, but absorption is off until a glass mesh asks for it.
+    expect(thickness?.getX(PROBE_FAR)).toBe(0);
+    // The zone masks still resolve off the same interleaved buffer.
+    expect(mesh.geometry.attributes.aSocket?.count).toBe(15);
+
+    bakeThickness(mesh);
+    expect(mesh.geometry.attributes.aThickness?.getX(PROBE_FAR)).toBeCloseTo(1, 5);
+  });
+
+  it('ignores a mesh that never had the mask attributes declared', () => {
+    const mesh = new THREE.Mesh(makeNearestHitProbe(), new THREE.MeshStandardMaterial());
+    expect(() => bakeThickness(mesh)).not.toThrow();
+    expect(mesh.geometry.attributes.aThickness).toBeUndefined();
   });
 });

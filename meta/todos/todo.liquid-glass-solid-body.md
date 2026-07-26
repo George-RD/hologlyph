@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.shaders
-status: open
+status: done
 created: 2026-07-25
 ---
 
@@ -39,3 +39,29 @@ baseline to relax.
 
 Acceptance: the head reads as a solid block at rest and under rotation; eval
 overall pass; the dark-page approved look is unchanged at `glass.amount = 0`.
+
+## Outcome (2026-07-26)
+
+Implemented in `meta/changes/2026-07-26-liquid-glass-solid-body`.
+
+- Thickness is a load-time mask in `src/asset/rig.ts`, not a pipeline artefact:
+  the seven existing feature masks are baked there too, and an offline bake
+  would have left custom `avatarUrl` rigs with no absorption. See the change's
+  `implementation-notes.md`.
+- The open question is moot. Nothing is cloned; both materials are built from
+  one node graph and share every `uniform()` object by construction.
+- Absorption is achromatic on the front and tinted only on the interior wall.
+  Tinting the front was implemented and then measured out: it dropped yaw
+  legibility to 23.8 and 22.1 against 26.0 and 25.8 cutoffs.
+- `blendZoneGhosting` came out at 0.646 against the 0.768 cutoff (baseline
+  0.640), so the flagged risk did not materialise. The optional chromatic
+  split (item 3) is still unimplemented and still affordable.
+- The draw-order change is conditional on `glass.amount`, because moving the
+  mask and the internals into the transparent list shifts the open mouth by
+  about 15 luma on its own.
+- Acceptance verified with `tools/smoke/solid-body-shot.mjs` in four cases
+  (neutral, jaw-open, blink, and a 0.6 rad camera orbit). At
+  `glass.amount = 0` no pixel's luminance moves at all and at most 115 of
+  307,200 differ by at most 3/255 in one channel, which is last-bit shader
+  rounding; at `amount = 1` about 14.1% change with the head gaining body. The
+  capture must pin the bones and every morph influence array; see the notes.

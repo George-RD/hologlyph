@@ -21,7 +21,7 @@ import {
   RIG_EXPRESSION_MORPHS,
   RIG_BONES,
 } from '../src/contracts';
-import { validateRig, buildLoadedAvatar } from '../src/asset/rig';
+import { validateRig, buildLoadedAvatar, computeThickness } from '../src/asset/rig';
  import { VISEME_RECIPE } from '../tools/asset-pipeline/build-bust';
  import { WebIO } from '@gltf-transform/core';
  import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/extensions';
@@ -318,6 +318,67 @@ describe('shipped head bust', { timeout: 20_000 }, () => {
         ).toMatch(/^eye_(sclera|iris)$/);
       }
     }
+  });
+
+  // Beer-Lambert absorption is only convincing if the baked thickness tracks
+  // real anatomy, so assert the ordering the shader depends on rather than
+  // exact distances, which move whenever the morph recipe changes.
+  it('bakes body thickness that separates the cranium from the nose and chin', async () => {
+    const scene = await loadBust();
+    let skinMesh: THREE.Mesh | null = null;
+    scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      const name = Array.isArray(mesh.material) ? '' : mesh.material?.name;
+      if (mesh.isMesh && name === 'bust') skinMesh = mesh;
+    });
+    expect(skinMesh, 'skin mesh with the "bust" material').not.toBeNull();
+    const mesh = skinMesh as unknown as THREE.Mesh;
+
+    const thickness = computeThickness(mesh.geometry);
+    const pos = mesh.geometry.attributes.position as THREE.BufferAttribute;
+    expect(thickness).toHaveLength(pos.count);
+    for (const value of thickness) {
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+
+    const nearest = (x: number, y: number, z: number): number => {
+      let best = 0;
+      let bestDistance = Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        const d =
+          (pos.getX(i) - x) ** 2 + (pos.getY(i) - y) ** 2 + (pos.getZ(i) - z) ** 2;
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = i;
+        }
+      }
+      return thickness[best] ?? 0;
+    };
+
+    const noseTip = nearest(0, 0.18, 0.35);
+    const chin = nearest(0, -0.1, 0.22);
+    const forehead = nearest(0, 0.62, 0.22);
+    const backSkull = nearest(0, 0.55, -0.3);
+
+    // Every probe must have found a real opposing surface first, otherwise a
+    // raycast that returned zero everywhere would satisfy the ratios below.
+    for (const [label, value] of [
+      ['nose tip', noseTip],
+      ['chin', chin],
+      ['forehead', forehead],
+      ['back skull', backSkull],
+    ] as const) {
+      expect(value, `${label} thickness`).toBeGreaterThan(0);
+    }
+
+    // The cranium is the thickest part of the body by a wide margin; the two
+    // protruding features are the thinnest. Anything less than a doubling
+    // would not read as absorption on screen.
+    expect(forehead).toBeGreaterThan(noseTip * 2);
+    expect(forehead).toBeGreaterThan(chin * 2);
+    expect(backSkull).toBeGreaterThan(noseTip * 2);
   });
   it('validates sparse tongue provenance and primitive locality', async () => {
     const data = JSON.parse(readFileSync(TONGUE_DATA_PATH, 'utf8')) as {
