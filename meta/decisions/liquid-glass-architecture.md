@@ -4,7 +4,7 @@ nodes:
   - hologlyph.runtime.shaders
   - hologlyph.runtime.renderer
   - hologlyph.runtime.core
-status: proposed
+status: accepted
 date: 2026-07-25
 informed_by:
   - res.liquid-glass-direction
