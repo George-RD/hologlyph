@@ -13,7 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
-import { FrontSide, Mesh, MeshBasicMaterial, NoBlending, SkinnedMesh } from 'three';
+import { FrontSide, Matrix4, Mesh, MeshBasicMaterial, NoBlending, SkinnedMesh } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -25,6 +25,7 @@ import type {
   EngineOptions,
   Expression,
   LoadedAvatar,
+  HeadInteriorConfig,
   HeadPoolConfig,
   LensSourceOptions,
   MotionEngine,
@@ -45,15 +46,18 @@ import { createRendererHost } from '../renderer';
 import { createSpeechEngine } from '../speech/engine';
 import { createDemoTTSAdapter } from '../speech/adapters/demo';
 import { createTextSkinEngine } from '../text-skin';
+import { DEFAULT_GRID } from '../text-skin/grid.js';
 import {
   createVFXEngine,
   buildEyeballMaterial,
   poolRadialProfile,
   poolRippleDrive,
   poolWaterlineRadius,
+  type InteriorGlyphField,
   type PoolProfile,
   type PoolSurface,
 } from '../shaders';
+import { createInteriorGlyphField } from '../shaders/interior-glyph-field.js';
 import { createPoolSurface } from '../shaders/pool-surface.js';
 import { createEmitter } from './emitter.js';
 import {
@@ -115,6 +119,61 @@ function cloneOverlayMesh(
   overlay.morphTargetInfluences = primary.morphTargetInfluences;
   overlay.renderOrder = renderOrder;
   return overlay;
+}
+
+/**
+ * The body the interior glyphs hang inside, and the bone whose motion drags
+ * them (dec.liquid-glass-architecture, item 10).
+ *
+ * On the shipped bust the whole body except the eyeballs skins to `head` at
+ * weight 1 (`tools/asset-pipeline/build-bust.ts`), so the head bone is the
+ * frame of the whole block of glass rather than just the skull.
+ */
+interface InteriorBody {
+  readonly mesh: THREE.Mesh;
+  /** Null on a rig with no `head` bone, or an unskinned body. */
+  readonly bone: THREE.Bone | null;
+  readonly boneInverse: THREE.Matrix4 | null;
+}
+
+function resolveInteriorBody(mesh: THREE.Mesh, avatar: LoadedAvatar): InteriorBody {
+  const skinned = mesh as THREE.SkinnedMesh;
+  const head = avatar.bones.head ?? null;
+  if (skinned.isSkinnedMesh && head && skinned.skeleton) {
+    const index = skinned.skeleton.bones.indexOf(head);
+    const inverse = index >= 0 ? skinned.skeleton.boneInverses[index] : undefined;
+    if (inverse) return { mesh, bone: head, boneInverse: inverse };
+  }
+  return { mesh, bone: null, boneInverse: null };
+}
+
+/**
+ * Read a body's bind-space positions and its baked thickness into flat
+ * arrays, for one sampling pass.
+ *
+ * Through `getX/getY/getZ`, never off `.array`, for the reason
+ * `poolRadialProfile`'s caller states: a meshopt-compressed GLB hands back an
+ * interleaved, quantised attribute whose raw buffer is neither a flat XYZ
+ * stream nor in model units. Both arrays are dropped as soon as the sites are
+ * sampled, so nothing here is retained for a field that is switched off.
+ */
+function readInteriorGeometry(mesh: THREE.Mesh): {
+  positions: Float32Array;
+  thickness: Float32Array | null;
+} {
+  const position = mesh.geometry.attributes.position;
+  if (!position) return { positions: new Float32Array(0), thickness: null };
+  const positions = new Float32Array(position.count * 3);
+  for (let i = 0; i < position.count; i++) {
+    positions[i * 3] = position.getX(i);
+    positions[i * 3 + 1] = position.getY(i);
+    positions[i * 3 + 2] = position.getZ(i);
+  }
+  const baked = mesh.geometry.attributes.aThickness;
+  if (!baked || baked.count !== position.count) return { positions, thickness: null };
+  const thickness = new Float32Array(baked.count);
+  for (let i = 0; i < baked.count; i++) thickness[i] = baked.getX(i);
+  return { positions, thickness };
 }
 
 const DEFAULT_TEXT =
@@ -234,6 +293,20 @@ class EngineImpl implements Engine {
   private scrollTravel = 0;
   private scrollProgress = 0;
   private lastEmergence = 0;
+
+  /**
+   * Interior glyph field (dec.liquid-glass-architecture, item 10). Sampled the
+   * first frame `interior.count` goes above 0 and torn straight back down when
+   * it returns to 0, so the shipped configuration reads no geometry, allocates
+   * no buffers and adds no draw call.
+   */
+  private interiorGlyphs: InteriorGlyphField | null = null;
+  /** Last interior config pushed to the field; null forces the next write. */
+  private appliedInteriorConfig: HeadInteriorConfig | null = null;
+  /** The body the glyphs hang inside, and the bone that carries them. */
+  private interiorBody: InteriorBody | null = null;
+  /** Reused frame-to-world matrix; recomposed once per frame, never allocated. */
+  private readonly interiorFrameMatrix = new Matrix4();
 
   /**
    * The bound lens (dec.liquid-glass-architecture, rung 3, items 4 and 5).
@@ -549,6 +622,8 @@ class EngineImpl implements Engine {
       this.pool = null;
     }
     this.poolProfile = null;
+    this.disposeInteriorGlyphs();
+    this.interiorBody = null;
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -647,6 +722,8 @@ class EngineImpl implements Engine {
 
   private replaceAvatar(candidateAvatar: LoadedAvatar): void {
     this.disposeOverlayMeshes();
+    this.disposeInteriorGlyphs();
+    this.interiorBody = null;
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -836,6 +913,7 @@ class EngineImpl implements Engine {
     } else {
       this.poolProfile = null;
     }
+    this.interiorBody = bodyMesh ? resolveInteriorBody(bodyMesh, this.avatar) : null;
 
     this.applyGlassLayering();
   }
@@ -878,6 +956,94 @@ class EngineImpl implements Engine {
     if (config === this.appliedPoolConfig) return;
     this.appliedPoolConfig = config;
     this.pool.setConfig(config);
+  }
+
+  /**
+   * Build or tear down the interior glyph field to match `interior.count`
+   * (dec.liquid-glass-architecture, item 10).
+   *
+   * A number gate, like the pool's and unlike the lens's: the field is pure
+   * computation over geometry the engine already holds, so there is no
+   * resource whose absence could be the gate instead. At 0 the body's
+   * positions are never read, no buffers are allocated and no object joins the
+   * scene, so the shipped configuration is reproduced exactly.
+   */
+  private applyInteriorGlyphs(): void {
+    const config = this.sysVfx.headConfig.interior;
+    const body = this.interiorBody;
+    if (config.count <= 0 || !body) {
+      this.disposeInteriorGlyphs();
+      return;
+    }
+    if (!this.interiorGlyphs) {
+      const { positions, thickness } = readInteriorGeometry(body.mesh);
+      const skinned = body.mesh as THREE.SkinnedMesh;
+      this.interiorGlyphs = createInteriorGlyphField({
+        positions,
+        thickness,
+        // Sites are sampled in the geometry's bind space; `bindMatrix` is the
+        // first factor of three's own skinning chain, and `interiorFrame`
+        // supplies the rest of it per frame.
+        bindToFrame: body.bone ? skinned.bindMatrix : new Matrix4(),
+        texture: this.sysTextSkin.texture,
+        grid: { cols: DEFAULT_GRID.cols, rows: DEFAULT_GRID.rows },
+        config,
+      });
+      this.sysRenderer.scene.add(this.interiorGlyphs.object);
+      this.appliedInteriorConfig = config;
+      return;
+    }
+    if (config === this.appliedInteriorConfig) return;
+    this.appliedInteriorConfig = config;
+    this.interiorGlyphs.setConfig(config);
+  }
+
+  /**
+   * Recompose the frame the glyphs are carried by, in place.
+   *
+   * Exactly three's skinning chain for a vertex weighted wholly to one bone:
+   * `modelMatrix * bindMatrixInverse * boneMatrixWorld * boneInverse`, applied
+   * to a bind-space position. Nothing cheaper is correct, because the avatar
+   * root translates with emergence while the bone matrices already contain
+   * that translation.
+   *
+   * The world-matrix refreshes walk only the body's and the bone's own
+   * ancestor chains, which is a handful of nodes on the shipped rig. Without
+   * them the field would read matrices the renderer last refreshed a frame
+   * ago, and the very first frame after activation would snap the glyphs to a
+   * stale pose and spring them back, in full view.
+   *
+   * The body goes through `updateMatrixWorld`, NOT `updateWorldMatrix`. Only
+   * the former is overridden by `SkinnedMesh`, and the override is what
+   * refreshes `bindMatrixInverse` in `AttachedBindMode`. Refreshing just the
+   * world matrix would pair this frame's `matrixWorld` with last frame's
+   * inverse, and during emergence the root's travel would be applied a second
+   * time: the field would trail or jump for reasons nothing to do with the
+   * spring. The parents are walked first because `updateMatrixWorld` composes
+   * against `parent.matrixWorld` and assumes it is already current.
+   */
+  private interiorFrame(body: InteriorBody): THREE.Matrix4 {
+    if (!body.bone || !body.boneInverse) {
+      body.mesh.updateWorldMatrix(true, false);
+      return this.interiorFrameMatrix.copy(body.mesh.matrixWorld);
+    }
+    const skinned = body.mesh as THREE.SkinnedMesh;
+    skinned.parent?.updateWorldMatrix(true, false);
+    skinned.updateMatrixWorld(true);
+    body.bone.updateWorldMatrix(true, false);
+    return this.interiorFrameMatrix
+      .multiplyMatrices(skinned.matrixWorld, skinned.bindMatrixInverse)
+      .multiply(body.bone.matrixWorld)
+      .multiply(body.boneInverse);
+  }
+
+  /** Tear the field down. Idempotent; the text-skin texture is not ours. */
+  private disposeInteriorGlyphs(): void {
+    if (!this.interiorGlyphs) return;
+    this.sysRenderer.scene.remove(this.interiorGlyphs.object);
+    this.interiorGlyphs.dispose();
+    this.interiorGlyphs = null;
+    this.appliedInteriorConfig = null;
   }
 
   /**
@@ -1054,6 +1220,7 @@ class EngineImpl implements Engine {
     }
     this.applyGlassLayering();
     this.applyPoolLayer();
+    this.applyInteriorGlyphs();
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
 
@@ -1087,6 +1254,16 @@ class EngineImpl implements Engine {
     // While frozen, skip the motion update entirely: idle and gaze phase off
     // wall-clock time, so even dt=0 would keep breathing between frames.
     if (!this.motionFrozen) this.sysMotion.update(dt, this.elapsed);
+
+    // After motion, so the field reads this frame's pose rather than last
+    // frame's, and before the render that consumes the buffers it writes.
+    if (this.interiorGlyphs && this.interiorBody) {
+      this.interiorGlyphs.update(dt, {
+        frameMatrix: this.interiorFrame(this.interiorBody),
+        camera: this.sysRenderer.camera,
+        reduced: this.reducedMotion,
+      });
+    }
     this.sysRenderer.render();
 
     if (this.running) this.rafHandle = requestAnimationFrame(this.frame);

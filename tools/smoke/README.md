@@ -38,6 +38,16 @@ python3 -m http.server 8932 --directory .      # repo root (dist consumer fixtur
   silent fall-through to the snapshot lens with the flag off. Point `--chrome`
   at another executable if yours is elsewhere. Exits non-zero on any failed leg
   and writes `out/live-lens-shot.json`.
+- `interior-glyph-shot.mjs` (bun): drives `demo/interior-glyph-lab.html` for
+  the interior glyph field (`dec.liquid-glass-architecture`, item 10). Pins the
+  pose by hand rather than emulating reduced motion, because reduced motion is
+  itself one of the legs, and measures: a silhouette floor, a noise floor,
+  engagement split inside and outside the silhouette, exact inertness back at
+  `interior.count = 0`, the lag after a step in head yaw with a rigid
+  `inertia: 0` control, and reduced motion removing that lag without removing
+  the field. `--cost` adds a vsync-free frame cost against a real Chrome at 0,
+  240 and 512 glyphs. Exits non-zero on any failed leg and writes
+  `out/interior-glyph-shot.json`.
 - `demo/textskin-variants.html` (served by the vite dev server) renders the real
   bust under grid/colour/emissive variants for owner review; the 2026-07-17 pass
   kept DEFAULT_GRID (variant A) for the best readability/density balance.

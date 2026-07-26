@@ -15,6 +15,10 @@ import { createEngine, visemeTap } from '../src/core';
 import { createPlaceholderAvatar } from '../src/core/placeholder-avatar';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type {
+  InteriorGlyphFieldOptions,
+  InteriorGlyphState,
+} from '../src/shaders/interior-glyph-field';
+import type {
   AssetLoader,
   AudioEngine,
   BehaviorMachine,
@@ -24,6 +28,7 @@ import type {
   Expression,
   HeadConfig,
   HeadConfigOverrides,
+  HeadInteriorConfig,
   HeadPoolConfig,
   LensBinding,
   LoadedAvatar,
@@ -105,6 +110,16 @@ interface FakePool {
   update(dt: number, state: { rootOffsetY: number; waterlineRadius: number; drive: number }): void;
   dispose(): void;
 }
+interface FakeInteriorField {
+  object: THREE.Object3D;
+  options: InteriorGlyphFieldOptions[];
+  configs: HeadInteriorConfig[];
+  updates: { dt: number; frame: THREE.Matrix4; reduced: boolean; camera: THREE.Camera }[];
+  disposeCount: number;
+  setConfig(config: HeadInteriorConfig): void;
+  update(dt: number, state: InteriorGlyphState): void;
+  dispose(): void;
+}
 interface Registry {
   behavior: FakeBehavior[];
   motion: FakeMotion[];
@@ -115,6 +130,7 @@ interface Registry {
   renderer: FakeRenderer[];
   asset: FakeAsset[];
   pool: FakePool[];
+  interior: FakeInteriorField[];
 }
 
 // --- Shared helpers + per-subsystem instance registry ----------------------
@@ -165,6 +181,7 @@ const h = vi.hoisted(() => {
     renderer: [],
     asset: [],
     pool: [],
+    interior: [],
   };
 
    return { makeEmitter, buildAdapter, registry, demoAdapter: undefined as TTSAdapter | undefined, avatarOverride: undefined as LoadedAvatar | undefined, skinMaterialOverride: null as THREE.Material | null };
@@ -372,6 +389,7 @@ vi.mock('../src/shaders', async () => ({
           },
           eyes: { ...this._headConfig.eyes, ...config.eyes },
           pool: { ...this._headConfig.pool, ...config.pool },
+          interior: { ...this._headConfig.interior, ...config.interior },
           lens: { ...this._headConfig.lens, ...config.lens },
         };
       },
@@ -420,6 +438,37 @@ vi.mock('../src/shaders/pool-surface', () => ({
     };
     h.registry.pool.push(pool);
     return pool;
+  },
+}));
+
+// Same reasoning as the pool: only the field's GPU half is faked, and it sits
+// on its own specifier rather than on the `../src/shaders` barrel. The pure
+// half stays real, so a wrong gate cannot pass by stubbing the maths out.
+vi.mock('../src/shaders/interior-glyph-field', () => ({
+  createInteriorGlyphField(options: InteriorGlyphFieldOptions) {
+    const field: FakeInteriorField = {
+      object: new THREE.Group(),
+      options: [options],
+      configs: [options.config],
+      updates: [],
+      disposeCount: 0,
+      setConfig(next: HeadInteriorConfig) {
+        this.configs.push(next);
+      },
+      update(dt, state) {
+        this.updates.push({
+          dt,
+          frame: state.frameMatrix.clone(),
+          reduced: state.reduced,
+          camera: state.camera,
+        });
+      },
+      dispose() {
+        this.disposeCount++;
+      },
+    };
+    h.registry.interior.push(field);
+    return field;
   },
 }));
 
@@ -1397,6 +1446,220 @@ describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => 
     engine.dispose();
     expect(pool.disposeCount).toBe(1);
     expect(scene.children).not.toContain(pool.object);
+  });
+});
+
+describe('interior glyph field lifecycle (dec.liquid-glass-architecture, item 10)', () => {
+  beforeEach(() => {
+    h.registry.interior.length = 0;
+  });
+
+  /** A body with a baked thickness attribute and a head bone that carries it. */
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.SkinnedMesh; head: THREE.Bone } {
+    const positions: number[] = [];
+    for (let i = 0; i <= 6; i++) {
+      for (let s = 0; s < 12; s++) {
+        const a = (s / 12) * Math.PI * 2;
+        positions.push(Math.cos(a) * 0.4, (i / 6) * 1.2, Math.sin(a) * 0.4);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const vertices = positions.length / 3;
+    geometry.setAttribute(
+      'aThickness',
+      new THREE.Float32BufferAttribute(new Float32Array(vertices).fill(0.5), 1),
+    );
+
+    const root = new THREE.Bone();
+    root.name = 'root';
+    const head = new THREE.Bone();
+    head.name = 'head';
+    root.add(head);
+    const skeleton = new THREE.Skeleton([root, head]);
+
+    const body = new THREE.SkinnedMesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(root);
+    group.add(body);
+    body.bind(skeleton);
+    return { group, body, head };
+  }
+
+  async function mountBust(): Promise<{
+    engine: ReturnType<typeof createEngine>;
+    head: THREE.Bone;
+    group: THREE.Group;
+  }> {
+    const { group, body, head } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: { head },
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    return { engine, head, group };
+  }
+
+  function enableField(engine: ReturnType<typeof createEngine>, time = 16): FakeInteriorField {
+    engine.vfx.setHeadConfig({ interior: { count: 120 } });
+    rafCb?.(time);
+    const field = h.registry.interior.at(-1);
+    if (!field) throw new Error('the interior field was not built');
+    return field;
+  }
+
+  it('builds nothing at count 0 and tears the field back down when it returns', async () => {
+    const { engine } = await mountBust();
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    rafCb?.(16);
+    rafCb?.(32);
+    expect(h.registry.interior).toHaveLength(0);
+
+    const field = enableField(engine, 48);
+    expect(scene.children).toContain(field.object);
+
+    engine.vfx.setHeadConfig({ interior: { count: 0 } });
+    rafCb?.(64);
+    expect(field.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(field.object);
+    // Torn down, not hidden: the shipped configuration must not hold a
+    // vertex buffer alive for a field nobody can see.
+    expect(h.registry.interior).toHaveLength(1);
+
+    engine.dispose();
+  });
+
+  it('builds the field once and pushes config only when it changes', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const pushes = field.configs.length;
+    for (let i = 0; i < 20; i++) rafCb?.(2000 + 16 * i);
+    expect(h.registry.interior).toHaveLength(1);
+    expect(field.configs.length).toBe(pushes);
+
+    // A count change rides `setConfig`, so the sites are never resampled and
+    // a glyph keeps its identity across the whole travel of the slider.
+    engine.vfx.setHeadConfig({ interior: { count: 200 } });
+    rafCb?.(3000);
+    expect(h.registry.interior).toHaveLength(1);
+    expect(field.configs.length).toBe(pushes + 1);
+    expect(field.configs.at(-1)?.count).toBe(200);
+
+    engine.dispose();
+  });
+
+  it('samples the rig it was given, thickness and all', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const options = field.options[0]!;
+    expect(options.positions.length).toBe(7 * 12 * 3);
+    expect(options.thickness).not.toBeNull();
+    expect(options.thickness?.length).toBe(7 * 12);
+    // The canvas the SURFACE samples, not a second texture upload. The engine
+    // builds the body skin first and the eye skin last, so the body's is the
+    // second-newest entry in the registry.
+    expect(options.texture).toBe(h.registry.textSkin.at(-2)?.texture);
+
+    engine.dispose();
+  });
+
+  it('carries the field on the head bone, so a head turn moves the targets', async () => {
+    const { engine, head } = await mountBust();
+    const field = enableField(engine);
+    rafCb?.(2000);
+    const still = field.updates.at(-1)!.frame.clone();
+
+    head.rotation.y = 0.9;
+    rafCb?.(2016);
+    const turned = field.updates.at(-1)!.frame;
+    expect(turned.equals(still)).toBe(false);
+
+    engine.dispose();
+  });
+
+  it('does not apply the emergence travel twice while the root translates', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    const field = enableField(engine);
+
+    // At rest the frame is the identity: the bind pose IS the current pose.
+    vfx.rootOffsetY = 0;
+    rafCb?.(2000);
+    const settled = field.updates.at(-1)!.frame;
+    expect(settled.elements[13]).toBeCloseTo(0, 6);
+
+    // Mid-emergence the whole avatar translates. `SkinnedMesh` refreshes
+    // `bindMatrixInverse` inside `updateMatrixWorld` and NOT inside
+    // `updateWorldMatrix`, so pairing a fresh `matrixWorld` with a stale
+    // inverse applies the root's travel a second time: -0.6 would read as
+    // -1.2 here and the field would sit half a body below the head.
+    vfx.rootOffsetY = -0.6;
+    rafCb?.(2016);
+    const rising = field.updates.at(-1)!.frame;
+    expect(rising.elements[13]).toBeCloseTo(-0.6, 6);
+
+    engine.dispose();
+  });
+
+  it('passes reduced motion through, because the lag is the shake response', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    rafCb?.(2000);
+    expect(field.updates.at(-1)!.reduced).toBe(false);
+
+    mqlListeners.forEach((fn) => fn({ matches: true } as MediaQueryListEvent));
+    rafCb?.(2016);
+    expect(field.updates.at(-1)!.reduced).toBe(true);
+
+    engine.dispose();
+  });
+
+  it('updates once per frame with the live camera', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const before = field.updates.length;
+    rafCb?.(2000);
+    rafCb?.(2016);
+    expect(field.updates.length).toBe(before + 2);
+    expect(field.updates.at(-1)!.camera).toBe(h.registry.renderer.at(-1)!.camera);
+
+    engine.dispose();
+  });
+
+  it('drops the field when the avatar is replaced, because its sites are stale', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    engine.setTextSkinSource({ getText: () => 'x', onChange: () => () => {} });
+    // A remount is what replaces the avatar; the field must not survive it
+    // holding rest positions sampled from a body that is gone.
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    expect(field.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(field.object);
+
+    engine.dispose();
+  });
+
+  it('disposes the field with the engine', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    engine.dispose();
+    expect(field.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(field.object);
   });
 });
 

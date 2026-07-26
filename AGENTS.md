@@ -83,10 +83,11 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
   `hologlyph.runtime.core`). All commands accept `--json`.
 - Work flows through typed changes: `cairn change new <id>` -> implement on a
   feature branch -> `cairn change show <id>` -> `cairn change accept <id>` ->
-  `cairn change archive <id>` after merge. Note: the accept gate's
-  `cairn lint --strict` sub-step still fails on 12 pre-existing advisory
-  `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings; `cairn hook all` remains the
-  authoritative gate.
+  `cairn change archive <id>` after merge. The note that the accept gate's
+  `cairn lint --strict` sub-step fails on 12 pre-existing
+  `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings is out of date: as of 2026-07-26 it
+  reports 0 findings and the whole accept gate passes. `cairn hook all`
+  remains the authoritative gate either way.
 - Editing `cairn.blueprint` (new module, `path` claim, dependency edge) is an
   architecture change and requires a paired decision artefact under
   `meta/decisions/` (`cairn decision new <slug> --node <id>`).

@@ -651,11 +651,17 @@ export function bakeThickness(
   budget: ThicknessBudget = createThicknessBudget(),
 ): void {
   const geo = mesh.geometry;
-  const attr = geo?.attributes.aThickness as THREE.InterleavedBufferAttribute | undefined;
+  const attr = geo?.attributes.aThickness;
   if (!attr || budget.remaining <= 0 || thicknessOverBudget(geo)) return;
   const thickness = computeThickness(geo, budget);
   for (let i = 0; i < attr.count; i++) attr.setX(i, thickness[i] ?? 0);
-  attr.data.needsUpdate = true;
+  // `bakeFeatureMasks` declares this as one channel of an interleaved buffer,
+  // and it is the BUFFER that carries the upload flag. A rig that arrives
+  // with a plain `aThickness` attribute of its own is legal glTF, though, and
+  // used to throw here on `attr.data`. Degrade, do not throw.
+  const interleaved = (attr as THREE.InterleavedBufferAttribute).data;
+  if (interleaved) interleaved.needsUpdate = true;
+  else attr.needsUpdate = true;
 }
 export function buildLoadedAvatar(
   root: THREE.Object3D,

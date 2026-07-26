@@ -2,7 +2,7 @@
 
 A web-native, text-skinned talking head for interactive pages.
 
-Three.js is externalised from the hologlyph bundles and should be provided by the consuming app as a peer dependency. By default, `createEngine()` (or the `<hologlyph-head>` element with no `src`) loads a packaged realistic head bust lazy-loaded as a ~720 kB gzip chunk; the main bundle stays at ~20 kB gzip. The bust is built from ICT-FaceKit (USC-ICT, MIT) -- the licence survives sublicensing of the derived binary. Pass `avatarUrl` to override with your own GLB. Set `avatarUrl: ''` to force the lightweight procedural placeholder. Load failures degrade gracefully to the placeholder with a console warning.
+Three.js is externalised from the hologlyph bundles and should be provided by the consuming app as a peer dependency. By default, `createEngine()` (or the `<hologlyph-head>` element with no `src`) loads a packaged realistic head bust lazy-loaded as a ~880 kB gzip chunk; the main bundle is 38 kB gzip. The bust is built from ICT-FaceKit (USC-ICT, MIT) -- the licence survives sublicensing of the derived binary. Pass `avatarUrl` to override with your own GLB. Set `avatarUrl: ''` to force the lightweight procedural placeholder. Load failures degrade gracefully to the placeholder with a console warning.
 
 The canvas is transparent and the head renders as glass, so it sits directly on your page background. On mount the engine samples the first opaque background colour at or above its host element and adapts the skin to it: glyphs glow on dark pages, cross over to dark ink on light ones, and the opacity floor lifts on mid tones. Override the detection when your background is painted somewhere the walk cannot see it, for example a canvas or an image:
 
@@ -13,6 +13,30 @@ const engine = createEngine({
 ```
 
 Set `skin.backdrop.adapt` to `0` to pin the dark-page look on every background, and tune the glass itself through `skin.glass` (`fresnel`, `specular`, `refraction`, `tint`).
+
+### Glyphs suspended inside the glass
+
+`skin.glass` dresses the surface; `interior` fills the volume behind it. Raise
+`interior.count` above `0` and the engine suspends that many camera-facing
+glyph sprites between the near and far surfaces of the head, placed by the
+same baked thickness field the glass absorption uses and sampling cells of the
+text-skin canvas the surface already carries, so it costs no new asset and no
+second texture upload.
+
+```ts
+engine.vfx.setHeadConfig({ interior: { count: 240, inertia: 0.55 } });
+```
+
+Each glyph chases a rest position carried by the head's own frame, so moving
+the head drags them off course and they settle again; `inertia` is how far
+behind they run, `drift` how much they wander while the head is still, and
+`depthFade` how much the far ones dim and desaturate. They can never be
+brighter than the surface text: `brightness` is clamped to `[0,1]` and
+multiplies the sampled letterform.
+
+`interior.count` is a hard gate and ships at `0`. Nothing is sampled, nothing
+is allocated and no object joins the scene until you raise it. Under
+`prefers-reduced-motion` the lag is removed and the drift is damped.
 
 ## Declarative web component
 

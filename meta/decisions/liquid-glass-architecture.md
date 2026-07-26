@@ -112,12 +112,17 @@ not from `cairn brief`. Items 1 to 5 were `status: open` and mutually
 independent; the rest are `status: blocked` until their prerequisite lands.
 
 Landed so far: item 1 (2026-07-26), item 2 (2026-07-26), item 3 (2026-07-26),
-item 4 (2026-07-26), item 5 (2026-07-26). **Next is item 10**, which is the
-only remaining todo that is both open and unblocked. Items 7 and 8 have had
-their stated prerequisite, item 3, land, but both still want the owner's ruling
-on the pool lab before they start, so they stay `blocked` until it comes. Item
-6 waits on `todo.liquid-glass-firefox-verify`, which needs a host where the
-Firefox build starts.
+item 4 (2026-07-26), item 5 (2026-07-26), item 10 (2026-07-26). **Nothing is
+both open and unblocked.** Items 7 and 8 have had their stated prerequisite,
+item 3, land, but both still want the owner's ruling on the pool lab before
+they start, so they stay `blocked` until it comes. Item 6 waits on
+`todo.liquid-glass-firefox-verify`, which needs a host where the Firefox build
+starts. Item 9 is `blocked` behind item 8 and may never be entered at all.
+
+So the next unit of work in this programme is not a todo: it is an owner look
+session over the three labs that now ship gated off, `demo/pool-lab.html`,
+`demo/lens-lab.html` and `demo/interior-glyph-lab.html`. A ruling on the pool
+unblocks items 7 and 8, which are most of what is left.
 
 1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
    unit of cost, one extra draw call, independent of every backdrop question.
@@ -147,9 +152,10 @@ Firefox build starts.
    usual lab approval.
 9. `todo.liquid-glass-topology-fluid` - the only stage that gives up authored
    visemes, and only where there is no face. Possibly never.
-10. `todo.liquid-glass-interior-glyphs` - lab exploration, deliberately last.
-    Sparse glyphs drifting inside the glass, dragged off course when the head
-    moves. Needs item 1 for the thickness bake and the backface pass.
+10. `todo.liquid-glass-interior-glyphs` - LANDED 2026-07-26. Sparse glyphs
+    suspended between the near and far surfaces, dragged off course when the
+    head moves and settling afterwards. Shipped gated at `interior.count: 0`
+    and lab-only until the look is approved.
 
 Items 1 to 4 need no host-facing contract and no new public surface, so they can
 proceed without committing to any of the integration rungs.

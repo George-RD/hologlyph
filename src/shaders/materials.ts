@@ -78,6 +78,7 @@ import {
   type TextSkinEngine,
 } from '../contracts';
 import { adaptToBackdrop } from './glass';
+import { INTERIOR_GLYPH_MAX } from './interior-glyphs';
 
 /** Default glyph grid shape (mirrors DEFAULT_GRID in text-skin). */
 const GRID_COLS = 96;
@@ -428,6 +429,28 @@ export function normaliseHeadConfig(
       fade: Math.max(0, overrides.pool?.fade ?? base.pool.fade),
       tint: parseColor(overrides.pool?.tint, base.pool.tint),
     },
+    interior: {
+      // Integral, and capped: the sort and the buffer writes are linear in
+      // this, and the field stops reading as text in glass long before the
+      // cap is anywhere near.
+      count: Math.min(
+        INTERIOR_GLYPH_MAX,
+        Math.max(0, Math.floor(finiteOr(overrides.interior?.count, base.interior.count))),
+      ),
+      // `finiteOr` throughout, not a bare `??`. `Math.max(0, NaN)` is NaN and
+      // `clamp01(NaN)` is NaN, and a NaN inertia poisons the integrator's
+      // world positions permanently: the field never recovers, not even from
+      // a later good config, because the spring reads its own last position.
+      size: Math.max(0, finiteOr(overrides.interior?.size, base.interior.size)),
+      drift: Math.max(0, finiteOr(overrides.interior?.drift, base.interior.drift)),
+      inertia: clamp01(finiteOr(overrides.interior?.inertia, base.interior.inertia)),
+      depthFade: clamp01(finiteOr(overrides.interior?.depthFade, base.interior.depthFade)),
+      // Clamped rather than merely defaulted: the contract says an interior
+      // glyph never outshines the surface text, and a host writing 4 here
+      // would otherwise break it silently.
+      brightness: clamp01(finiteOr(overrides.interior?.brightness, base.interior.brightness)),
+      tint: parseColor(overrides.interior?.tint, base.interior.tint),
+    },
     lens: {
       amount: clamp01(overrides.lens?.amount ?? base.lens.amount),
       // Signed on purpose: the sign decides whether the head reads as a
@@ -445,6 +468,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.skin);
   Object.freeze(config.eyes);
   Object.freeze(config.pool);
+  Object.freeze(config.interior);
   Object.freeze(config.lens);
   return Object.freeze(config);
 }
