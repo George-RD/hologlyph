@@ -131,3 +131,6 @@
 - scan: nodes=16, findings=1, errors=0
 - scan: nodes=16, findings=0, errors=0
 - archive: fix-cairn-findings merged; no operations
+- scan: nodes=16, findings=2, errors=0
+- scan: nodes=16, findings=0, errors=0
+- scan: nodes=16, findings=0, errors=0

@@ -32,3 +32,14 @@ of those controls into `src/` would require a new owner approval.
 
 Owner decision (2026-07-23): keep these controls lab-only and preserve the
 current library defaults.
+
+## Owner reversal (2026-07-25)
+
+The owner asked for the head to read as glass that works against arbitrary
+website backgrounds. That is the separate approval the 2026-07-23 decision was
+waiting on, for the background half only. The canvas is now transparent and
+`HeadConfig.skin.backdrop` carries the host page colour, auto-detected on
+mount, feeding a pure adaptation (`src/shaders/glass.ts`). See
+`dec.glass-backdrop-adaptive`. The opaque-core toggle stays lab-only:
+fresnel edge thickening solved the grazing-angle see-through without hiding
+the page.

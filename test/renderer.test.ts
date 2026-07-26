@@ -19,6 +19,8 @@ type MockRenderer = {
   setPixelRatio: ReturnType<typeof vi.fn>;
   setSize: ReturnType<typeof vi.fn>;
   render: ReturnType<typeof vi.fn>;
+  setClearColor: ReturnType<typeof vi.fn>;
+  constructorParams: Record<string, unknown> | undefined;
   clippingPlanes: unknown[];
 };
 
@@ -41,6 +43,8 @@ vi.mock('three/webgpu', () => ({
     setPixelRatio = vi.fn();
     setSize = vi.fn();
     render = vi.fn();
+    setClearColor = vi.fn();
+    constructorParams: Record<string, unknown> | undefined;
     init() {
       this.initCalls += 1;
       return initHandle.promise;
@@ -48,7 +52,8 @@ vi.mock('three/webgpu', () => ({
     dispose() {
       this.disposeCalls += 1;
     }
-    constructor() {
+    constructor(params?: Record<string, unknown>) {
+      this.constructorParams = params;
       rendererInstances.push(this);
     }
   },
@@ -136,6 +141,25 @@ describe('backend after init', () => {
     expect(host2.backend).toBe('webgpu');
     host2.dispose();
     expect(latestRenderer().disposeCalls).toBe(1);
+  });
+});
+
+describe('transparent canvas (dec.glass-backdrop-adaptive)', () => {
+  it('leaves the scene unpainted so the host page shows through', () => {
+    const host = createRendererHost();
+    expect(host.scene.background).toBeNull();
+    host.dispose();
+  });
+
+  it('requests an alpha context and clears to fully transparent', async () => {
+    setGpu({});
+    const host = createRendererHost();
+    resolveInitHandle();
+    await host.init({} as HTMLCanvasElement);
+    const renderer = latestRenderer();
+    expect(renderer.constructorParams?.alpha).toBe(true);
+    expect(renderer.setClearColor).toHaveBeenCalledWith(0x000000, 0);
+    host.dispose();
   });
 });
 

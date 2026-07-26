@@ -15,6 +15,7 @@ import {
   acos,
   atan,
   attribute,
+  cameraPosition,
   dot,
   float,
   floor,
@@ -26,6 +27,7 @@ import {
   normalWorld,
   positionGeometry,
   positionViewDirection,
+  positionWorld,
   pow,
   saturate,
   smoothstep,
@@ -42,6 +44,7 @@ import {
   type HeadConfigOverrides,
   type TextSkinEngine,
 } from '../contracts';
+import { adaptToBackdrop } from './glass';
 
 /** Default glyph grid shape (mirrors DEFAULT_GRID in text-skin). */
 const GRID_COLS = 96;
@@ -101,6 +104,18 @@ export interface HeadUniforms {
   skinWarm: { value: number };
   rim: { value: number };
   glowGain: { value: number };
+  glassAmount: { value: number };
+  fresnel: { value: number };
+  fresnelPow: { value: number };
+  specular: { value: number };
+  sheen: { value: number };
+  refraction: { value: number };
+  glassTint: { value: THREE.Color };
+  inkMix: { value: number };
+  inkColor: { value: THREE.Color };
+  glowScale: { value: number };
+  opacityFloor: { value: number };
+  rimColor: { value: THREE.Color };
 }
 
 export interface BuiltSkinMaterial {
@@ -244,6 +259,20 @@ export function normaliseHeadConfig(
         rim: clamp01(overrides.skin?.tone?.rim ?? base.skin.tone.rim),
         glowGain: Math.max(0, overrides.skin?.tone?.glowGain ?? base.skin.tone.glowGain),
       },
+      glass: {
+        amount: clamp01(overrides.skin?.glass?.amount ?? base.skin.glass.amount),
+        fresnel: clamp01(overrides.skin?.glass?.fresnel ?? base.skin.glass.fresnel),
+        fresnelPower: Math.max(1, overrides.skin?.glass?.fresnelPower ?? base.skin.glass.fresnelPower),
+        specular: Math.max(0, overrides.skin?.glass?.specular ?? base.skin.glass.specular),
+        sheen: Math.max(1, overrides.skin?.glass?.sheen ?? base.skin.glass.sheen),
+        refraction: Math.max(0, overrides.skin?.glass?.refraction ?? base.skin.glass.refraction),
+        tint: parseColor(overrides.skin?.glass?.tint, base.skin.glass.tint),
+      },
+      backdrop: {
+        color: parseColor(overrides.skin?.backdrop?.color, base.skin.backdrop.color),
+        adapt: clamp01(overrides.skin?.backdrop?.adapt ?? base.skin.backdrop.adapt),
+        auto: overrides.skin?.backdrop?.auto ?? base.skin.backdrop.auto,
+      },
     },
     eyes: {
       density: Math.max(10, overrides.eyes?.density ?? base.eyes.density),
@@ -261,6 +290,8 @@ export function normaliseHeadConfig(
   Object.freeze(config.skin.shading);
   Object.freeze(config.skin.glyph);
   Object.freeze(config.skin.tone);
+  Object.freeze(config.skin.glass);
+  Object.freeze(config.skin.backdrop);
   Object.freeze(config.skin);
   Object.freeze(config.eyes);
   return Object.freeze(config);
@@ -318,6 +349,25 @@ export function buildSkinMaterial(
   const uRim = uniform(config.skin.tone.rim);
   const uGlowGain = uniform(config.skin.tone.glowGain);
 
+  const uGlassAmount = uniform(config.skin.glass.amount);
+  const uFresnel = uniform(config.skin.glass.fresnel);
+  const uFresnelPow = uniform(config.skin.glass.fresnelPower);
+  const uSpecular = uniform(config.skin.glass.specular);
+  const uSheen = uniform(config.skin.glass.sheen);
+  const uRefraction = uniform(config.skin.glass.refraction);
+  const uGlassTint = uniform(new Color(config.skin.glass.tint));
+
+  const adaptation = adaptToBackdrop(config.skin.backdrop.color, config.skin.backdrop.adapt);
+  const uInkMix = uniform(adaptation.inkMix);
+  const uInkColor = uniform(
+    new Color(adaptation.inkColor[0], adaptation.inkColor[1], adaptation.inkColor[2]),
+  );
+  const uGlowScale = uniform(adaptation.glowScale);
+  const uOpacityFloor = uniform(adaptation.opacityFloor);
+  const uRimColor = uniform(
+    new Color(adaptation.rimColor[0], adaptation.rimColor[1], adaptation.rimColor[2]),
+  );
+
   const uniforms: HeadUniforms = {
     scroll: uScroll as unknown as ScrollUniform,
     baseOpacity: uBaseOpacity as unknown as { value: number },
@@ -345,6 +395,18 @@ export function buildSkinMaterial(
     skinWarm: uSkinWarm as unknown as { value: number },
     rim: uRim as unknown as { value: number },
     glowGain: uGlowGain as unknown as { value: number },
+    glassAmount: uGlassAmount as unknown as { value: number },
+    fresnel: uFresnel as unknown as { value: number },
+    fresnelPow: uFresnelPow as unknown as { value: number },
+    specular: uSpecular as unknown as { value: number },
+    sheen: uSheen as unknown as { value: number },
+    refraction: uRefraction as unknown as { value: number },
+    glassTint: uGlassTint as unknown as { value: THREE.Color },
+    inkMix: uInkMix as unknown as { value: number },
+    inkColor: uInkColor as unknown as { value: THREE.Color },
+    glowScale: uGlowScale as unknown as { value: number },
+    opacityFloor: uOpacityFloor as unknown as { value: number },
+    rimColor: uRimColor as unknown as { value: THREE.Color },
   };
 
   const aLips = attribute('aLips', 'float');
@@ -358,18 +420,29 @@ export function buildSkinMaterial(
   const densU = float(PLANAR_DENSITY / GRID_COLS).mul(uHDensity).div(uGlyphScale);
   const densV = float(PLANAR_DENSITY / GRID_ROWS).mul(uVDensity).div(uGlyphScale);
 
+  // Glass response: one fresnel term drives the refraction offset, the edge
+  // opacity, and the rim. `positionViewDirection` points at the eye, so the
+  // dot falls to zero exactly where the surface turns away (dec.glass-backdrop-adaptive).
+  const fresnel = pow(saturate(float(1).sub(dot(normalView, positionViewDirection))), uFresnelPow);
+  const glassFresnel = fresnel.mul(uGlassAmount);
+
   const bindNormal = normalGeometry.normalize();
   const axisW = pow(bindNormal.abs(), uSharp);
   const weights = axisW.div(axisW.dot(vec3(1)));
   const px = positionGeometry.x.mul(weights.z).add(positionGeometry.z.mul(weights.x)).add(positionGeometry.x.mul(weights.y));
   const py = positionGeometry.y.mul(weights.z.add(weights.x)).add(positionGeometry.z.mul(weights.y));
+  // The glyph grid stays welded to the bind pose where the surface faces the
+  // camera; only the grazing band shifts, which is where a glass shell would
+  // actually bend what is behind it. Row staggering keeps the unrefracted row
+  // so the flow rate never steps as the head turns.
+  const refractOffset = normalView.xy.mul(uRefraction).mul(glassFresnel);
   const rowY = floor(py.mul(PLANAR_DENSITY));
   const rateY = float(0.75).add(fract(rowY.mul(0.618)).mul(0.5));
   const sampled = texture(
     skin.texture,
     vec2(
-      px.mul(densU).add(0.5).add(uScroll.mul(rateY)),
-      py.mul(densV),
+      px.add(refractOffset.x).mul(densU).add(0.5).add(uScroll.mul(rateY)),
+      py.add(refractOffset.y).mul(densV),
     ),
   );
 
@@ -399,8 +472,11 @@ export function buildSkinMaterial(
   const warmed = mix(toned, skinCol.mul(luma), uSkinWarm.mul(shadeBase));
   const lipCol = vec3(1.0, 0.42, 0.38);
   const glyph = mix(warmed, lipCol.mul(luma), lipM.mul(uLipHue));
+  // On a bright host page the emissive look has nothing to glow against, so
+  // the glyph colour crosses over to a dark ink derived from the page itself.
+  const inked = mix(glyph, uInkColor, uInkMix);
 
-  material.colorNode = glyph.mul(shade);
+  material.colorNode = inked.mul(shade);
 
   const zoneBoost = lipM.mul(uLipsOp)
     .add(aNose.mul(uNoseOp))
@@ -410,13 +486,23 @@ export function buildSkinMaterial(
   material.opacityNode = luma.mul(float(1).sub(uBaseOpacity)).add(uBaseOpacity)
     .add(zoneBoost)
     .add(socket.mul(uSocketMask))
+    // Glass thickens towards the silhouette, which also stops the back of the
+    // head reading through at grazing angles.
+    .add(glassFresnel.mul(uFresnel))
+    // Mid-tone pages give neither glow nor ink much contrast; lift the floor.
+    .add(uOpacityFloor)
     .clamp(0, 1);
 
-  const rim = pow(
-    saturate(float(1).sub(dot(normalView, positionViewDirection))),
-    3,
-  ).mul(uRim);
-  material.emissiveNode = glyph.mul(uGlowGain).mul(shade).add(vec3(0.5, 0.7, 1.0).mul(rim));
+  // Blinn highlight against the scene key light, in world space so it tracks
+  // both the head pose and the camera.
+  const viewDirWorld = cameraPosition.sub(positionWorld).normalize();
+  const specular = pow(saturate(dot(normalWorld, keyDir.add(viewDirWorld).normalize())), uSheen)
+    .mul(uSpecular)
+    .mul(uGlassAmount);
+
+  material.emissiveNode = inked.mul(uGlowGain).mul(uGlowScale).mul(shade)
+    .add(uRimColor.mul(fresnel.mul(uRim)))
+    .add(uGlassTint.mul(specular).mul(uGlowScale));
 
   return {
     material: material as unknown as THREE.Material,
