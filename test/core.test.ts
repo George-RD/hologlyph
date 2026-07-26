@@ -330,7 +330,9 @@ vi.mock('../src/shaders', () => ({
       rootOffsetY: 0,
       clippingPlane: new THREE.Plane(),
       createSkinMaterial() {
-        return h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
+        const front =
+          h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
+        return { front, interior: { isInterior: true, dispose() {} } as unknown as THREE.Material };
       },
       createEyeballMaterial() {
         return { isEyeball: true, dispose() {} } as unknown as THREE.Material;
@@ -1022,16 +1024,41 @@ describe('displaced materials', () => {
     expect(texture.dispose).toHaveBeenCalledTimes(1);
   });
 });
-describe('occlusion depth mask', () => {
-  it('creates an occlusion depth mask at renderOrder = 0 on avatar replace', async () => {
-    const primaryMesh = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
-    const eyeMesh = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'eye_sclera' } as THREE.Material);
+describe('glass body draw order', () => {
+  /** A bust-shaped rig: skin plus the two authored internals and the eyes. */
+  function makeLayeredAvatar(): {
+    group: THREE.Group;
+    skin: THREE.Mesh;
+    eye: THREE.Mesh;
+    mouth: THREE.Mesh;
+    trim: THREE.Mesh;
+  } {
+    const skin = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    skin.morphTargetDictionary = { jaw_open: 0, exp_blink: 1 };
+    skin.morphTargetInfluences = [0, 0];
+    const eye = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'eye_sclera' } as THREE.Material);
+    const mouth = new THREE.Mesh(new THREE.BufferGeometry(), {
+      name: 'mouth_interior',
+      transparent: false,
+      blending: THREE.NormalBlending,
+    } as THREE.Material);
+    mouth.morphTargetDictionary = { jaw_open: 0 };
+    mouth.morphTargetInfluences = [0];
+    const trim = new THREE.Mesh(new THREE.BufferGeometry(), {
+      name: 'eye_trim',
+      transparent: false,
+      blending: THREE.NormalBlending,
+    } as THREE.Material);
     const group = new THREE.Group();
-    group.add(primaryMesh, eyeMesh);
+    group.add(skin, eye, mouth, trim);
+    return { group, skin, eye, mouth, trim };
+  }
 
+  it('layers interior, mask, internals and skin in one transparent pass', async () => {
+    const { group, skin, eye, mouth, trim } = makeLayeredAvatar();
     h.avatarOverride = {
       root: group,
-      morphMeshes: [primaryMesh],
+      morphMeshes: [skin, mouth],
       bones: {},
       animations: [],
       setMorph() {},
@@ -1044,17 +1071,118 @@ describe('occlusion depth mask', () => {
     const engine = createEngine({ avatarUrl: 'fake.glb' });
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
 
-    const mask = group.children.find((child) => child !== primaryMesh && child !== eyeMesh) as THREE.Mesh;
-    expect(mask).toBeDefined();
-    expect(mask.renderOrder).toBe(0);
+    const authored = new Set<THREE.Object3D>([skin, eye, mouth, trim]);
+    const overlays = group.children.filter((child) => !authored.has(child)) as THREE.Mesh[];
+    expect(overlays).toHaveLength(2);
 
-    const maskMat = mask.material as THREE.MeshBasicMaterial;
+    const mask = overlays.find((mesh) => mesh.renderOrder === 0);
+    const interior = overlays.find((mesh) => mesh.renderOrder === -1);
+    expect(mask, 'occlusion depth mask at renderOrder 0').toBeDefined();
+    expect(interior, 'interior wall at renderOrder -1').toBeDefined();
+
+    const maskMat = mask?.material as THREE.MeshBasicMaterial;
     expect(maskMat.colorWrite).toBe(false);
     expect(maskMat.depthWrite).toBe(true);
     expect(maskMat.depthTest).toBe(true);
+    // Three renders the whole opaque list before the transparent one, so the
+    // mask has to be transparent for renderOrder to place it after the
+    // interior wall.
+    expect(maskMat.transparent).toBe(true);
 
-    expect(eyeMesh.renderOrder).toBe(1);
-    expect(primaryMesh.renderOrder).toBe(2);
+    // Same reason for the authored internals. They were opaque, so they keep
+    // NoBlending and still draw as a straight write: only the layer moves.
+    for (const internal of [mouth, trim]) {
+      const mat = internal.material as THREE.Material;
+      expect(mat.transparent, `${mat.name} transparent`).toBe(true);
+      expect(mat.blending, `${mat.name} blending`).toBe(THREE.NoBlending);
+      expect(mat.depthWrite, `${mat.name} depthWrite`).toBe(true);
+      expect(internal.renderOrder, `${mat.name} renderOrder`).toBe(1);
+    }
+    expect(eye.renderOrder).toBe(1);
+    expect(skin.renderOrder).toBe(2);
+
+    // Both overlays ride the skin mesh's morph influences, so the far wall and
+    // the depth mask open with the jaw and close with a blink.
+    expect(interior?.morphTargetInfluences).toBe(skin.morphTargetInfluences);
+    expect(mask?.morphTargetInfluences).toBe(skin.morphTargetInfluences);
+    expect(interior?.morphTargetInfluences).not.toBe(mouth.morphTargetInfluences);
+
+    engine.dispose();
+    expect(group.children).not.toContain(mask);
+    expect(group.children).not.toContain(interior);
+  });
+
+  it('clones the overlays off a glass-dressed mesh, not just the first morph mesh', async () => {
+    // `morphMeshes[0]` is the mouth cavity here. It keeps its authored
+    // material, so cloning the interior wall from it would show the inside of
+    // the mouth instead of the far side of the head.
+    const { group, skin, eye, mouth, trim } = makeLayeredAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [mouth, skin],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const authored = new Set<THREE.Object3D>([skin, eye, mouth, trim]);
+    const overlays = group.children.filter((child) => !authored.has(child)) as THREE.Mesh[];
+    const interior = overlays.find((mesh) => mesh.renderOrder === -1);
+    expect(interior).toBeDefined();
+    expect(interior?.geometry).toBe(skin.geometry);
+    expect(interior?.geometry).not.toBe(mouth.geometry);
+
+    engine.dispose();
+  });
+
+  it('leaves the pre-glass draw order intact at glass.amount 0', async () => {
+    const { group, skin, eye, mouth, trim } = makeLayeredAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [skin, mouth],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const authored = new Set<THREE.Object3D>([skin, eye, mouth, trim]);
+    const overlays = group.children.filter((child) => !authored.has(child)) as THREE.Mesh[];
+    const mask = overlays.find((mesh) => mesh.renderOrder === 0);
+    const interior = overlays.find((mesh) => mesh.renderOrder === -1);
+    const maskMat = mask?.material as THREE.Material;
+    const mouthMat = mouth.material as THREE.Material;
+
+    // Moving the mask and the internals into the transparent list is itself
+    // visible: with the jaw open it shifts the mouth cavity by about 15 luma.
+    // So it must unwind when the glass has nothing to show.
+    engine.vfx.setHeadConfig({ skin: { glass: { amount: 0 } } });
+    rafCb?.(16);
+    expect(interior?.visible).toBe(false);
+    expect(maskMat.transparent).toBe(false);
+    expect(mouthMat.transparent).toBe(false);
+    // Depth behaviour is unchanged either way; only the render list moves.
+    expect(maskMat.depthWrite).toBe(true);
+    expect(mouthMat.depthWrite).toBe(true);
+
+    engine.vfx.setHeadConfig({ skin: { glass: { amount: 1 } } });
+    rafCb?.(32);
+    expect(interior?.visible).toBe(true);
+    expect(maskMat.transparent).toBe(true);
+    expect(mouthMat.transparent).toBe(true);
 
     engine.dispose();
   });

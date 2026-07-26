@@ -9,7 +9,7 @@
  * so importing this module under happy-dom is safe.
  */
 
-import { Color, LinearFilter, RepeatWrapping } from 'three';
+import { BackSide, Color, FrontSide, LinearFilter, RepeatWrapping } from 'three';
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   acos,
@@ -17,6 +17,7 @@ import {
   attribute,
   cameraPosition,
   dot,
+  exp,
   float,
   floor,
   fract,
@@ -72,6 +73,45 @@ export const SHADE_AMBIENT = 0.08;
 /** Lower clamp on the skin-shading term so facial glyphs never read fully black. */
 export const SHADE_FLOOR = 0.12;
 
+/**
+ * Beer-Lambert extinction over the baked `aThickness` attribute, which is
+ * normalised so 1 is the thickest part of the body. On the shipped bust that
+ * puts the forehead at 0.835 and the nose tip at 0.149, so at 2.4 the cranium
+ * transmits 13% of the page behind it and the nose tip 70%. That spread is
+ * what makes the head read as a block rather than a shell.
+ */
+export const GLASS_ABSORPTION = 2.4;
+
+/**
+ * Peak alpha of the interior (backface) pass. Deliberately low: the far wall
+ * is a hint of depth, not a second face competing with the front glyphs.
+ */
+export const INTERIOR_OPACITY = 0.55;
+
+/** Brightness scale of the interior pass relative to the front surface. */
+export const INTERIOR_DIM = 0.42;
+
+/**
+ * Absorption is achromatic on the front surface and tinted on the interior
+ * wall, and that split is measured rather than assumed.
+ *
+ * Mixing the glass tint into the front glyph colour in proportion to what the
+ * body hides is the obvious reading of "Beer-Lambert tinted by the tint", but
+ * it flattens the glyph field exactly where the body is thickest. The visual
+ * eval's yaw legibility fell from a 32.5 and 32.3 baseline to 23.8 and 22.1
+ * against pass cutoffs of 26.0 and 25.8, a straight fail; a 0.22 ceiling on
+ * the mix still cost 29.7 and 27.4. Dropping it entirely holds 32.0 and 29.4.
+ *
+ * What the measurement rejects is mixing the tint into the front glyph field,
+ * which is what the yaw metric reads. It says nothing about tinting light that
+ * has actually passed through the body, which is what the interior wall does.
+ *
+ * A text-skinned head cannot spend that much legibility for a pastel wash, so
+ * the front keeps a colourless thickness term (thick body hides more page)
+ * and the tinted Beer-Lambert lives on the interior wall, which is the light
+ * that has genuinely travelled through the body.
+ */
+
 /** The float uniform we advance each frame from `skin.scrollOffset`. */
 export interface ScrollUniform {
   value: number;
@@ -119,7 +159,16 @@ export interface HeadUniforms {
 }
 
 export interface BuiltSkinMaterial {
+  /** Front-facing surface: the face you read glyphs off. */
   material: THREE.Material;
+  /**
+   * Back-facing interior wall, drawn before the occlusion mask so the far side
+   * of the body shows through the near one. Every uniform node it consumes is
+   * the node `material` consumes, so one `applyConfigToBindings` write drives
+   * both halves and they can never drift. Front-only terms (rim, specular,
+   * silhouette fresnel) have no meaning on an inside face and are absent.
+   */
+  interior: THREE.Material;
   scroll: ScrollUniform;
   uniforms: HeadUniforms;
 }
@@ -316,6 +365,18 @@ export function buildSkinMaterial(
   material.transparent = true;
   material.depthTest = true;
   material.depthWrite = true;
+  material.side = FrontSide;
+
+  // Interior wall. Never writes depth: it sits behind everything the occlusion
+  // mask then hides, and must not stop the eyeballs or the mouth cavity from
+  // resolving against the front surface.
+  const interior = new MeshStandardNodeMaterial();
+  interior.metalness = 0;
+  interior.roughness = 0.4;
+  interior.transparent = true;
+  interior.depthTest = true;
+  interior.depthWrite = false;
+  interior.side = BackSide;
 
   prepTexture(skin.texture);
 
@@ -416,6 +477,7 @@ export function buildSkinMaterial(
   const aCavity = attribute('aCavity', 'float');
   const aNose = attribute('aNose', 'float');
   const aSocket = attribute('aSocket', 'float');
+  const aThickness = attribute('aThickness', 'float');
 
   const densU = float(PLANAR_DENSITY / GRID_COLS).mul(uHDensity).div(uGlyphScale);
   const densV = float(PLANAR_DENSITY / GRID_ROWS).mul(uVDensity).div(uGlyphScale);
@@ -476,22 +538,35 @@ export function buildSkinMaterial(
   // the glyph colour crosses over to a dark ink derived from the page itself.
   const inked = mix(glyph, uInkColor, uInkMix);
 
-  material.colorNode = inked.mul(shade);
-
   const zoneBoost = lipM.mul(uLipsOp)
     .add(aNose.mul(uNoseOp))
     .add(aJaw.mul(uJawOp))
     .add(aEyelid.mul(uOrbitOp))
     .add(browM.mul(uBrowOp));
-  material.opacityNode = luma.mul(float(1).sub(uBaseOpacity)).add(uBaseOpacity)
+  // Beer-Lambert: thicker body transmits less of the page behind it, so the
+  // cranium reads as a block while the nose and chin stay clear.
+  const bodyOpacity = float(1)
+    .sub(exp(aThickness.mul(GLASS_ABSORPTION).negate()))
+    .mul(uGlassAmount);
+  // The pre-glass alpha, kept in exactly the order and shape it had before
+  // this change so the GPU evaluates the same instruction sequence and
+  // `glass.amount = 0` reproduces the approved look bit for bit.
+  const baseAlpha = luma.mul(float(1).sub(uBaseOpacity)).add(uBaseOpacity)
     .add(zoneBoost)
-    .add(socket.mul(uSocketMask))
+    .add(socket.mul(uSocketMask));
+  // What the body newly hides, as a share of the pixel. The front glyphs keep
+  // their own alpha; this is the extra coverage the thickness buys. The
+  // saturate is what stops the additive zone boosts driving it negative.
+  const bodyShare = bodyOpacity.mul(float(1).sub(baseAlpha.saturate()));
+  const totalAlpha = baseAlpha
     // Glass thickens towards the silhouette, which also stops the back of the
     // head reading through at grazing angles.
     .add(glassFresnel.mul(uFresnel))
     // Mid-tone pages give neither glow nor ink much contrast; lift the floor.
     .add(uOpacityFloor)
+    .add(bodyShare)
     .clamp(0, 1);
+  material.opacityNode = totalAlpha;
 
   // Blinn highlight against the scene key light, in world space so it tracks
   // both the head pose and the camera.
@@ -500,12 +575,33 @@ export function buildSkinMaterial(
     .mul(uSpecular)
     .mul(uGlassAmount);
 
+  material.colorNode = inked.mul(shade);
   material.emissiveNode = inked.mul(uGlowGain).mul(uGlowScale).mul(shade)
     .add(uRimColor.mul(fresnel.mul(uRim)))
     .add(uGlassTint.mul(specular).mul(uGlowScale));
 
+  // Interior wall: the same glyph surface seen from inside, dimmed and pushed
+  // through the body's own absorption so the far side reads as depth rather
+  // than as a second face. Every node it consumes is the node the front
+  // material consumes, so the two halves track one set of uniforms with no
+  // fan-out in `applyConfigToBindings`. The front-only terms (rim, specular,
+  // silhouette fresnel, opacity floor) have no meaning on an inside face and
+  // are deliberately absent.
+  const transmitted = exp(
+    vec3(1).sub(uGlassTint).mul(GLASS_ABSORPTION).mul(aThickness).negate(),
+  );
+  const interiorTint = inked.mul(shade).mul(transmitted).mul(INTERIOR_DIM);
+  interior.colorNode = interiorTint;
+  interior.emissiveNode = interiorTint.mul(uGlowGain).mul(uGlowScale);
+  interior.opacityNode = baseAlpha
+    .saturate()
+    .mul(INTERIOR_OPACITY)
+    .mul(uGlassAmount)
+    .clamp(0, 1);
+
   return {
     material: material as unknown as THREE.Material,
+    interior: interior as unknown as THREE.Material,
     scroll: uScroll as unknown as ScrollUniform,
     uniforms,
   };

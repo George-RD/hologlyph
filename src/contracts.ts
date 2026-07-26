@@ -437,9 +437,21 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
   }),
 });
 
+/**
+ * The two draw passes that make up the glass body: the front surface and the
+ * back-facing interior wall rendered behind it (dec.liquid-glass-architecture,
+ * item 1). Every uniform the interior consumes is the node the front consumes,
+ * so look changes drive both at once; front-only terms such as the rim have no
+ * meaning on an inside face and are absent from it.
+ */
+export interface SkinMaterials {
+  readonly front: THREE.Material;
+  readonly interior: THREE.Material;
+}
+
 export interface VFXEngine extends Disposable {
-  /** Build the single-source TSL text-skin material for the bust. */
-  createSkinMaterial(skin: TextSkinEngine): THREE.Material;
+  /** Build the single-source TSL text-skin materials for the bust. */
+  createSkinMaterial(skin: TextSkinEngine): SkinMaterials;
   /** Build the TSL eyeball material for the sclera cap. */
   createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material;
   /** Live look controls. */
