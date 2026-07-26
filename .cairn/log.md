@@ -152,3 +152,4 @@
 - scan: nodes=16, findings=3, errors=0
 - archive: liquid-glass-snapshot-lens merged; no operations
 - scan: nodes=16, findings=3, errors=0
+- scan: nodes=16, findings=4, errors=0

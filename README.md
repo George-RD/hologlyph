@@ -65,8 +65,9 @@ npm install @zumer/snapdom
 <hologlyph-head refract="#hero"></hologlyph-head>
 ```
 
-No browser API hands rendered page pixels to WebGL, so this is a SNAPSHOT, not
-a live feed, and the limits are part of the contract rather than bugs:
+No browser API hands rendered page pixels to WebGL, so by default this is a
+SNAPSHOT, not a live feed (one Chromium exception, below), and the limits are
+part of the contract rather than bugs:
 
 - **Content is frozen between captures.** A CSS animation behind the head does
   not move in the refraction. Captures happen on request, when the source moves
@@ -93,6 +94,40 @@ engine.setLensSource(document.querySelector('#hero'), {
 });
 engine.captureLens(); // force a fresh snapshot
 ```
+
+### Live DOM where Chromium allows it
+
+Chromium behind `--enable-blink-features=CanvasDrawElement` can paint real DOM
+into a canvas at vsync, which is the only way to refract a running CSS
+animation or the value someone is typing. The library uses it automatically
+when it is there and never depends on it:
+
+```html
+<canvas layoutsubtree width="720" height="720">
+  <div id="hero">live, animating content</div>
+</canvas>
+<hologlyph-head refract="#hero"></hologlyph-head>
+```
+
+Two conditions, both silent when unmet. The API must be present, and the named
+element must be an IMMEDIATE CHILD of a `<canvas layoutsubtree>`, because
+Chromium only allows an element to be drawn into the canvas that owns it. Miss
+either and you get the snapshot lens above, with no error and no difference in
+what you write. Passing your own `rasterise` always chooses the snapshot path.
+
+While it is engaged the lens draws the named element into its parent canvas
+every frame, so that canvas belongs to the lens, not to your own 2D drawing.
+
+**Keep interactive controls out of the refracted subtree.** Hit-testing follows
+the undistorted layout box, and `getElementTransform` can only express an
+affine mapping, so a lens can never be reconciled with it: a control under the
+head is unreachable there. The engine warns when it finds one as the source is
+bound, and it cannot do anything else, because it must not move your DOM. It
+does not re-check afterwards, so a control added to the subtree later goes
+unmentioned.
+
+The API is Chromium-only and was origin-trialled in Chrome 148 to 150. Nothing
+here is load-bearing: when it lapses, the snapshot path is what remains.
 
 ## Imperative engine
 

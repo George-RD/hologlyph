@@ -18,7 +18,7 @@
  * zero rather than a NaN that would reach a uniform and blank the head.
  */
 
-import type { Disposable, LensWindow } from '../contracts.js';
+import type { Disposable, LensBinding, LensWindow } from '../contracts.js';
 
 /**
  * A rectangle in CSS pixels, in DOCUMENT space (page origin, not viewport):
@@ -29,6 +29,40 @@ export interface LensRect {
   readonly y: number;
   readonly width: number;
   readonly height: number;
+}
+
+/** Bounding rect in document space: viewport rect plus the page scroll. */
+export function documentRect(element: Element): LensRect {
+  const rect = element.getBoundingClientRect();
+  const view = element.ownerDocument?.defaultView;
+  const scrollX = view?.scrollX ?? 0;
+  const scrollY = view?.scrollY ?? 0;
+  return {
+    x: rect.left + scrollX,
+    y: rect.top + scrollY,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+/**
+ * What the engine binds to the glass, whatever produced the pixels. Two
+ * implementations satisfy it: `createPageLens`, which rasterises a snapshot of
+ * any subtree on any engine, and `createElementLens`, the Chromium
+ * HTML-in-Canvas enhancement, which uploads a live one every frame.
+ */
+export interface LensSource extends Disposable {
+  /** What to hand `VFXEngine.setLens`, or null while there is nothing to sample. */
+  readonly binding: LensBinding | null;
+  /** Host request for fresh pixels. A live source is always fresh, so it is a no-op there. */
+  capture(): void;
+  /**
+   * Per-frame: refresh the sample window from the live layout, and refresh the
+   * pixels if this source is live. A plain page scroll moves the head and the
+   * source together, the window is unchanged, and a snapshot source does
+   * nothing at all: that is the point of measuring in document space.
+   */
+  sync(strength: number): void;
 }
 
 export type { LensWindow };

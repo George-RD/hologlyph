@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph live lens lab (rung 3, Chromium)</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: #05070d; color: #e6ecff; }
+      body {
+        font: 15px/1.5 system-ui, -apple-system, sans-serif;
+        min-height: 100vh;
+      }
+
+      /*
+        The live subtree, and the whole reason this page exists: it must be an
+        IMMEDIATE CHILD of a <canvas layoutsubtree>, because Chromium only
+        allows an element to be drawn into the canvas that owns it. Everything
+        in it is decorative and moves on its own, so a frozen snapshot and a
+        live upload are visibly different rather than a matter of taste.
+      */
+      #live {
+        position: absolute;
+        left: 40px;
+        top: 40px;
+        width: 720px;
+        height: 720px;
+        display: block;
+      }
+      #live-hero {
+        width: 720px;
+        height: 720px;
+        position: relative;
+        overflow: hidden;
+        /* Aperiodic and high contrast: a lens over a flat colour is invisible,
+           and a lens over a repeating stripe looks exactly like no lens. */
+        background:
+          radial-gradient(circle at 18% 26%, #ff5c7a 0 90px, transparent 92px),
+          radial-gradient(circle at 74% 18%, #ffd166 0 60px, transparent 62px),
+          radial-gradient(circle at 62% 78%, #3ddc97 0 120px, transparent 122px),
+          linear-gradient(122deg, #10224a, #3a1f6b 46%, #0d3f5c);
+        color: #fff;
+        padding: 2rem;
+        font: 17px/1.5 system-ui, sans-serif;
+      }
+      #live-hero h2 { margin: 0 0 0.5rem; font-size: 1.6rem; letter-spacing: -0.01em; }
+      .bars { display: flex; gap: 6px; margin: 1.25rem 0; }
+      .bars i {
+        display: block;
+        width: 26px;
+        height: 90px;
+        background: #fff;
+        transform-origin: 50% 100%;
+        animation: pump 1.1s ease-in-out infinite alternate;
+      }
+      .bars i:nth-child(2) { animation-duration: 0.7s; background: #ffd166; }
+      .bars i:nth-child(3) { animation-duration: 1.6s; background: #3ddc97; }
+      .bars i:nth-child(4) { animation-duration: 0.9s; background: #ff5c7a; }
+      .bars i:nth-child(5) { animation-duration: 1.3s; }
+      @keyframes pump { from { transform: scaleY(0.15); } to { transform: scaleY(1); } }
+      #live-ticker {
+        font: 600 34px/1.2 ui-monospace, monospace;
+        letter-spacing: 0.06em;
+      }
+      /* Toggled on to prove the control-trap warning, off by default. */
+      #trap { display: none; margin-top: 1.5rem; }
+      #trap.shown { display: block; }
+      #trap input { font: inherit; padding: 0.5rem 0.7rem; width: 60%; }
+
+      #host {
+        position: absolute;
+        left: 200px;
+        top: 40px;
+        width: 420px;
+        height: 720px;
+      }
+      #holo { width: 100%; height: 100%; display: block; }
+
+      #panel {
+        position: fixed;
+        right: 16px;
+        top: 16px;
+        width: 330px;
+        padding: 1rem;
+        background: #0b1120e6;
+        border: 1px solid #1e2a44;
+        border-radius: 0.6rem;
+        font-size: 13px;
+      }
+      #panel h1 { font-size: 1rem; margin: 0 0 0.15rem; }
+      #panel .sub { margin: 0 0 0.9rem; opacity: 0.6; font-size: 11px; }
+      fieldset { border: 1px solid #1e2a44; border-radius: 0.4rem; margin: 0 0 0.7rem; padding: 0.6rem; }
+      legend { padding: 0 0.35rem; opacity: 0.7; font-size: 11px; }
+      label { display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0; }
+      label span { flex: 1; }
+      input[type='range'] { flex: 2; }
+      output { width: 3.6rem; text-align: right; font: 11px ui-monospace, monospace; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      button {
+        font: inherit;
+        padding: 0.35rem 0.6rem;
+        border-radius: 0.35rem;
+        border: 1px solid #2a3c60;
+        background: #131c31;
+        color: inherit;
+        cursor: pointer;
+      }
+      button.primary { background: #1d3a63; }
+      #capability, #status {
+        font: 11px/1.5 ui-monospace, monospace;
+        white-space: pre-wrap;
+        background: #060b14;
+        border-radius: 0.35rem;
+        padding: 0.5rem;
+      }
+      #status { margin-top: 0.5rem; }
+
+      /* Outside the head, so it stays clickable: the control that proves the
+         undistorted region still works normally. */
+      #outside {
+        position: absolute;
+        left: 40px;
+        top: 800px;
+        padding: 1rem 0 4rem;
+      }
+      #outside input { font: inherit; padding: 0.5rem 0.7rem; }
+    </style>
+  </head>
+  <body>
+    <canvas id="live" layoutsubtree width="720" height="720">
+      <div id="live-hero">
+        <h2>Live, not snapshotted</h2>
+        <p>
+          These bars are a CSS animation and the counter below is repainted
+          every frame. Refracted through the head they keep moving, because
+          Chromium uploads the real DOM instead of a rasterised copy.
+        </p>
+        <div class="bars"><i></i><i></i><i></i><i></i><i></i></div>
+        <p id="live-ticker">frame 0</p>
+        <div id="trap">
+          <label for="trapped">a control under the head</label>
+          <input id="trapped" type="text" value="unreachable" />
+        </div>
+      </div>
+    </canvas>
+
+    <div id="host"><canvas id="holo"></canvas></div>
+
+    <div id="outside">
+      <label for="reachable">a control outside the distorted region</label>
+      <input id="reachable" type="text" value="reachable" />
+    </div>
+
+    <div id="panel">
+      <h1>live lens</h1>
+      <p class="sub">dec.liquid-glass-architecture, rung 3, item 5</p>
+
+      <fieldset>
+        <legend>capability</legend>
+        <div id="capability">probing…</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>source</legend>
+        <div class="buttons">
+          <button id="sourceLive" class="primary" type="button">live</button>
+          <button id="sourceSnapshot" type="button">snapshot</button>
+          <button id="sourceOff" type="button">none</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>lens</legend>
+        <label><span>strength</span><input id="strength" type="range" min="-0.14" max="0.14" step="0.002" value="0.06" /><output></output></label>
+        <label><span>amount</span><input id="amount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>hit-testing</legend>
+        <div class="buttons">
+          <button id="trapToggle" type="button">put a control under the head</button>
+        </div>
+      </fieldset>
+
+      <div id="status">no source named</div>
+    </div>
+
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
+      import { elementLensCapability } from '../src/core/element-lens.ts';
+
+      const canvas = document.getElementById('holo');
+      const host = document.getElementById('host');
+      const hero = document.getElementById('live-hero');
+      const status = document.getElementById('status');
+      const capabilityBox = document.getElementById('capability');
+
+      const capability = elementLensCapability();
+      capabilityBox.textContent = capability.supported
+        ? `HTML-in-Canvas detected\ndrawElementImage: yes\ntexElementImage2D: yes`
+        : `HTML-in-Canvas absent (normal)\ndrawElementImage: ${capability.drawElementImage}\ntexElementImage2D: ${capability.texElementImage2D}\nrelaunch Chrome with\n--enable-blink-features=CanvasDrawElement`;
+
+      const engine = createEngine();
+      window.__hologlyphEngine = engine;
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, host);
+
+      function resize() {
+        engine.resize(host.clientWidth, host.clientHeight);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // --- the live subtree --------------------------------------------------
+      // The counter is the cheapest possible proof that the texture is not
+      // frozen: it changes every frame whether or not anything else does.
+      let frame = 0;
+      const ticker = document.getElementById('live-ticker');
+      function tick() {
+        frame += 1;
+        ticker.textContent = `frame ${String(frame).padStart(5, '0')}`;
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+
+      // --- source ------------------------------------------------------------
+      // Lab-only: the snapshot leg passes the rasteriser explicitly so the page
+      // fails loudly if the optional peer is missing, and so it is a deliberate
+      // choice of the frozen path rather than a fallback.
+      async function rasterise(element) {
+        const { snapdom } = await import('@zumer/snapdom');
+        return snapdom.toCanvas(element, { dpr: 1, fast: true, embedFonts: true });
+      }
+
+      let mode = 'none';
+      function setSource(next) {
+        mode = next;
+        if (next === 'live') {
+          engine.setLensSource(hero);
+          status.textContent = capability.supported
+            ? 'live: uploading real DOM every frame'
+            : 'live requested, but the capability is absent: snapshot path';
+        } else if (next === 'snapshot') {
+          engine.setLensSource(hero, { rasterise });
+          status.textContent = 'snapshot: frozen between captures';
+        } else {
+          engine.setLensSource(null);
+          status.textContent = 'no source named';
+        }
+      }
+      document.getElementById('sourceLive').addEventListener('click', () => setSource('live'));
+      document
+        .getElementById('sourceSnapshot')
+        .addEventListener('click', () => setSource('snapshot'));
+      document.getElementById('sourceOff').addEventListener('click', () => setSource('none'));
+
+      // --- lens --------------------------------------------------------------
+      const lens = { amount: 1, strength: 0.06 };
+      function pushLens() {
+        engine.vfx.setHeadConfig({ lens: { ...lens } });
+      }
+      function bindRange(id, key) {
+        const input = document.getElementById(id);
+        const out = input.parentElement.querySelector('output');
+        const sync = () => {
+          lens[key] = Number(input.value);
+          out.textContent = lens[key].toFixed(3);
+          pushLens();
+        };
+        input.addEventListener('input', sync);
+        sync();
+      }
+      bindRange('strength', 'strength');
+      bindRange('amount', 'amount');
+
+      // --- hit-testing -------------------------------------------------------
+      // Rebinding the source is what re-runs the check, so the warning appears
+      // when the control does.
+      const trap = document.getElementById('trap');
+      document.getElementById('trapToggle').addEventListener('click', () => {
+        trap.classList.toggle('shown');
+        if (mode !== 'none') {
+          engine.setLensSource(null);
+          setSource(mode);
+        }
+      });
+
+      // Lab-only hooks for `tools/smoke/live-lens-shot.mjs`.
+      window.__liveLensLab = {
+        capability,
+        setSource,
+        setLens(next) {
+          Object.assign(lens, next);
+          document.getElementById('amount').value = String(lens.amount);
+          document.getElementById('strength').value = String(lens.strength);
+          pushLens();
+        },
+        showTrap(on) {
+          trap.classList.toggle('shown', on);
+          if (mode !== 'none') {
+            engine.setLensSource(null);
+            setSource(mode);
+          }
+        },
+        /** What the browser thinks is at a control's own layout box. */
+        probeHit(id) {
+          const el = document.getElementById(id);
+          const box = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          el.focus();
+          return {
+            id,
+            box: [box.left, box.top, box.width, box.height].map(Math.round),
+            elementAtLayoutBox: hit?.id || hit?.tagName || null,
+            focused: document.activeElement?.id || document.activeElement?.tagName || null,
+          };
+        },
+        get mode() {
+          return mode;
+        },
+        get frame() {
+          return frame;
+        },
+      };
+
+      setSource('live');
+    </script>
+  </body>
+</html>

@@ -26,15 +26,17 @@
 
 import { LinearFilter, SRGBColorSpace, Texture } from 'three';
 import type * as THREE from 'three';
-import type { Disposable, LensBinding, LensRasteriser } from '../contracts.js';
+import type { LensBinding, LensRasteriser } from '../contracts.js';
 import {
   createLensScheduler,
+  documentRect,
   IDENTITY_LENS_WINDOW,
   lensDisplacement,
   lensWindow,
   lensWindowsDiffer,
   type LensRect,
   type LensScheduler,
+  type LensSource,
 } from './lens.js';
 
 export interface PageLensOptions {
@@ -53,34 +55,8 @@ export interface PageLensOptions {
   readonly clearTimer?: (handle: unknown) => void;
 }
 
-export interface PageLens extends Disposable {
-  /** What to hand `VFXEngine.setLens`, or null until a capture lands. */
-  readonly binding: LensBinding | null;
-  /** Capture now. Coalesces with an in-flight capture rather than queueing many. */
-  capture(): void;
-  /**
-   * Per-frame: refresh the sample window from the live layout and arm a
-   * debounced recapture if the SOURCE moved or resized. A plain page scroll
-   * moves the head and the source together, the window is unchanged, and
-   * nothing is recaptured: that is the whole point of snapshotting in
-   * document space.
-   */
-  sync(strength: number): void;
-}
-
-/** Bounding rect in document space: viewport rect plus the page scroll. */
-function documentRect(element: Element): LensRect {
-  const rect = element.getBoundingClientRect();
-  const view = element.ownerDocument?.defaultView;
-  const scrollX = view?.scrollX ?? 0;
-  const scrollY = view?.scrollY ?? 0;
-  return {
-    x: rect.left + scrollX,
-    y: rect.top + scrollY,
-    width: rect.width,
-    height: rect.height,
-  };
-}
+/** The snapshot flavour of `LensSource`: rasterise on demand, sample everywhere. */
+export type PageLens = LensSource;
 
 /** Sub-pixel tolerance on the source rect, so float jitter never recaptures. */
 const RECT_EPSILON = 0.5;

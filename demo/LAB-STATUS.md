@@ -164,6 +164,20 @@ this file tracks their purpose and what remains owner-session-only.
   untouched page outside the silhouette, the sign response, and exact
   restoration when the source is dropped. The lens ships with no source named:
   the look is not owner-approved yet, and in fact nobody has looked at it.
+- `demo/live-lens-lab.html` plus `tools/smoke/live-lens-shot.mjs` - rung 3,
+  Chromium half: the same lens fed by LIVE DOM rather than a snapshot. The
+  source is an animating subtree inside a `<canvas layoutsubtree>`, which is
+  the only arrangement Chromium allows, with the head laid over it and a
+  toggle that drops an input into the refracted region to prove the
+  control-trap warning. The panel reports the capability, and a source
+  three-way (live, snapshot, none) puts both paths side by side. Dev-only,
+  deliberately absent from `demo/vite.config.ts`. The smoke script runs the
+  page TWICE, once with `--enable-blink-features=CanvasDrawElement` and once
+  without, and measures: the capability, a residual-motion floor, engagement,
+  liveness (the refracted pixels move while the DOM moves, where the snapshot
+  path contributes nothing), an untouched page outside the silhouette,
+  reachable and unreachable controls, and a clean fall-through to the snapshot
+  lens with the flag off. Needs a real Chrome; nothing in CI runs it.
 
 ## Where the approved look lives
 
