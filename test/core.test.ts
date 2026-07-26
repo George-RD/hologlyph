@@ -25,6 +25,7 @@ import type {
   HeadConfig,
   HeadConfigOverrides,
   HeadPoolConfig,
+  LensBinding,
   LoadedAvatar,
   GazeMode,
   MotionEngine,
@@ -78,6 +79,7 @@ interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
   rootOffsetY: number;
   _headConfig: HeadConfig;
   headConfigCalls: HeadConfigOverrides[];
+  lensBindings: Array<LensBinding | null>;
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -370,6 +372,7 @@ vi.mock('../src/shaders', async () => ({
           },
           eyes: { ...this._headConfig.eyes, ...config.eyes },
           pool: { ...this._headConfig.pool, ...config.pool },
+          lens: { ...this._headConfig.lens, ...config.lens },
         };
       },
       setEmergence(p: number) {
@@ -377,6 +380,10 @@ vi.mock('../src/shaders', async () => ({
       },
       setReducedMotion(reduce: boolean) {
         this.reduced = reduce;
+      },
+      lensBindings: [],
+      setLens(binding: LensBinding | null) {
+        this.lensBindings.push(binding);
       },
       update() {},
       disposeCount: 0,
@@ -1390,5 +1397,168 @@ describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => 
     engine.dispose();
     expect(pool.disposeCount).toBe(1);
     expect(scene.children).not.toContain(pool.object);
+  });
+});
+
+describe('snapshot lens lifecycle (dec.liquid-glass-architecture, item 4)', () => {
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 0.1, 0.5, 0, -0.1, 1, 0], 3),
+    );
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  async function mountHead(): Promise<ReturnType<typeof createEngine>> {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    return engine;
+  }
+
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function stubRasteriser(): () => Promise<CanvasImageSource> {
+    return () => Promise.resolve({ width: 4, height: 4 } as unknown as CanvasImageSource);
+  }
+
+  it('never touches the lens uniforms for a head with no source named', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    rafCb?.(16);
+    rafCb?.(32);
+    // Not "bound null": never called at all. No layout read, no rasteriser
+    // load, no texture, so the shipped head costs exactly what it did.
+    expect(vfx.lensBindings).toEqual([]);
+    engine.dispose();
+  });
+
+  it('binds a snapshot once a source is named, and clears it when it is dropped', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    await settle();
+    rafCb?.(16);
+
+    const bound = vfx.lensBindings.at(-1);
+    expect(bound).not.toBeNull();
+    expect(bound?.texture).toBeDefined();
+
+    engine.setLensSource(null);
+    expect(vfx.lensBindings.at(-1)).toBeNull();
+    engine.dispose();
+  });
+
+  it('is idempotent on the same source, so a re-rendering host cannot storm captures', async () => {
+    const engine = await mountHead();
+    const rasterise = vi.fn(stubRasteriser());
+    const section = document.createElement('section');
+
+    for (let render = 0; render < 25; render++) {
+      engine.setLensSource(section, { rasterise });
+    }
+    await settle();
+    // One capture, not twenty-five. A capture is 10 to 150 ms of main thread,
+    // and this is the exact shape of a framework effect with no dependencies.
+    expect(rasterise).toHaveBeenCalledTimes(1);
+
+    engine.setLensSource(document.createElement('section'), { rasterise });
+    await settle();
+    expect(rasterise).toHaveBeenCalledTimes(2);
+    engine.dispose();
+  });
+
+  it('unbinds the snapshot before disposing it, so no dead texture stays in the sampler', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    await settle();
+    rafCb?.(16);
+
+    const texture = vfx.lensBindings.at(-1)?.texture;
+    expect(texture).toBeDefined();
+    let disposedAt = -1;
+    texture?.addEventListener('dispose', () => {
+      disposedAt = vfx.lensBindings.length;
+    });
+
+    engine.setLensSource(null);
+    // The clearing call must already have been made when the texture died.
+    expect(vfx.lensBindings.at(-1)).toBeNull();
+    expect(disposedAt).toBe(vfx.lensBindings.length);
+    engine.dispose();
+  });
+
+  it('accepts a source named before mount and builds it when the canvas arrives', async () => {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    const vfx = h.registry.vfx.at(-1)!;
+    expect(vfx.lensBindings).toEqual([]);
+
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    await settle();
+    rafCb?.(16);
+    expect(vfx.lensBindings.at(-1)).not.toBeNull();
+    engine.dispose();
+  });
+
+  it('reports a capture failure as an engine error and keeps rendering', async () => {
+    const engine = await mountHead();
+    const errors: Error[] = [];
+    engine.on('error', (err) => errors.push(err));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    engine.setLensSource(document.createElement('section'), {
+      rasterise: () => Promise.reject(new Error('rasteriser missing')),
+    });
+    await settle();
+
+    expect(errors.map((e) => e.message)).toEqual(['rasteriser missing']);
+    rafCb?.(16);
+    expect(h.registry.renderer.at(-1)!.renderCount).toBeGreaterThan(0);
+    warn.mockRestore();
+    engine.dispose();
+  });
+
+  it('clears the binding when the engine is disposed', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    await settle();
+    rafCb?.(16);
+    expect(vfx.lensBindings.at(-1)).not.toBeNull();
+
+    engine.dispose();
+    expect(vfx.lensBindings.at(-1)).toBeNull();
   });
 });

@@ -18,6 +18,19 @@ revision and does not expose a revision option. The reviewed revision above is
 an audit record, not a runtime pin. Applications requiring immutable weights
 must provide a loader backed by pinned or self-hosted content.
 
+## snapDOM (`@zumer/snapdom`)
+
+The optional page snapshot lens (`refract` / `engine.setLensSource`) can load
+`@zumer/snapdom` on demand to rasterise a host-named DOM subtree. It is an
+optional peer dependency, resolved through a dynamic import and excluded from
+the library build, so it is neither bundled nor installed unless a host opts
+in. A host that supplies its own rasteriser never loads it at all.
+
+- Library: `@zumer/snapdom` 2.22.0, https://www.npmjs.com/package/@zumer/snapdom/v/2.22.0
+- npm integrity: `sha512-XfOa0pqiRj9+zsrHm5+hLmKMmMuFxIhrmrSrJKMkSf9DFGnDsql89bd4IMFnLMWl1WmW0X5YOjtSZi8jvYkbVw==`
+- Licence: MIT (same text as reproduced below for ICT-FaceKit, with copyright
+  held by the snapDOM authors)
+
 ## ICT-FaceKit (USC Institute for Creative Technologies)
 
 The default head bust shipped with this package (inside dist/, as an inlined

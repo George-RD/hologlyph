@@ -46,7 +46,53 @@ head?.setEmotion('friendly');
 await head?.speak('Hello');
 ```
 
-Supported attributes are `src`, `text-skin`, `mode`, and `reduced-motion`.
+Supported attributes are `src`, `text-skin`, `mode`, `reduced-motion`, and
+`refract`.
+
+## Optional page lens (`refract`)
+
+By default the head is a transparent canvas and the page behind it shows
+through undisturbed. Point `refract` at a CSS selector and that subtree is
+rasterised and refracted through the glass, displaced by the head's surface
+normals and its baked thickness.
+
+```sh
+npm install @zumer/snapdom
+```
+
+```html
+<section id="hero">...</section>
+<hologlyph-head refract="#hero"></hologlyph-head>
+```
+
+No browser API hands rendered page pixels to WebGL, so this is a SNAPSHOT, not
+a live feed, and the limits are part of the contract rather than bugs:
+
+- **Content is frozen between captures.** A CSS animation behind the head does
+  not move in the refraction. Captures happen on request, when the source moves
+  or resizes, and once a scroll settles; never per frame.
+- **Cross-origin images need CORS headers** or they rasterise blank, silently.
+- **`position: fixed` subtrees are typically excluded** by DOM rasterisers.
+- **The first capture costs 10 to 150 ms of main thread** on a real page.
+- **Never point it at `document.body`.** Every limit above scales with what is
+  inside.
+
+Switching the lens on also makes the head opaque where it covers the named
+subtree, which moves the head-over-page blend from the browser compositor into
+the scene. Turn `skin.lens.amount` down to crossfade back towards the live
+page.
+
+`@zumer/snapdom` is an optional peer dependency, loaded through a dynamic
+import the first time a subtree is named, so it costs nothing when the
+attribute is absent. Supply your own rasteriser instead and you need no peer at
+all:
+
+```ts
+engine.setLensSource(document.querySelector('#hero'), {
+  rasterise: async (element) => myRasteriser(element), // -> CanvasImageSource
+});
+engine.captureLens(); // force a fresh snapshot
+```
 
 ## Imperative engine
 

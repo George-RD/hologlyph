@@ -24,7 +24,16 @@
  * deferred rather than done badly.
  */
 
-import { BackSide, Color, FrontSide, LinearFilter, RepeatWrapping } from 'three';
+import {
+  BackSide,
+  Color,
+  DataTexture,
+  FrontSide,
+  LinearFilter,
+  RepeatWrapping,
+  Vector2,
+  Vector4,
+} from 'three';
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   acos,
@@ -43,12 +52,14 @@ import {
   normalLocal,
   normalView,
   normalWorld,
+  output,
   positionGeometry,
   positionLocal,
   positionViewDirection,
   positionWorld,
   pow,
   saturate,
+  screenUV,
   sin,
   smoothstep,
   texture,
@@ -56,6 +67,7 @@ import {
   uniform,
   vec2,
   vec3,
+  vec4,
 } from 'three/tsl';
 import type * as THREE from 'three';
 import {
@@ -209,6 +221,21 @@ export interface HeadUniforms {
   poolWaterY: { value: number };
   /** Monotonic seconds, written every frame; phases the breathe. */
   poolTime: { value: number };
+  /**
+   * Crossfade to the lensed composite on the interior pass, 0 or 1. Derived,
+   * not configured: at 0 the material emits `output` unchanged, so a head
+   * with no page snapshot bound is bit-identical to the shipped look. It may
+   * only open once a real texture is in `lensTexture`.
+   */
+  lensGate: { value: number };
+  /** Mix of the lensed snapshot over the live page behind the head. */
+  lensAmount: { value: number };
+  /** `screenUV` to snapshot UV: (offsetU, offsetV, scaleU, scaleV). */
+  lensWindow: { value: THREE.Vector4 };
+  /** Per-axis sample displacement in `screenUV` units, at unit thickness. */
+  lensDisplacement: { value: THREE.Vector2 };
+  /** The page snapshot itself; a 1x1 placeholder until one is captured. */
+  lensTexture: { value: THREE.Texture };
 }
 
 export interface BuiltSkinMaterial {
@@ -325,6 +352,10 @@ export function normaliseHeadConfig(
     if (/^#[0-9a-fA-F]{6}$/.test(clean)) return clean.toLowerCase();
     return fallback;
   };
+  // Signed values still have to be finite: a NaN strength would reach the
+  // sample coordinates and blank the head, silently, on one host's maths bug.
+  const finiteOr = (val: number | undefined, fallback: number): number =>
+    typeof val === 'number' && Number.isFinite(val) ? val : fallback;
 
   const config: HeadConfig = {
     skin: {
@@ -397,6 +428,13 @@ export function normaliseHeadConfig(
       fade: Math.max(0, overrides.pool?.fade ?? base.pool.fade),
       tint: parseColor(overrides.pool?.tint, base.pool.tint),
     },
+    lens: {
+      amount: clamp01(overrides.lens?.amount ?? base.lens.amount),
+      // Signed on purpose: the sign decides whether the head reads as a
+      // converging or a diverging lens, and both are legitimate looks.
+      strength: finiteOr(overrides.lens?.strength, base.lens.strength),
+      recaptureMs: Math.max(0, overrides.lens?.recaptureMs ?? base.lens.recaptureMs),
+    },
   };
   Object.freeze(config.skin.opacity);
   Object.freeze(config.skin.shading);
@@ -407,6 +445,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.skin);
   Object.freeze(config.eyes);
   Object.freeze(config.pool);
+  Object.freeze(config.lens);
   return Object.freeze(config);
 }
 
@@ -417,6 +456,29 @@ function prepTexture(tex: THREE.CanvasTexture): void {
   tex.minFilter = LinearFilter;
   tex.magFilter = LinearFilter;
   tex.anisotropy = Math.max(tex.anisotropy, 4);
+}
+
+/**
+ * Shared 1x1 opaque black stand-in for a page snapshot nobody has captured.
+ *
+ * The lens node is built into every skin material so there is one graph
+ * rather than two, and `lensGate` is what keeps it inert; a sampler still
+ * needs something bound, and one texel is the cheapest thing that is never
+ * read while the gate is shut. It is also what a cleared lens rebinds to:
+ * leaving a disposed snapshot in the sampler would retain the whole rasterised
+ * canvas and make three re-upload it from `image` on the next frame.
+ *
+ * Deliberately never disposed: it is four bytes, immutable, and shared by
+ * every engine in the page, so an owner would have to be refcounted to buy
+ * nothing.
+ */
+let lensPlaceholder: THREE.DataTexture | null = null;
+export function lensPlaceholderTexture(): THREE.DataTexture {
+  if (!lensPlaceholder) {
+    lensPlaceholder = new DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+    lensPlaceholder.needsUpdate = true;
+  }
+  return lensPlaceholder;
 }
 
 export function buildSkinMaterial(
@@ -500,6 +562,15 @@ export function buildSkinMaterial(
   const uPoolWaterY = uniform(0);
   const uPoolTime = uniform(0);
 
+  // Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4). The gate
+  // opens only once the engine binds a real texture, so a head with nothing
+  // named to refract never evaluates the composite below.
+  const uLensGate = uniform(0);
+  const uLensAmount = uniform(config.lens.amount);
+  const uLensWindow = uniform(new Vector4(0, 1, 1, -1));
+  const uLensDisplacement = uniform(new Vector2(0, 0));
+  const lensSnapshot = texture(lensPlaceholderTexture());
+
   const uniforms: HeadUniforms = {
     scroll: uScroll as unknown as ScrollUniform,
     baseOpacity: uBaseOpacity as unknown as { value: number },
@@ -545,6 +616,11 @@ export function buildSkinMaterial(
     poolFade: uPoolFade as unknown as { value: number },
     poolWaterY: uPoolWaterY as unknown as { value: number },
     poolTime: uPoolTime as unknown as { value: number },
+    lensGate: uLensGate as unknown as { value: number },
+    lensAmount: uLensAmount as unknown as { value: number },
+    lensWindow: uLensWindow as unknown as { value: THREE.Vector4 },
+    lensDisplacement: uLensDisplacement as unknown as { value: THREE.Vector2 },
+    lensTexture: lensSnapshot as unknown as { value: THREE.Texture },
   };
 
   const aLips = attribute('aLips', 'float');
@@ -762,6 +838,69 @@ export function buildSkinMaterial(
   // of one body separate at the seam.
   interior.positionNode = breathePosition;
   interior.normalNode = breatheNormalInterior;
+
+  // ---------------------------------------------------------------------
+  // Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4).
+  //
+  // The substitution has to happen on the DEEPEST pass, and that is the
+  // interior wall. What the head shows of the page is
+  // `front * a + dst * (1 - a)`, where `dst` is whatever was already in the
+  // framebuffer; a fragment can only replace its own destination, never reach
+  // into one another layer already blended. Doing this on the front surface
+  // would substitute the interior wall along with the page and delete the far
+  // side of the head at full strength. Doing it here leaves the front glass
+  // composite untouched and puts the refracted page exactly where the page
+  // was.
+  //
+  // The exchange, with `a` the interior's own alpha, `w` the lens amount and
+  // `L` the sampled snapshot: emit `rgb' = (C*a + L*(1-a)*w) / a'` at
+  // `a' = a + (1-a)*w`. Source-alpha blending then produces
+  // `C*a + L*(1-a)*w + page*(1-a)*(1-w)`, which is the page crossfading into
+  // its lensed copy with the wall's own colour untouched at either end.
+  //
+  // The offset is `normal.xy * thickness`, not a fresnel band: a slab of
+  // thickness t bends what is behind it by about `n.xy * t * (1 - 1/ior)`, so
+  // the cranium displaces several times what the nose tip does, which is the
+  // whole reason the head reads as a solid block of glass rather than a
+  // decal. `breatheNormalInterior` is already the side-flipped view normal
+  // this pass shades with, so the lens follows the pool breathe for free.
+  const lensShift = breatheNormalInterior.xy.mul(aThickness).mul(uLensDisplacement);
+  const lensUv = screenUV.add(lensShift).mul(uLensWindow.zw).add(uLensWindow.xy);
+  const lensColor = lensSnapshot.sample(lensUv);
+  // Mixed in the linear working space, like every other blend in the scene.
+  //
+  // This is NOT identical to the page it replaces, and the difference is
+  // inherent rather than a bug to chase. The live page never enters the
+  // canvas: three renders the scene into a linear target, an output pass
+  // encodes it, and the BROWSER COMPOSITOR then adds `page * (1 - A)` to the
+  // encoded, premultiplied result. Folding the snapshot in here computes
+  // `encode(C*a + L*(1-a))` where the compositor computes
+  // `encode(C*a) + encode(L)*(1-a)`, and `encode(x*a)` is not `encode(x)*a`.
+  // No formulation inside the scene can reproduce that, because the front
+  // pass's own alpha is not known here and the encode sits between them. An
+  // sRGB round trip on both operands was built and measured: it moved the
+  // residual from 42.7k to 45.3k pixels, so it bought nothing and cost two
+  // transfer functions per fragment. The consequence is stated in the API
+  // docs and measured by `tools/smoke/lens-shot.mjs`: switching the lens on
+  // also moves the head-over-page blend from the compositor's encoded space
+  // into the scene's linear one, which is the more correct of the two.
+  const lensBase = output.a;
+  const lensAlpha = lensBase.add(float(1).sub(lensBase).mul(uLensAmount));
+  const lensRgb = output.rgb
+    .mul(lensBase)
+    .add(lensColor.rgb.mul(float(1).sub(lensBase)).mul(uLensAmount))
+    // Bounded, not merely non-zero: with the gate open the denominator is at
+    // least `min(w, 1)`, and the numerator carries the same `w`, so the
+    // quotient never exceeds the brighter of the wall and the snapshot.
+    .div(lensAlpha.max(1e-4));
+  // `mix(x, y, 0)` is `x * 1 + y * 0`, which is `x` bit for bit, so a closed
+  // gate reproduces `output` exactly rather than approximately. It is derived
+  // from whether a texture is bound, never from `lens.amount`: at amount 0
+  // with the gate open the quotient is only mathematically an identity.
+  interior.outputNode = vec4(
+    mix(output.rgb, lensRgb, uLensGate),
+    mix(lensBase, lensAlpha, uLensGate),
+  );
 
   return {
     material: material as unknown as THREE.Material,

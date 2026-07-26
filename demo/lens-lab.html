@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph snapshot lens lab (rung 3)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body {
+        background: #05070d;
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      /*
+        The subtree the head refracts. Deliberately busy, high contrast and
+        APERIODIC: a lens over a flat colour is indistinguishable from no lens,
+        and a lens over a repeating stripe is worse than useless, because a
+        displacement of one period looks exactly like no displacement to both
+        the eye and a correlation search.
+      */
+      #hero {
+        position: relative;
+        min-height: 100vh;
+        padding: 4rem 3rem;
+        background:
+          radial-gradient(circle at 19% 27%, #ff5f7e 0 11%, transparent 11.4%),
+          radial-gradient(circle at 71% 15%, #7dffc4 0 8%, transparent 8.4%),
+          radial-gradient(circle at 44% 58%, #ffd166 0 14%, transparent 14.4%),
+          radial-gradient(circle at 86% 71%, #c792ff 0 10%, transparent 10.4%),
+          radial-gradient(circle at 33% 88%, #6cc6ff 0 7%, transparent 7.4%),
+          linear-gradient(163deg, #0b1730 0%, #1a2f5c 45%, #07101f 100%);
+      }
+      #hero h1 {
+        font-size: clamp(2.5rem, 7vw, 6rem);
+        line-height: 0.95;
+        margin: 0 0 1.5rem;
+        letter-spacing: -0.03em;
+        color: #eaf3ff;
+      }
+      #hero p { max-width: 34rem; font-size: 1.1rem; opacity: 0.85; }
+      .swatches { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 2rem 0; }
+      .swatch {
+        width: 5.5rem;
+        height: 5.5rem;
+        border-radius: 0.5rem;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #05070d;
+      }
+      /* Aperiodic on purpose, for the same reason the hero background is. */
+      .grid-lines {
+        margin-top: 2rem;
+        height: 16rem;
+        background:
+          linear-gradient(
+            100deg,
+            #050a16 0 12%,
+            #ff5f7e 12% 15%,
+            #050a16 15% 34%,
+            #7dffc4 34% 36%,
+            #050a16 36% 61%,
+            #ffd166 61% 67%,
+            #050a16 67% 78%,
+            #c792ff 78% 80%,
+            #050a16 80% 100%
+          );
+        border-radius: 0.5rem;
+      }
+      .ticker { font-size: 2rem; font-weight: 700; color: #ffd166; }
+
+      /* The head sits over the hero on a transparent canvas. */
+      #host {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+      #holo { width: 100%; height: 100%; display: block; }
+
+      #panel {
+        position: fixed;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 21rem;
+        max-height: calc(100vh - 1.5rem);
+        overflow: auto;
+        padding: 0.9rem 1rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.6rem;
+        background: rgba(6, 10, 20, 0.9);
+      }
+      #panel h1 { font-size: 1rem; margin: 0 0 0.25rem; }
+      #panel p.sub { margin: 0 0 0.75rem; opacity: 0.65; font-size: 0.8rem; }
+      fieldset {
+        border: 1px solid #1d2740;
+        border-radius: 0.4rem;
+        margin: 0 0 0.7rem;
+        padding: 0.5rem 0.6rem 0.6rem;
+      }
+      legend { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; }
+      label.row {
+        display: grid;
+        grid-template-columns: 6.5rem 1fr 3rem;
+        gap: 0.4rem;
+        align-items: center;
+        margin: 0.2rem 0;
+      }
+      label.row span { font-size: 0.78rem; opacity: 0.85; }
+      label.row output { font-variant-numeric: tabular-nums; font-size: 0.75rem; opacity: 0.7; text-align: right; }
+      input[type='range'] { width: 100%; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+      button {
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 0.35rem;
+        border: 1px solid var(--accent);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: #04121f; font-weight: 600; }
+      #status { font-size: 0.78rem; opacity: 0.8; white-space: pre; font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <section id="hero">
+      <h1>Refraction, not decoration</h1>
+      <p>
+        The head above is a transparent canvas over this section. With a lens
+        source named, the page you can see through the glass is a rasterised
+        snapshot of this subtree, sampled displaced by the body's normals and
+        its baked thickness, so the cranium bends what is behind it several
+        times as hard as the nose tip does.
+      </p>
+      <div class="swatches">
+        <div class="swatch" style="background:#ff5f7e">A</div>
+        <div class="swatch" style="background:#7dffc4">B</div>
+        <div class="swatch" style="background:#ffd166">C</div>
+        <div class="swatch" style="background:#c792ff">D</div>
+        <div class="swatch" style="background:#6cc6ff">E</div>
+      </div>
+      <p class="ticker" id="ticker">frozen between captures</p>
+      <div class="grid-lines"></div>
+    </section>
+    <section id="hero-tail" style="min-height:120vh;padding:3rem">
+      <p style="opacity:0.6">
+        Scroll past the hero. The snapshot is taken in document space, so the
+        sampled window follows the canvas with no recapture; only a source that
+        moves or reflows, a scroll that settles, or an explicit request pays for
+        a new one.
+      </p>
+    </section>
+
+    <div id="host"><canvas id="holo"></canvas></div>
+
+    <div id="panel">
+      <h1>snapshot lens</h1>
+      <p class="sub">dec.liquid-glass-architecture, rung 3, item 4</p>
+
+      <fieldset>
+        <legend>source</legend>
+        <div class="buttons">
+          <button id="lensOn" class="primary" type="button">refract #hero</button>
+          <button id="lensOff" type="button">no source</button>
+          <button id="recapture" type="button">recapture</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>lens</legend>
+        <label class="row"><span>amount</span><input id="amount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <label class="row"><span>strength</span><input id="strength" type="range" min="-0.3" max="0.3" step="0.005" value="0.06" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>glass</legend>
+        <label class="row"><span>glass amt</span><input id="glassAmount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <label class="row"><span>base opac</span><input id="baseOpacity" type="range" min="0" max="1" step="0.005" value="0.075" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>page</legend>
+        <div class="buttons">
+          <button id="tick" type="button">change hero text</button>
+          <button id="jaw" type="button">jaw open</button>
+        </div>
+      </fieldset>
+
+      <div id="status">no source named</div>
+    </div>
+
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
+
+      const canvas = document.getElementById('holo');
+      const host = document.getElementById('host');
+      const hero = document.getElementById('hero');
+      const status = document.getElementById('status');
+      const engine = createEngine();
+      // Lab-only debug handle, the same one the other demo pages expose.
+      window.__hologlyphEngine = engine;
+
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, host);
+
+      function resize() {
+        engine.resize(host.clientWidth, host.clientHeight);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      const lens = { amount: 1, strength: 0.06 };
+      const skin = { glassAmount: 1, baseOpacity: 0.075 };
+
+      function pushLens() {
+        engine.vfx.setHeadConfig({ lens: { ...lens } });
+      }
+      function pushSkin() {
+        engine.vfx.setHeadConfig({
+          skin: {
+            glass: { amount: skin.glassAmount },
+            opacity: { base: skin.baseOpacity },
+          },
+        });
+      }
+
+      function bindRange(id, key, target, after) {
+        const input = document.getElementById(id);
+        const out = input.parentElement.querySelector('output');
+        const sync = () => {
+          const value = Number(input.value);
+          target[key] = value;
+          out.textContent = value.toFixed(3);
+          after();
+        };
+        input.addEventListener('input', sync);
+        sync();
+      }
+
+      bindRange('amount', 'amount', lens, pushLens);
+      bindRange('strength', 'strength', lens, pushLens);
+      bindRange('glassAmount', 'glassAmount', skin, pushSkin);
+      bindRange('baseOpacity', 'baseOpacity', skin, pushSkin);
+
+      // --- source ----------------------------------------------------------
+      // Lab-only: pass the rasteriser explicitly so the page fails loudly if
+      // the optional peer is missing, rather than degrading silently the way a
+      // real host should.
+      async function rasterise(element) {
+        const { snapdom } = await import('@zumer/snapdom');
+        return snapdom.toCanvas(element, { dpr: 1, fast: true, embedFonts: true });
+      }
+
+      let sourceOn = false;
+      function setSource(on) {
+        sourceOn = on;
+        engine.setLensSource(on ? hero : null, on ? { rasterise } : undefined);
+        status.textContent = on ? 'refracting #hero' : 'no source named';
+      }
+      document.getElementById('lensOn').addEventListener('click', () => setSource(true));
+      document.getElementById('lensOff').addEventListener('click', () => setSource(false));
+      document.getElementById('recapture').addEventListener('click', () => {
+        engine.captureLens();
+        status.textContent = 'recapture requested';
+      });
+
+      // --- page ------------------------------------------------------------
+      let ticks = 0;
+      document.getElementById('tick').addEventListener('click', () => {
+        ticks += 1;
+        document.getElementById('ticker').textContent = `hero changed ${ticks} time(s)`;
+        status.textContent = 'hero changed; press recapture to see it';
+      });
+
+      let jawOpen = false;
+      const jawBtn = document.getElementById('jaw');
+      jawBtn.addEventListener('click', () => {
+        jawOpen = !jawOpen;
+        engine.avatar?.setMorph('jaw_open', jawOpen ? 1 : 0);
+        jawBtn.textContent = jawOpen ? 'jaw close' : 'jaw open';
+      });
+
+      // --- scroll ------------------------------------------------------------
+      function updateScroll() {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        engine.setScrollProgress(max > 0 ? window.scrollY / max : 0);
+      }
+      window.addEventListener('scroll', updateScroll, { passive: true });
+      updateScroll();
+
+      // Lab-only hooks for `tools/smoke/lens-shot.mjs`.
+      window.__lensLab = {
+        setSource,
+        setLens(next) {
+          Object.assign(lens, next);
+          document.getElementById('amount').value = String(lens.amount);
+          document.getElementById('strength').value = String(lens.strength);
+          pushLens();
+        },
+        get sourceOn() {
+          return sourceOn;
+        },
+      };
+
+      setSource(true);
+    </script>
+  </body>
+</html>

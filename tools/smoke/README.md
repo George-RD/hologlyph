@@ -20,6 +20,14 @@ python3 -m http.server 8932 --directory .      # repo root (dist consumer fixtur
 - `consumer.html` + `consumer-smoke.mjs` (node): consumes the BUILT dist like a
   package (import maps for three), creates an engine with NO avatarUrl, and
   proves the packaged default head loads via the lazy default-avatar chunk.
+- `lens-shot.mjs` (bun): drives `demo/lens-lab.html` for the snapshot lens
+  (`dec.liquid-glass-architecture`, rung 3). Pins the pose, then measures a
+  presence floor, a noise floor, the bound sample window against the
+  document-space layout arithmetic, the bounded colour-space seam, visible
+  displacement (lensed against lensed, so the seam cancels), an untouched page
+  outside the silhouette, the response to flipping `lens.strength`, and exact
+  restoration when the source is dropped. Exits non-zero on any failed leg and
+  writes `out/lens-shot.json`.
 - `demo/textskin-variants.html` (served by the vite dev server) renders the real
   bust under grid/colour/emissive variants for owner review; the 2026-07-17 pass
   kept DEFAULT_GRID (variant A) for the best readability/density balance.

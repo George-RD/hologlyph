@@ -26,6 +26,7 @@ import type {
   Expression,
   LoadedAvatar,
   HeadPoolConfig,
+  LensSourceOptions,
   MotionEngine,
   RendererHost,
   SpeechEngine,
@@ -55,6 +56,7 @@ import {
 } from '../shaders';
 import { createPoolSurface } from '../shaders/pool-surface.js';
 import { createEmitter } from './emitter.js';
+import { createPageLens, type PageLens } from './page-lens.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
 import { resolveBackdropColor } from './backdrop.js';
  
@@ -226,6 +228,17 @@ class EngineImpl implements Engine {
   private scrollProgress = 0;
   private lastEmergence = 0;
 
+  /**
+   * Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4). Built only
+   * once a host names a subtree, so nothing here loads a rasteriser, allocates
+   * a texture or reads layout for a head that refracts nothing.
+   */
+  private pageLens: PageLens | null = null;
+  private lensSource: Element | null = null;
+  private lensOptions: LensSourceOptions | undefined;
+  /** The mounted canvas: the lens needs it to know which part of the page shows. */
+  private canvas: HTMLCanvasElement | null = null;
+
   constructor(options: EngineOptions) {
     this.options = options;
 
@@ -386,6 +399,92 @@ class EngineImpl implements Engine {
     this.baseAdapter = adapter;
   }
 
+  /**
+   * Name a subtree for the head to refract, or clear it with `null`
+   * (dec.liquid-glass-architecture, rung 3, item 4).
+   *
+   * A hard gate, like the pool: with no source there is no rasteriser loaded,
+   * no texture allocated, no layout read per frame and no lens term in the
+   * shader, so the shipped head is reproduced exactly. Naming a subtree before
+   * mount is allowed; the lens is built when the canvas arrives.
+   *
+   * Idempotent on the same arguments. A capture costs 10 to 150 ms of main
+   * thread, and this is exactly the shape a framework effect with a missing
+   * dependency array calls every render.
+   */
+  setLensSource(element: Element | null, options?: LensSourceOptions): void {
+    if (this.disposed) return;
+    if (element === this.lensSource && options?.rasterise === this.lensOptions?.rasterise) {
+      return;
+    }
+    if (element && this.canvas && element.contains(this.canvas)) {
+      // The head would be inside what it refracts. Rasterisers do not read
+      // back WebGL canvases, so this is not a feedback loop so much as a
+      // guaranteed hole in the snapshot, and it is always a mistake.
+      console.warn(
+        '[hologlyph] refract source contains the head canvas; the head cannot refract itself.',
+      );
+    }
+    this.lensSource = element;
+    this.lensOptions = options;
+    this.teardownLens();
+    this.buildLens();
+  }
+
+  captureLens(): void {
+    this.pageLens?.capture();
+  }
+
+  /**
+   * Build the lens if a source and a canvas are both present. Idempotent and
+   * safe to call before either exists.
+   *
+   * Statically imported, and the lazy alternative was built and measured
+   * rather than waved away. First-load gzip: 28.32 kB on `glass`, 30.93 kB
+   * with this import, 30.21 kB with a dynamic one plus a 1.58 kB chunk pulled
+   * on demand. Only 0.72 kB of the 2.61 kB this feature adds is actually
+   * movable, because the rest is the material's lens nodes, the VFX binding
+   * and this reconciler, all of which the entry needs anyway. That is under
+   * the 0.9 kB the tier 1 pool already rejected for the same trade, and it
+   * buys three race windows (dispose during load, a second `setLensSource`
+   * during load, and a capture request arriving before the chunk resolves).
+   *
+   * The RASTERISER is the thing that must stay lazy, and it does: `page-lens`
+   * reaches `@zumer/snapdom` through a dynamic import of an external optional
+   * peer, so a consumer who never names a subtree neither ships nor installs
+   * it.
+   */
+  private buildLens(): void {
+    if (this.disposed || this.pageLens) return;
+    const element = this.lensSource;
+    const canvas = this.canvas;
+    if (!element || !canvas) return;
+    const rasterise = this.lensOptions?.rasterise;
+    this.pageLens = createPageLens({
+      element,
+      canvas,
+      recaptureMs: this.sysVfx.headConfig.lens.recaptureMs,
+      // A rasteriser that cannot load, or a page that will not rasterise, is a
+      // lens failure, not a mount failure: the head keeps rendering over the
+      // live page exactly as it did before the source was named.
+      onError: (err) => {
+        console.warn('[hologlyph] page lens capture failed; refraction stays off.', err);
+        this.emitter.emit('error', err);
+      },
+      ...(rasterise === undefined ? {} : { rasterise }),
+    });
+    this.pageLens.capture();
+  }
+
+  private teardownLens(): void {
+    if (!this.pageLens) return;
+    // Unbind BEFORE disposing: `setLens(null)` rebinds the placeholder, so the
+    // sampler never holds a texture whose GPU resources have been freed.
+    this.sysVfx.setLens(null);
+    this.pageLens.dispose();
+    this.pageLens = null;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -400,6 +499,8 @@ class EngineImpl implements Engine {
     this.sysTextSkin.dispose();
     this.eyeTextSkin.dispose();
     this.disposeOverlayMeshes();
+    this.teardownLens();
+    this.canvas = null;
     if (this.pool) {
       this.sysRenderer.scene.remove(this.pool.object);
       this.pool.dispose();
@@ -428,6 +529,11 @@ class EngineImpl implements Engine {
       const width = canvas.clientWidth || canvas.width || 640;
       const height = canvas.clientHeight || canvas.height || 480;
       this.sysRenderer.setSize(width, height);
+      // A remount onto a different canvas invalidates the sample window, which
+      // is measured against the canvas the lens was built with.
+      if (this.canvas !== canvas) this.teardownLens();
+      this.canvas = canvas;
+      this.buildLens();
 
       // Expose the live renderer to the asset loader so KTX2 transcoding
       // support can be detected (dec.asset-rig-schema) before any load.
@@ -908,6 +1014,14 @@ class EngineImpl implements Engine {
     this.applyPoolLayer();
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
+
+    // Snapshot lens. Two layout reads a frame, and only while a host has named
+    // a subtree: the sampled window has to follow the canvas wherever the page
+    // puts it, and the source rect is what says the snapshot went stale.
+    if (this.pageLens) {
+      this.pageLens.sync(this.sysVfx.headConfig.lens.strength);
+      this.sysVfx.setLens(this.pageLens.binding);
+    }
 
     // Pool drive. Both inputs are speeds: how fast the page is moving and how
     // fast the body is crossing the plane. Travel is consumed here so a frame

@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.core
-status: open
+status: done
 created: 2026-07-25
 ---
 
@@ -37,3 +37,16 @@ costs 10 to 150 ms of main thread.
 Acceptance: naming a hero section produces visible lensing of that content
 through the head, with no bundle growth when the attribute is absent, and a
 documented staleness and CORS contract.
+
+LANDED 2026-07-26. `refract="#hero"` on the element, or
+`engine.setLensSource(el)`, binds a rasterised snapshot that the interior glass
+pass samples displaced by `normalView.xy * aThickness`. The rasteriser is an
+injected function whose default lazily imports the optional `@zumer/snapdom`
+peer, so the first-load bundle carries none of it. Verified in a browser by
+`tools/smoke/lens-shot.mjs`: the bound sample window matches the document-space
+layout arithmetic exactly, displacement moves 9,327 px inside the head box and
+14,681 more when the sign flips, and the page outside the silhouette is
+bit-identical. One consequence is documented rather than fixed: switching the
+lens on moves the head-over-page blend from the compositor's encoded space into
+the scene's linear one, which no formulation inside the scene can avoid. See
+`meta/changes/liquid-glass-snapshot-lens/implementation-notes.md`.
