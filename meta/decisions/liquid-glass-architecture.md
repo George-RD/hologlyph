@@ -107,15 +107,18 @@ that way later; the library will not assume it.
 ## Recommended order
 
 Cairn orders open todos alphabetically, which is not the intended sequence, so
-each todo carries an `Order N` line matching this list. Items 1 to 5 are
-`status: open` and mutually independent; the rest are `status: blocked` until
-their prerequisite lands.
+each todo carries an `Order N` line matching this list. Read the order here,
+not from `cairn brief`. Items 1 to 5 were `status: open` and mutually
+independent; the rest are `status: blocked` until their prerequisite lands.
 
-1. `todo.liquid-glass-solid-body` - largest look gain per unit of cost, one
-   extra draw call, independent of every backdrop question. Start here.
-2. `todo.liquid-glass-silhouette-hull` - the shared contract. The compositor
-   glass layer and the physics participants both need it. The lens rungs do
-   not: they are WebGL texture sources and never touch `clip-path`.
+Landed so far: item 1 (2026-07-26), item 2 (2026-07-26). **Next is item 3.**
+
+1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
+   unit of cost, one extra draw call, independent of every backdrop question.
+2. `todo.liquid-glass-silhouette-hull` - LANDED 2026-07-26. The shared
+   contract. The compositor glass layer and the physics participants both need
+   it. The lens rungs do not: they are WebGL texture sources and never touch
+   `clip-path`.
 3. `todo.liquid-glass-tier1-pool` - the owner-facing payoff: a head emerging
    from a rippling pool. Lab only until approved.
 4. `todo.liquid-glass-snapshot-lens` - opt-in true lensing on every engine.

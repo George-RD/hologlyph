@@ -1,6 +1,6 @@
 ---
 node: hologlyph.asset.pipeline
-status: open
+status: done
 created: 2026-07-25
 ---
 
@@ -34,3 +34,10 @@ of this contract survives tier 3 unchanged.
 Acceptance: a hull that bounds the rendered silhouette at every pose in the eval
 capture set, projected in well under 0.1 ms per frame, with a unit test on the
 projection maths and no per-frame allocation.
+
+Landed 2026-07-26. 32 baked points in the GLB scene extras, projected by
+`SilhouetteProjector` in `src/asset/hull.ts` at about 3 microseconds per frame.
+Containment is checked vertex by vertex over eight poses crossed with four
+morph states, with a negative control. The point budget costs 27 to 41 per cent
+of extra polygon area against the silhouette's own convex hull; the curve for
+trading points against tightness is in the change's implementation notes.
