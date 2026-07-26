@@ -45,7 +45,18 @@ as the fresnel-weighted refraction already shipped in `src/shaders/materials.ts`
 Nothing about the fluid look needs a technique we do not have; it needs surface
 representation and, above a certain point, simulation.
 
-Three tiers, in increasing order of cost and of damage to existing invariants.
+The central finding of this axis is that **fluidity is a parameter on the rig,
+not a rival to it.** Three's `setupPosition` runs morph targets, then skinning,
+then any `positionNode`, so viseme morphs are baked into `positionLocal` before
+a displacement node reads it. `positionNode = positionLocal.add(offset.mul(f))`
+therefore deforms an already-correct face: `f = 0` is today's rig exactly,
+`f = 1` is maximally molten, and the mouth is upstream of `f` at every value.
+`f` can be a masked field rather than a scalar, reusing the per-zone masks baked
+in `buildLoadedAvatar`, so the base flows while the face stays crisp in the same
+frame.
+
+That collapses what looked like a fidelity trade into a much narrower one, and
+reorders the tiers accordingly.
 
 ### Tier 1: surface fluid, raster head unchanged
 
@@ -73,26 +84,44 @@ above water is still the rig.
 Needs a baked thickness volume and the waterline contour. Internals still
 unchanged. Cost: one half-resolution raymarch over a small screen region.
 
-### Tier 3: implicit head, true fluid
+### Tier 3: fluid as a driver of the mesh
 
-Position-based fluid or SPH with shape matching against the head, or a full SDF
-head, surfaced by screen-space fluid rendering. This is what actually delivers
-squeezing around obstacles, pinching off, migrating and re-forming.
+A shape-matched simulation, particles bound to rest positions on the rig with
+stiffness as the liquidity, writes the offset field behind `f`. Sag, wobble,
+surface tension, squeeze against declared obstacles, flow at the base. Fixed
+topology, so the three-layer depth scheme in `replaceAvatar` still holds and
+internals need no rework. Visemes exact at any fluidity.
 
-**Internals must be baked into the field**, and voxelising a 17,520-vertex
-morphing mesh per frame is not affordable. The workable form is analytic
-primitives driven by the rig: eyeball spheres from the `eye_l` and `eye_r` bone
-transforms unioned into the field, a mouth cavity ellipsoid subtracted with a
-smooth minimum and driven from `jaw_open` plus viseme weights, and `eye_trim`
-and iris rings dropped as surface detail with no meaning in a volume.
+The catch is normals, not visemes. `positionNode` does not update them:
+`normalLocal` still derives from the undeformed attribute, so displacement with
+rig normals reads as texture swim. `normalWorld` in the matte shade term and
+`normalView` in the fresnel rim must be derived from the gradient of the offset
+field. `bindNormal`, which is `normalGeometry` driving the triplanar glyph
+projection, must deliberately not follow, so the glyphs stay welded to the bind
+pose while the surface flows.
 
-The cost is the one to weigh: 15 authored visemes collapse to roughly three
-analytic mouth parameters. Full liquid and exact lip-sync pull against each
-other, and lip-sync is the product. A compensating gain: in a volume the text
-stops being a skin and becomes glyphs suspended inside the glass, sampled at
-several depths, which reads better as a block of glass than a surface decal.
+### Tier 4: fluid as a surface
 
-WebGPU compute only, so tier 3 must degrade to tier 1 on WebGL2.
+The only thing tier 3 cannot do is change topology: pinch off, merge, collapse
+into a puddle, squeeze through a gap narrower than the skull. That needs a
+surfaced particle field, PBD or SPH with screen-space fluid rendering.
+
+Here the mouth genuinely degrades. A surfaced field describes the mouth with an
+ellipsoid subtracted by a smooth minimum, open, round, and wide, which carries
+vowels but not the contact shapes: `viseme_pp`, `viseme_ff`, `viseme_th`, and
+the closed `viseme_sil`. A smooth minimum cannot press two surfaces together, so
+the head never quite closes on "mmm". Screen-space surfacing also blurs detail
+below the kernel radius, and lips are below it. Authored visemes embed their own
+jaw deltas, so open-plus-round is not a decomposition the shipped assets
+support.
+
+That cost lands where it does not matter: tier 4 is only entered when the shape
+is no longer a head, and a puddle has no visemes to get wrong. Internals become
+rig-driven analytic primitives there for the same reason. A compensating gain in
+a volume: text stops being a skin and becomes glyphs suspended inside the glass,
+sampled at several depths along the view ray.
+
+Both tiers are WebGPU compute only and must degrade to tier 1 on WebGL2.
 `dec.renderer-posture` already defers "the heavy vertex surface-tension
 displacement and ripple heightmap" and compute shaders, which is exactly this.
 
