@@ -330,15 +330,37 @@ describe('owner-approved head configuration', () => {
         pupil: 0.24, flowDirection: 1, irisSize: 0.43,
         irisColor: '#d78bf8', scleraColor: '#e1edf9',
       },
+      pool: {
+        amount: 0, bias: 0.04, ripple: 1, meniscus: 0.55, contact: 0.7,
+        breathe: 0.006, fade: 0.14, tint: '#4f8fbf',
+      },
     });
+    // `pool.amount` is the tier 1 gate. It ships at 0 on purpose: the pool is
+    // lab-only until the owner approves the look, and at 0 the engine builds
+    // no pool at all (dec.liquid-glass-architecture, item 3).
+    expect(DEFAULT_HEAD_CONFIG.pool.amount).toBe(0);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.pool)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glass)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.backdrop)).toBe(true);
+  });
+
+  it('normalises and freezes the pool block', () => {
+    const merged = normaliseHeadConfig({
+      pool: { amount: 3, bias: -1, meniscus: -0.5, breathe: -2, tint: 'nope' },
+    });
+    expect(merged.pool.amount).toBe(1);
+    expect(merged.pool.bias).toBe(0);
+    expect(merged.pool.meniscus).toBe(0);
+    expect(merged.pool.breathe).toBe(0);
+    expect(merged.pool.tint).toBe(DEFAULT_HEAD_CONFIG.pool.tint);
+    expect(merged.pool.ripple).toBe(DEFAULT_HEAD_CONFIG.pool.ripple);
+    expect(Object.isFrozen(merged.pool)).toBe(true);
   });
 
   it('deep-merges partial overrides, clamps values, and rejects malformed colours', () => {

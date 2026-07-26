@@ -33,6 +33,7 @@ import {
   computeRootOffsetY,
   easeEmergence,
 } from './emergence';
+import { REDUCED_DRIVE } from './pool';
 
 interface SkinBinding {
   skin: TextSkinEngine;
@@ -73,6 +74,33 @@ export {
   computeClipConstant,
   visibleFraction,
 } from './emergence';
+export {
+  MAX_SIM_STEPS,
+  POOL_EXTENT,
+  POOL_RESOLUTION,
+  POOL_SEGMENTS,
+  PROFILE_SLICES,
+  REDUCED_DRIVE,
+  RIPPLE_TAU,
+  SIM_HZ,
+  WAVE_DAMPING,
+  WAVE_SPEED,
+  poolContactRing,
+  poolImpulseDecay,
+  poolMeniscusLift,
+  poolProfileRadiusAt,
+  poolRadialProfile,
+  poolRippleDrive,
+  poolSimulationSteps,
+  poolWaterlineRadius,
+  poolWaveStep,
+} from './pool';
+export type { PoolProfile } from './pool';
+// `createPoolSurface` is deliberately NOT re-exported here. It is the only
+// part of the pool that touches `three/webgpu` render targets, and nothing
+// but the engine's own pool reconciler has any use for it, so it is imported
+// from its module directly rather than widened into the shader barrel.
+export type { PoolSurface, PoolSurfaceState, PoolUniforms } from './pool-surface';
 
 /**
  * Create the VFX engine.
@@ -92,6 +120,8 @@ export function createVFXEngine(): VFXEngine {
   let current = 0;
   let reduced = false;
   let disposed = false;
+  /** Monotonic seconds driving the pool breathe, damped under reduced motion. */
+  let poolTime = 0;
 
   const state = {
     emergence: 0,
@@ -150,6 +180,14 @@ export function createVFXEngine(): VFXEngine {
       u.glowScale.value = adaptation.glowScale;
       u.opacityFloor.value = adaptation.opacityFloor;
       u.rimColor.value.setRGB(...adaptation.rimColor);
+
+      u.poolAmount.value = config.pool.amount;
+      u.poolBreathe.value = config.pool.breathe;
+      u.poolFade.value = config.pool.fade;
+      // Derived, not configured. The deformed shading normal is only an exact
+      // identity with the shipped chain at gate 0, so a zero breathe must
+      // close the gate rather than merely zero the displacement.
+      u.poolNormalGate.value = config.pool.breathe > 0 ? clamp01(config.pool.amount) : 0;
     }
 
     for (const binding of eyeBindings) {
@@ -241,14 +279,23 @@ export function createVFXEngine(): VFXEngine {
         if (Math.abs(target - current) < 1e-4) current = target;
       }
 
+      applyFromCurrent();
+      // Advance the pool clock only from real frames. Reduced motion damps the
+      // breathe rather than freezing it, consistent with the rest of the
+      // library; a stopped clock would leave the shell stuck mid-swell.
+      if (Number.isFinite(dt) && dt > 0) poolTime += reduced ? dt * REDUCED_DRIVE : dt;
+      // Bind-space height of the waterline: the root is translated down by
+      // `rootOffsetY`, so world Y 0 sits at local Y `-rootOffsetY`.
+      const waterY = -state.rootOffsetY;
+
       for (const binding of skinBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
+        binding.uniforms.poolTime.value = poolTime;
+        binding.uniforms.poolWaterY.value = waterY;
       }
       for (const binding of eyeBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
       }
-
-      applyFromCurrent();
     },
 
     dispose(): void {

@@ -7,6 +7,21 @@
  * No GPU resources are constructed at module load: the material and its node
  * graph are built lazily inside `buildSkinMaterial` / `buildEyeballMaterial`,
  * so importing this module under happy-dom is safe.
+ *
+ * This module also carries the two tier 1 pool terms that live on the body
+ * rather than on the water (dec.liquid-glass-architecture, item 3): the
+ * outward-only breathe on the shell, and the waterline fade that stops the
+ * clipped cross-section reading as a hollow shell. Both are gated by
+ * `pool.amount`, and both collapse to an exact identity at 0.
+ *
+ * Tier 1 boundary, stated so the next reader does not think it was missed:
+ * only the materials the library builds fade. The authored `mouth_interior`
+ * and `eye_trim` materials in the engine's `KEEP_MATERIALS`, and the eyeball
+ * material, still terminate at the hard clip plane. Softening them means
+ * replacing authored glTF materials with node-material clones, which silently
+ * drops whatever maps and emissive the asset carried, and buys very little:
+ * they are small, dark and only cross the waterline during emergence. It is
+ * deferred rather than done badly.
  */
 
 import { BackSide, Color, FrontSide, LinearFilter, RepeatWrapping } from 'three';
@@ -16,6 +31,7 @@ import {
   atan,
   attribute,
   cameraPosition,
+  cos,
   dot,
   exp,
   float,
@@ -24,15 +40,19 @@ import {
   luminance,
   mix,
   normalGeometry,
+  normalLocal,
   normalView,
   normalWorld,
   positionGeometry,
+  positionLocal,
   positionViewDirection,
   positionWorld,
   pow,
   saturate,
+  sin,
   smoothstep,
   texture,
+  transformNormalToView,
   uniform,
   vec2,
   vec3,
@@ -90,6 +110,23 @@ export const INTERIOR_OPACITY = 0.55;
 
 /** Brightness scale of the interior pass relative to the front surface. */
 export const INTERIOR_DIM = 0.42;
+
+/**
+ * Height above the waterline, in world units, over which the pool's breathe
+ * dies away. The bust is about 1.8 tall and the head about 1.0, so 0.45 keeps
+ * the swell in the shoulders and base where the water is, and leaves the face
+ * still: a wobbling mouth would be a viseme bug wearing a costume.
+ */
+export const BREATHE_FALLOFF = 0.45;
+
+/** Breathe wavenumbers. Deliberately incommensurate so the pattern does not
+ * visibly repeat, and low enough that a full wavelength (about 1.1 and 1.5
+ * world units) is larger than any facial feature. */
+export const BREATHE_KX = 5.5;
+export const BREATHE_KZ = 4.1;
+
+/** Breathe angular frequency, rad/s: about 3.9 s per cycle, a swell not a chop. */
+export const BREATHE_OMEGA = 1.6;
 
 /**
  * Absorption is achromatic on the front surface and tinted on the interior
@@ -156,6 +193,22 @@ export interface HeadUniforms {
   glowScale: { value: number };
   opacityFloor: { value: number };
   rimColor: { value: THREE.Color };
+  /** Tier 1 pool master gate; 0 makes every pool term below an exact no-op. */
+  poolAmount: { value: number };
+  /** Outward-only breathe amplitude, world units. */
+  poolBreathe: { value: number };
+  /**
+   * Crossfade to the breathe-deformed shading normal, 0 or 1. Derived rather
+   * than configured: at 0 the shipped normal chain is reproduced exactly, so
+   * it must be 0 whenever the breathe amplitude is.
+   */
+  poolNormalGate: { value: number };
+  /** Height of the fade band above the waterline, world units. */
+  poolFade: { value: number };
+  /** Bind-space height of the waterline, written every frame as -rootOffsetY. */
+  poolWaterY: { value: number };
+  /** Monotonic seconds, written every frame; phases the breathe. */
+  poolTime: { value: number };
 }
 
 export interface BuiltSkinMaterial {
@@ -334,6 +387,16 @@ export function normaliseHeadConfig(
       irisColor: parseColor(overrides.eyes?.irisColor, base.eyes.irisColor),
       scleraColor: parseColor(overrides.eyes?.scleraColor, base.eyes.scleraColor),
     },
+    pool: {
+      amount: clamp01(overrides.pool?.amount ?? base.pool.amount),
+      bias: Math.max(0, overrides.pool?.bias ?? base.pool.bias),
+      ripple: Math.max(0, overrides.pool?.ripple ?? base.pool.ripple),
+      meniscus: clamp01(overrides.pool?.meniscus ?? base.pool.meniscus),
+      contact: clamp01(overrides.pool?.contact ?? base.pool.contact),
+      breathe: Math.max(0, overrides.pool?.breathe ?? base.pool.breathe),
+      fade: Math.max(0, overrides.pool?.fade ?? base.pool.fade),
+      tint: parseColor(overrides.pool?.tint, base.pool.tint),
+    },
   };
   Object.freeze(config.skin.opacity);
   Object.freeze(config.skin.shading);
@@ -343,6 +406,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.skin.backdrop);
   Object.freeze(config.skin);
   Object.freeze(config.eyes);
+  Object.freeze(config.pool);
   return Object.freeze(config);
 }
 
@@ -429,6 +493,13 @@ export function buildSkinMaterial(
     new Color(adaptation.rimColor[0], adaptation.rimColor[1], adaptation.rimColor[2]),
   );
 
+  const uPoolAmount = uniform(config.pool.amount);
+  const uPoolBreathe = uniform(config.pool.breathe);
+  const uPoolNormalGate = uniform(config.pool.breathe > 0 ? clamp01(config.pool.amount) : 0);
+  const uPoolFade = uniform(config.pool.fade);
+  const uPoolWaterY = uniform(0);
+  const uPoolTime = uniform(0);
+
   const uniforms: HeadUniforms = {
     scroll: uScroll as unknown as ScrollUniform,
     baseOpacity: uBaseOpacity as unknown as { value: number },
@@ -468,6 +539,12 @@ export function buildSkinMaterial(
     glowScale: uGlowScale as unknown as { value: number },
     opacityFloor: uOpacityFloor as unknown as { value: number },
     rimColor: uRimColor as unknown as { value: THREE.Color },
+    poolAmount: uPoolAmount as unknown as { value: number },
+    poolBreathe: uPoolBreathe as unknown as { value: number },
+    poolNormalGate: uPoolNormalGate as unknown as { value: number },
+    poolFade: uPoolFade as unknown as { value: number },
+    poolWaterY: uPoolWaterY as unknown as { value: number },
+    poolTime: uPoolTime as unknown as { value: number },
   };
 
   const aLips = attribute('aLips', 'float');
@@ -478,6 +555,84 @@ export function buildSkinMaterial(
   const aNose = attribute('aNose', 'float');
   const aSocket = attribute('aSocket', 'float');
   const aThickness = attribute('aThickness', 'float');
+
+  // ---------------------------------------------------------------------
+  // Tier 1 breathe (dec.liquid-glass-architecture, item 3, work item 4).
+  //
+  // `NodeMaterial.setupPosition` runs morph targets, then skinning, then
+  // assigns `positionNode` over `positionLocal`. So the offset MUST be built
+  // as `positionLocal.add(...)` and MUST take its direction from
+  // `normalLocal`: reading `positionGeometry` or `normalGeometry` here would
+  // silently discard every viseme morph and all bone skinning.
+  //
+  // `normalLocal` is used unnormalised in the DISPLACEMENT on purpose: a
+  // degenerate normal normalises to NaN, `0 * NaN` is NaN, and normalising
+  // here would let one bad triangle destroy the mesh at `pool.amount = 0`.
+  // glTF normals are unit length and the amplitude is millimetric, so the
+  // length error is noise. The shading normal below does normalise, because
+  // `transformNormalToView` has no choice, but it does so on a vector that is
+  // `normalLocal` plus a tiny perturbation rather than on the perturbation.
+  const breatheAbove = positionLocal.y.sub(uPoolWaterY).max(0);
+  const breatheWeight = exp(breatheAbove.div(-BREATHE_FALLOFF));
+  const breathePhaseX = positionLocal.x.mul(BREATHE_KX).add(uPoolTime.mul(BREATHE_OMEGA));
+  const breathePhaseZ = positionLocal.z.mul(BREATHE_KZ).add(uPoolTime.mul(BREATHE_OMEGA * 0.7));
+  const breatheSinX = sin(breathePhaseX);
+  const breatheSinZ = sin(breathePhaseZ);
+  // Mapped to [0,1], so the displacement is outward only. That is load
+  // bearing: the occlusion mask at renderOrder 0 keeps bounding the internals
+  // only while the shell never intrudes past it.
+  const breatheShape = breatheSinX.mul(breatheSinZ).mul(0.5).add(0.5);
+  const breatheAmp = uPoolBreathe.mul(uPoolAmount);
+  const breatheOffset = breatheAmp.mul(breatheWeight).mul(breatheShape);
+  const breathePosition = positionLocal.add(normalLocal.mul(breatheOffset));
+
+  // Analytic gradient of the same field, so the shading normal follows the
+  // deformation instead of reading as texture swim
+  // (dec.liquid-glass-architecture, Consequences).
+  const breatheWeightSlope = breatheWeight
+    .div(-BREATHE_FALLOFF)
+    .mul(smoothstep(0, 1e-4, breatheAbove));
+  const breatheShapeDx = cos(breathePhaseX).mul(BREATHE_KX).mul(breatheSinZ).mul(0.5);
+  const breatheShapeDz = breatheSinX.mul(cos(breathePhaseZ).mul(BREATHE_KZ)).mul(0.5);
+  const breatheGradient = vec3(
+    breatheWeight.mul(breatheShapeDx),
+    breatheWeightSlope.mul(breatheShape),
+    breatheWeight.mul(breatheShapeDz),
+  ).mul(breatheAmp);
+  // Perturb in LOCAL space, then transform once. Two traps live here, and
+  // both cost the whole head when they fire.
+  //
+  // `transformNormalToView` ends in `transformDirection`, which normalises.
+  // Feeding it the perturbation on its own means feeding it the exact zero
+  // vector whenever the gradient is zero, which is every fragment at
+  // `pool.amount = 0`, and `normalize(vec3(0))` is NaN. That NaN reaches the
+  // fresnel, the fresnel reaches the alpha, and the silhouette collapses from
+  // 50311 pixels to 3452 in the visual eval. Subtracting inside a vector that
+  // is already unit length keeps the argument finite.
+  //
+  // And the side flip is three's `directionToFaceDirection`, which reads
+  // `material.side`: identity on `FrontSide`, negated on `BackSide`. It is not
+  // re-exported from `three/tsl`, and the per-fragment `faceDirection` sign is
+  // not the same thing, so the two sides get their own node below. Get this
+  // wrong and the interior wall shades against a normal pointing outward.
+  const breatheTangential = breatheGradient.sub(normalLocal.mul(dot(breatheGradient, normalLocal)));
+  const breatheNormalLocal = normalLocal.sub(breatheTangential);
+  const breatheNormalViewRaw = transformNormalToView(breatheNormalLocal);
+  // At gate 0 the second operand is exactly how three builds `normalView`
+  // itself, and `mix(a, b, 0)` is `a` bit for bit, so the shipped shading
+  // chain is reproduced rather than approximated. `normalView` inside each
+  // material's own normal sub-build already carries that material's side
+  // flip, so the two operands are always like for like.
+  const breatheNormalFront = mix(normalView, breatheNormalViewRaw, uPoolNormalGate);
+  const breatheNormalInterior = mix(normalView, breatheNormalViewRaw.negate(), uPoolNormalGate);
+
+  // Waterline fade (work item 5). The clip plane cuts the body at world Y 0
+  // and the shell is hollow, so the cut exposes the interior wall. Fading the
+  // glass terms out over a band above the waterline is what stops the cross
+  // section reading as an empty shell. `mix(1, fade, 0)` is exactly 1, so this
+  // is inert at `pool.amount = 0`.
+  const waterFade = smoothstep(0, uPoolFade.max(1e-4), positionWorld.y);
+  const waterFadeMix = mix(float(1), waterFade, uPoolAmount);
 
   const densU = float(PLANAR_DENSITY / GRID_COLS).mul(uHDensity).div(uGlyphScale);
   const densV = float(PLANAR_DENSITY / GRID_ROWS).mul(uVDensity).div(uGlyphScale);
@@ -560,13 +715,17 @@ export function buildSkinMaterial(
   const bodyShare = bodyOpacity.mul(float(1).sub(baseAlpha.saturate()));
   const totalAlpha = baseAlpha
     // Glass thickens towards the silhouette, which also stops the back of the
-    // head reading through at grazing angles.
-    .add(glassFresnel.mul(uFresnel))
+    // head reading through at grazing angles. The waterline fade rides on the
+    // glass terms only: the base glyph alpha is left alone so the face does
+    // not dissolve, only the shell's own volume does.
+    .add(glassFresnel.mul(uFresnel).mul(waterFadeMix))
     // Mid-tone pages give neither glow nor ink much contrast; lift the floor.
     .add(uOpacityFloor)
-    .add(bodyShare)
+    .add(bodyShare.mul(waterFadeMix))
     .clamp(0, 1);
   material.opacityNode = totalAlpha;
+  material.positionNode = breathePosition;
+  material.normalNode = breatheNormalFront;
 
   // Blinn highlight against the scene key light, in world space so it tracks
   // both the head pose and the camera.
@@ -597,7 +756,12 @@ export function buildSkinMaterial(
     .saturate()
     .mul(INTERIOR_OPACITY)
     .mul(uGlassAmount)
+    .mul(waterFadeMix)
     .clamp(0, 1);
+  // The interior rides the same displacement as the front, or the two halves
+  // of one body separate at the seam.
+  interior.positionNode = breathePosition;
+  interior.normalNode = breatheNormalInterior;
 
   return {
     material: material as unknown as THREE.Material,

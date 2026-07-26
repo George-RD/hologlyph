@@ -1,41 +1,71 @@
 # Next unit of work
 
-Updated 2026-07-26 after `2026-07-26-liquid-glass-solid-body` landed.
+Updated 2026-07-26 after `liquid-glass-tier1-pool` landed.
 
-**Start here: `meta/todos/todo.liquid-glass-silhouette-hull.md`** (Order 2 of
-`dec.liquid-glass-architecture`, node `hologlyph.asset.pipeline`). `cairn brief`
+**Start here: `meta/todos/todo.liquid-glass-snapshot-lens.md`** (Order 4 of
+`dec.liquid-glass-architecture`, node `hologlyph.runtime.core`). `cairn brief`
 picks the Chromium lens instead because it orders alphabetically; the `Order N`
 line in each todo is authoritative, so ignore that recommendation.
 
-What the hull item needs, in one paragraph so you can start cold: compute a 20
-to 40 vertex outline hull of the bust offline in `tools/asset-pipeline/`, store
-it beside the GLB or as an extra accessor, keep it deterministic so the
-regen byte-equality test in `test/asset-bust.test.ts` still holds, then project
-those vertices through the current head pose on the CPU each frame and emit a
-`polygon()` string with no allocation and no GPU readback. Verify containment
-across the full yaw and pitch range and under emergence. It is the blocking
-dependency of items 6 and 7.
+What the snapshot item needs, in one paragraph so you can start cold: opt-in
+true per-pixel lensing on every engine, by rasterising a host-named DOM subtree
+to a texture the skin can refract, rather than the compositor path which can
+only frost and tint. Read
+`meta/research/res.dom-backdrop-capture.md` first: no browser API returns
+rendered page pixels to script without a permission prompt, so this rung is a
+rasterisation the host opts into, not a capture. It needs no new asset and no
+contract beyond a way to name the subtree.
 
-Three things the solid-body change leaves you:
+Two follow-ups this change deliberately left open, either of which is a
+legitimate next unit instead:
 
-- `src/asset/rig.ts` now has a grid-accelerated raycaster (`computeThickness`)
-  with a correct DDA over triangle buckets and a four-way budget that degrades
-  to zero rather than stalling. The hull bake is a different problem, but the
-  grid, the stamping and the budget pattern are there to copy.
+- The pool is lab-only. `pool.amount` ships at 0 and the look has not been
+  through an owner session. Showing `demo/pool-lab.html` and taking a ruling
+  is cheap and unblocks items 7 and 8.
+- Work item 5 of the tier 1 todo is scoped down. The materials the library
+  builds fade at the waterline; the authored `mouth_interior` and `eye_trim`
+  materials and the eyeball still terminate at the hard clip. The reasoning is
+  in the module header of `src/shaders/materials.ts`.
+
+Four things this change leaves you:
+
+- **A same-build A/B proves a gate is inert, never that a build is unchanged.**
+  `tools/smoke/pool-shot.mjs` compared `pool.amount` 0 against 0 and reported a
+  perfect zero-pixel match while the head was 93 per cent gone, because the
+  defect was in the shared material graph. Only `bun run eval`, which scores
+  against a committed baseline from another build, caught it. For a real
+  cross-build number, run `tools/smoke/solid-body-shot.mjs` on both branches
+  and diff the PNGs; the eval's own captures are not pose-pinned and have a
+  12,000 pixel noise floor.
+- **`transformNormalToView` normalises.** It ends in `transformDirection`, so
+  handing it a vector that can be zero gives NaN, and GLSL `mix(a, NaN, 0)` is
+  NaN, not `a`. Perturb inside a unit vector. Same trap waits for anything that
+  builds a direction from a gradient.
+- **`directionToFaceDirection` is not re-exported from `three/tsl`** and
+  `faceDirection` is not the same quantity. If you add a normal override, the
+  `FrontSide` front and the `BackSide` interior need their own node.
+- **`EngineImpl.applyPoolLayer`** reconciles the pool against `pool.amount`
+  every frame beside `applyGlassLayering`, and tears the pool down rather than
+  hiding it. Anything that adds a scene-level object for the liquid programme
+  should follow that shape, or the shipped configuration starts paying for it.
+
+Other unblocked items, in order: 5 `chromium-lens` and 10 `interior-glyphs`.
+Items 7 `stage-participants` and 8 `fluidity-driver` are unblocked by this
+change, but both want the owner's ruling on the pool first.
+
+Earlier handoff, kept for the hull and solid-body traps:
+
 - Any visual acceptance check MUST pin the bones and every morph influence
   array before capturing, and MUST establish its own noise floor by repeating
   the same capture on the same code first. See `tools/smoke/solid-body-shot.mjs`
   and the measurement-trap section of
-  `meta/changes/archive/2026-07-26-2026-07-26-liquid-glass-solid-body/implementation-notes.md`:
-  `setMotionFrozen` leaves the head wherever idle motion had drifted to, so any
-  change to load-time work shifts every bind-pose-welded glyph and reads as a
-  5% pixel diff that is not there.
+  `meta/changes/archive/2026-07-26-2026-07-26-liquid-glass-solid-body/implementation-notes.md`.
 - `EngineImpl.applyGlassLayering` reconciles the render-list layering with
   `skin.glass.amount` every frame. Anything that adds a layer to the head must
   go through it, or `glass.amount = 0` stops reproducing the approved look.
-
-Other unblocked items, in order: 3 `tier1-pool`, 4 `snapshot-lens`,
-5 `chromium-lens`, and 10 `interior-glyphs` (unblocked by this change).
+- `src/asset/rig.ts` has a grid-accelerated raycaster (`computeThickness`) with
+  a correct DDA over triangle buckets and a budget that degrades to zero rather
+  than stalling.
 
 # Feature-shading lab: session state
 
@@ -83,6 +113,16 @@ this file tracks their purpose and what remains owner-session-only.
   chosen `skin.glass.amount` values, reporting silhouette size, mean luminance
   and a pixel hash. Proves the solid-body glass is inert at
   `glass.amount = 0`; run it on both branches and compare.
+- `demo/pool-lab.html` plus `tools/smoke/pool-shot.mjs` - tier 1 of the liquid
+  glass: the head emerging from a rippling pool, with live controls for every
+  field of `HeadPoolConfig`, a raised camera (the shipped camera sits on the
+  waterline and sees a horizontal plane edge on), submerge and emerge and speak
+  scenarios, a jaw-open toggle for checking morphs against the breathe, and a
+  frame-time readout. Dev-only, deliberately absent from
+  `demo/vite.config.ts`, so it is not deployed. The smoke script measures a
+  silhouette floor, inertness at `pool.amount = 0`, morph survival under
+  maximum breathe, and, with `--cost`, a vsync-free frame cost against a real
+  Chrome. `pool.amount` ships at 0: the look is not owner-approved yet.
 
 ## Where the approved look lives
 
