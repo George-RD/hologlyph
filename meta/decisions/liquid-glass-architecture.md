@@ -9,6 +9,7 @@ date: 2026-07-25
 informed_by:
   - res.liquid-glass-direction
   - res.dom-backdrop-capture
+  - src.owner-vision-2026-07-25
 ---
 # Liquid glass: layered backdrop, staged fluid, drop-in preserved
 
