@@ -36,18 +36,33 @@ const TONGUE_DATA_PATH = resolve(CWD, 'tools/asset-pipeline/tongue-morphs.json')
 const TONGUE_POSES_PATH = resolve(CWD, 'tools/asset-pipeline/tongue-poses.json');
 const CANONICAL: readonly string[] = [...RIG_VISEME_MORPHS, ...RIG_TONGUE_MORPHS, ...RIG_EXPRESSION_MORPHS];
 
+// Read the 1.1 MB GLB and warm the meshopt decoder once. Every test below
+// parses the same bytes, and doing the read plus `ready` await per test pushed
+// this file past the 5 s default whenever the suite ran in parallel.
+const BUST_BYTES = existsSync(BUST_PATH) ? readFileSync(BUST_PATH) : null;
+const DECODER_READY = MeshoptDecoder.ready;
+
 async function loadBust(): Promise<THREE.Group> {
-  const bytes = readFileSync(BUST_PATH);
-  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  if (!BUST_BYTES) throw new Error(`bust asset missing at ${BUST_PATH}`);
+  // Fresh ArrayBuffer and a fresh parse per call on purpose: callers mutate the
+  // returned graph (morph influences, skeleton updates), so the scene must
+  // never be shared between tests.
+  const ab = BUST_BYTES.buffer.slice(
+    BUST_BYTES.byteOffset,
+    BUST_BYTES.byteOffset + BUST_BYTES.byteLength,
+  );
   const loader = new GLTFLoader();
   loader.setMeshoptDecoder(MeshoptDecoder);
-  await MeshoptDecoder.ready;
+  await DECODER_READY;
   return await new Promise<THREE.Group>((resolve, reject) => {
     loader.parse(ab as ArrayBuffer, '', (gltf) => resolve(gltf.scene), reject);
   });
 }
 
-describe('shipped head bust', () => {
+// Parsing a 30k-triangle, 30-morph meshopt GLB is inherently around a second,
+// and this suite does it repeatedly alongside 19 other test files. The 5 s
+// default is genuinely too tight, not a symptom worth hiding.
+describe('shipped head bust', { timeout: 20_000 }, () => {
   it('exists and is within the delivery budget', () => {
     expect(existsSync(BUST_PATH)).toBe(true);
     const size = statSync(BUST_PATH).size;
