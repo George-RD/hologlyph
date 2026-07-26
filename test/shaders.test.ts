@@ -334,6 +334,9 @@ describe('owner-approved head configuration', () => {
         amount: 0, bias: 0.04, ripple: 1, meniscus: 0.55, contact: 0.7,
         breathe: 0.006, fade: 0.14, tint: '#4f8fbf',
       },
+      lens: {
+        amount: 1, strength: 0.06, recaptureMs: 250,
+      },
     });
     // `pool.amount` is the tier 1 gate. It ships at 0 on purpose: the pool is
     // lab-only until the owner approves the look, and at 0 the engine builds
@@ -343,6 +346,7 @@ describe('owner-approved head configuration', () => {
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.pool)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.lens)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);
@@ -361,6 +365,30 @@ describe('owner-approved head configuration', () => {
     expect(merged.pool.tint).toBe(DEFAULT_HEAD_CONFIG.pool.tint);
     expect(merged.pool.ripple).toBe(DEFAULT_HEAD_CONFIG.pool.ripple);
     expect(Object.isFrozen(merged.pool)).toBe(true);
+  });
+
+  it('gates the lens on a bound snapshot, not on lens.amount', () => {
+    // `lens.amount` ships at 1 because the SOURCE ELEMENT is the gate: with
+    // nothing named to refract the engine binds no texture and the material
+    // keeps its own derived gate shut, so the approved look is untouched.
+    expect(DEFAULT_HEAD_CONFIG.lens.amount).toBe(1);
+  });
+
+  it('normalises and freezes the lens block, keeping strength signed', () => {
+    const merged = normaliseHeadConfig({
+      lens: { amount: 4, strength: -0.2, recaptureMs: -50 },
+    });
+    expect(merged.lens.amount).toBe(1);
+    // Negative strength is legitimate: it flips the head between reading as a
+    // converging and a diverging lens.
+    expect(merged.lens.strength).toBe(-0.2);
+    expect(merged.lens.recaptureMs).toBe(0);
+    expect(Object.isFrozen(merged.lens)).toBe(true);
+  });
+
+  it('rejects a non-finite lens strength rather than passing NaN to a uniform', () => {
+    const merged = normaliseHeadConfig({ lens: { strength: Number.NaN } });
+    expect(merged.lens.strength).toBe(DEFAULT_HEAD_CONFIG.lens.strength);
   });
 
   it('deep-merges partial overrides, clamps values, and rejects malformed colours', () => {

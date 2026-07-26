@@ -111,9 +111,9 @@ each todo carries an `Order N` line matching this list. Read the order here,
 not from `cairn brief`. Items 1 to 5 were `status: open` and mutually
 independent; the rest are `status: blocked` until their prerequisite lands.
 
-Landed so far: item 1 (2026-07-26), item 2 (2026-07-26), item 3 (2026-07-26).
-**Next is item 4.** Items 7 and 8 are unblocked by item 3 but both want the
-owner's ruling on the pool lab before they start.
+Landed so far: item 1 (2026-07-26), item 2 (2026-07-26), item 3 (2026-07-26),
+item 4 (2026-07-26). **Next is item 5.** Items 7 and 8 are unblocked by item 3
+but both want the owner's ruling on the pool lab before they start.
 
 1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
    unit of cost, one extra draw call, independent of every backdrop question.
@@ -124,7 +124,9 @@ owner's ruling on the pool lab before they start.
 3. `todo.liquid-glass-tier1-pool` - LANDED 2026-07-26. The owner-facing
    payoff: a head emerging from a rippling pool. Shipped gated at
    `pool.amount: 0` and lab-only until the look is approved.
-4. `todo.liquid-glass-snapshot-lens` - opt-in true lensing on every engine.
+4. `todo.liquid-glass-snapshot-lens` - LANDED 2026-07-26. Opt-in true lensing
+   on every engine: `refract="#hero"` binds a rasterised snapshot the interior
+   glass pass samples displaced by the view normal and the baked thickness.
 5. `todo.liquid-glass-chromium-lens` - enhancement only, never load-bearing.
 6. `todo.liquid-glass-live-css-layer` - live page content inside the head,
    cross-browser. Needs item 2, and needs `todo.liquid-glass-firefox-verify`

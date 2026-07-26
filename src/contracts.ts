@@ -408,6 +408,64 @@ export interface HeadPoolConfig {
   readonly tint: string;
 }
 
+/**
+ * Opt-in true lensing of a host-named subtree (`dec.liquid-glass-architecture`,
+ * rung 3, item 4). No browser API hands rendered page pixels to WebGL, so the
+ * only cross-engine route to per-pixel refraction is to rasterise a subtree
+ * the host names, upload it as a texture and sample it displaced by the
+ * head's normals and thickness (`res.dom-backdrop-capture`).
+ *
+ * Two things gate this, and both must hold: a source element the host named,
+ * and `amount` above 0. With no source there is no rasteriser loaded, no
+ * texture and no lens term, which is the shipped state.
+ *
+ * It also rides the glass. The substitution happens on the interior wall,
+ * which is the deepest pass and the only one that can replace what is behind
+ * the head, and that pass exists only while `skin.glass.amount` is above 0.
+ * Turning the glass off turns the lens off with it.
+ *
+ * The staleness and CORS contract is inherent, not a defect to hide: content
+ * behind the head is frozen between captures, cross-origin images need CORS
+ * headers or they rasterise blank, `position: fixed` subtrees are typically
+ * excluded, and the first capture costs 10 to 150 ms of main thread.
+ */
+export interface HeadLensConfig {
+  /** Mix of the lensed snapshot over the live page; 0 leaves the page alone. */
+  readonly amount: number;
+  /**
+   * Peak sample displacement at unit body thickness, in canvas heights.
+   * Negative flips the bend, which is the difference between the head reading
+   * as a converging lens and as a diverging one.
+   */
+  readonly strength: number;
+  /**
+   * Stillness, in milliseconds, before a moved sample window recaptures. Read
+   * when the source is named, so changing it later takes effect on the next
+   * `setLensSource`, not immediately.
+   */
+  readonly recaptureMs: number;
+}
+
+/**
+ * Affine map from three's `screenUV` to snapshot texture UV. `scaleV` is
+ * negative: `screenUV.y` grows downward from the top of the canvas, and a
+ * texture uploaded with three's default `flipY` has `v = 1` at the top.
+ */
+export interface LensWindow {
+  readonly offsetU: number;
+  readonly offsetV: number;
+  readonly scaleU: number;
+  readonly scaleV: number;
+}
+
+/** Everything the glass materials need to sample a page snapshot. */
+export interface LensBinding {
+  readonly texture: THREE.Texture;
+  readonly window: LensWindow;
+  /** Per-axis displacement in `screenUV` units, at unit thickness. */
+  readonly displacement: readonly [number, number];
+}
+
 export interface HeadSkinConfig {
   readonly opacity: SkinOpacityConfig;
   readonly shading: SkinShadingConfig;
@@ -433,6 +491,7 @@ export interface HeadConfig {
   readonly skin: HeadSkinConfig;
   readonly eyes: HeadEyeConfig;
   readonly pool: HeadPoolConfig;
+  readonly lens: HeadLensConfig;
 }
 
 export type HeadConfigOverrides = {
@@ -446,6 +505,7 @@ export type HeadConfigOverrides = {
   };
   eyes?: Partial<HeadEyeConfig>;
   pool?: Partial<HeadPoolConfig>;
+  lens?: Partial<HeadLensConfig>;
 };
 
 export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
@@ -519,6 +579,15 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     fade: 0.14,
     tint: '#4f8fbf',
   }),
+  // A source element is the hard gate, not this number: with nothing named to
+  // rasterise the engine binds no texture and the materials evaluate the
+  // shipped look exactly. So `refract="#hero"` alone is enough to switch the
+  // lens on, and `amount` stays a strength dial.
+  lens: Object.freeze({
+    amount: 1,
+    strength: 0.06,
+    recaptureMs: 250,
+  }),
 });
 
 /**
@@ -547,6 +616,12 @@ export interface VFXEngine extends Disposable {
   /** Root Y translation for the current emergence (pairs with clip plane). */
   readonly rootOffsetY: number;
   readonly clippingPlane: THREE.Plane;
+  /**
+   * Bind (or clear with `null`) the page snapshot the glass refracts. Clearing
+   * closes the lens term outright rather than fading it: with no texture there
+   * is nothing to sample, so `skin.lens.amount` alone must never switch it on.
+   */
+  setLens(lens: LensBinding | null): void;
   update(dt: number): void;
   /** Shorten or snap emergence ramps when reduced motion is requested. */
   setReducedMotion(reduced: boolean): void;
@@ -589,6 +664,18 @@ export interface EngineEvents extends Record<string, unknown> {
   error: Error;
 }
 
+/**
+ * Rasterises a DOM subtree to something a `THREE.Texture` can upload. Injected
+ * rather than imported so the library ships with no rasteriser of its own: the
+ * default lazily imports the optional `@zumer/snapdom` peer only once a host
+ * has actually named a subtree.
+ */
+export type LensRasteriser = (element: Element) => Promise<CanvasImageSource>;
+
+export interface LensSourceOptions {
+  readonly rasterise?: LensRasteriser;
+}
+
 export interface Engine extends Emitter<EngineEvents>, Disposable {
   mount(canvas: HTMLCanvasElement, host: Element): Promise<void>;
   resize(width: number, height: number): void;
@@ -597,6 +684,18 @@ export interface Engine extends Emitter<EngineEvents>, Disposable {
   setScrollProgress(progress: number): void;
   setTextSkinSource(source: TextSkinSource): void;
   setVoiceAdapter(adapter: TTSAdapter): void;
+  /**
+   * Name a subtree for the head to refract, or `null` to stop refracting
+   * (dec.liquid-glass-architecture, rung 3). NEVER pass `document.body`: the
+   * fidelity traps (cross-origin images, `position: fixed`, capture cost)
+   * scale with what is inside.
+   */
+  setLensSource(element: Element | null, options?: LensSourceOptions): void;
+  /**
+   * Recapture the named subtree now. Captures otherwise happen only when the
+   * sampled window settles after moving, never per frame.
+   */
+  captureLens(): void;
   /** Freeze or unfreeze all procedural motion (idle, gaze, nods) so
    * successive frames hold an identical pose; used by deterministic
    * captures. Rendering and text-skin flow continue. */

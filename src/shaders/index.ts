@@ -13,6 +13,7 @@ import {
   DEFAULT_HEAD_CONFIG,
   type HeadConfig,
   type HeadConfigOverrides,
+  type LensBinding,
   type SkinMaterials,
   type TextSkinEngine,
   type VFXEngine,
@@ -20,6 +21,7 @@ import {
 import {
   buildEyeballMaterial,
   buildSkinMaterial,
+  lensPlaceholderTexture,
   normaliseHeadConfig,
   type EyeUniforms,
   type HeadUniforms,
@@ -122,6 +124,13 @@ export function createVFXEngine(): VFXEngine {
   let disposed = false;
   /** Monotonic seconds driving the pool breathe, damped under reduced motion. */
   let poolTime = 0;
+  /**
+   * Bound page snapshot, or null. The presence of a texture is the hard gate
+   * on the lens: `skin.lens.amount` alone must never open it, because the
+   * shipped materials would then sample a 1x1 placeholder and fill the head
+   * with a flat colour.
+   */
+  let lens: LensBinding | null = null;
 
   const state = {
     emergence: 0,
@@ -188,6 +197,8 @@ export function createVFXEngine(): VFXEngine {
       // identity with the shipped chain at gate 0, so a zero breathe must
       // close the gate rather than merely zero the displacement.
       u.poolNormalGate.value = config.pool.breathe > 0 ? clamp01(config.pool.amount) : 0;
+
+      applyLensToUniforms(u, config);
     }
 
     for (const binding of eyeBindings) {
@@ -204,12 +215,46 @@ export function createVFXEngine(): VFXEngine {
     }
   }
 
+  /**
+   * Push the bound snapshot into one skin material's uniforms.
+   *
+   * The gate is derived from the binding, never from the config: with nothing
+   * bound it is 0, and at 0 the material's `outputNode` is `output` bit for
+   * bit, so a head that refracts nothing is the shipped head exactly.
+   *
+   * Clearing rebinds the placeholder rather than leaving the old texture in
+   * the sampler. `PageLens` disposes its snapshot on teardown, and a disposed
+   * texture still referenced by a live material keeps the whole rasterised
+   * canvas alive and gets re-uploaded from `image` on the next frame.
+   */
+  function applyLensToUniforms(u: HeadUniforms, config: HeadConfig): void {
+    if (!lens) {
+      u.lensGate.value = 0;
+      u.lensAmount.value = 0;
+      u.lensTexture.value = lensPlaceholderTexture();
+      return;
+    }
+    u.lensGate.value = 1;
+    u.lensAmount.value = config.lens.amount;
+    u.lensTexture.value = lens.texture;
+    u.lensWindow.value.set(
+      lens.window.offsetU,
+      lens.window.offsetV,
+      lens.window.scaleU,
+      lens.window.scaleV,
+    );
+    u.lensDisplacement.value.set(lens.displacement[0], lens.displacement[1]);
+  }
+
   const engine: VFXEngine = {
     createSkinMaterial(skin: TextSkinEngine): SkinMaterials {
       if (disposed) throw new Error('VFXEngine: createSkinMaterial after dispose');
       const built = buildSkinMaterial(skin, activeConfig);
       const binding = { skin, scroll: built.scroll, uniforms: built.uniforms };
       skinBindings.push(binding);
+      // An avatar replaced while a lens is bound must not lose it: the new
+      // material starts with the gate shut and picks the binding up here.
+      applyLensToUniforms(built.uniforms, activeConfig);
       // The pair shares one uniform set, so the binding must outlive whichever
       // half is disposed first: the engine drops the interior overlay on
       // avatar replace while the front material lives on. Counting materials
@@ -265,6 +310,16 @@ export function createVFXEngine(): VFXEngine {
       return plane;
     },
 
+    setLens(next: LensBinding | null): void {
+      if (disposed) return;
+      // Called every frame while a lens is live, so identity is the change
+      // test: `createPageLens` mints a new binding only when the window, the
+      // displacement or the texture actually moved.
+      if (next === lens) return;
+      lens = next;
+      for (const binding of skinBindings) applyLensToUniforms(binding.uniforms, activeConfig);
+    },
+
     setReducedMotion(reducedMotion: boolean): void {
       reduced = reducedMotion;
     },
@@ -303,6 +358,7 @@ export function createVFXEngine(): VFXEngine {
       disposed = true;
       skinBindings.length = 0;
       eyeBindings.length = 0;
+      lens = null;
       plane.constant = 0;
     },
   };

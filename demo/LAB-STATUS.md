@@ -1,62 +1,82 @@
 # Next unit of work
 
-Updated 2026-07-26 after `liquid-glass-tier1-pool` landed.
+Updated 2026-07-26 after `liquid-glass-snapshot-lens` landed (item 4 of
+`dec.liquid-glass-architecture`).
 
-**Start here: `meta/todos/todo.liquid-glass-snapshot-lens.md`** (Order 4 of
-`dec.liquid-glass-architecture`, node `hologlyph.runtime.core`). `cairn brief`
-picks the Chromium lens instead because it orders alphabetically; the `Order N`
-line in each todo is authoritative, so ignore that recommendation.
+**Start here: `meta/todos/todo.liquid-glass-chromium-lens.md`** (Order 5, node
+`hologlyph.runtime.renderer`). `cairn brief` happens to agree this time, but it
+agrees by accident: it orders todos alphabetically, and the `Order N` line in
+each todo is what is authoritative.
 
-What the snapshot item needs, in one paragraph so you can start cold: opt-in
-true per-pixel lensing on every engine, by rasterising a host-named DOM subtree
-to a texture the skin can refract, rather than the compositor path which can
-only frost and tint. Read
-`meta/research/res.dom-backdrop-capture.md` first: no browser API returns
-rendered page pixels to script without a permission prompt, so this rung is a
-rasterisation the host opts into, not a capture. It needs no new asset and no
-contract beyond a way to name the subtree.
+Read it with your eyes open, though. Item 5 is the Chromium half of rung 3 and
+the decision says outright that it must never be load-bearing: it is
+Chromium-only, behind a flag, on an origin trial that expires at Chrome 150,
+and it cannot see the page behind our canvas at all, only immediate children of
+it. The measurements are already done in
+`meta/research/res.dom-backdrop-capture.md` and the spike is committed at
+`demo/html-in-canvas-spike.html`; the work is a capability check and a
+detected-only path, not an investigation.
 
-Three follow-ups this change deliberately left open, any of which is a
-legitimate next unit instead:
+**The higher-value move, if the owner is available, is a look session on the
+two labs.** Two features now ship gated off because nobody has judged them:
+`pool.amount` at 0 (`demo/pool-lab.html`) and the snapshot lens with no source
+named (`demo/lens-lab.html`). A ruling on the pool unblocks items 7
+`stage-participants` and 8 `fluidity-driver`, which are far more of the liquid
+programme than item 5 is. Say so rather than grinding through the order.
 
-- The pool is lab-only. `pool.amount` ships at 0 and the look has not been
-  through an owner session. Showing `demo/pool-lab.html` and taking a ruling
-  is cheap and unblocks items 7 and 8.
-- Work item 5 of the tier 1 todo is scoped down. The materials the library
-  builds fade at the waterline; the authored `mouth_interior` and `eye_trim`
-  materials and the eyeball still terminate at the hard clip. The reasoning is
-  in the module header of `src/shaders/materials.ts`.
-- The tier 1 change never got an independent review. Both delegated reviewers
-  died on a provider usage limit and it shipped on a self-review, which found
-  five defects but is not the same thing. `src/shaders/pool-surface.ts` and
-  the breathe block in `src/shaders/materials.ts` are the parts worth another
-  pair of eyes; both are new TSL graphs that no unit test can execute.
+Three follow-ups the snapshot-lens change deliberately left open:
 
-Four things this change leaves you:
+- **Nobody has looked at the lens.** The vision tooling in that session was
+  quota-exhausted and the desktop had no screen-recording permission, so every
+  claim about it is a measurement and none is a judgement. Frames are at
+  `tools/smoke/out/lens-source-off.png`, `lens-aligned.png` and
+  `lens-source-on.png`.
+- **The head does not magnify.** The displacement is `normalView.xy *
+  aThickness`, which is what a slab does and is near zero where the surface
+  faces the camera, so the middle of the face shows the page barely moved. True
+  magnification needs two surfaces forming an image, which a per-fragment
+  screen-space offset cannot express. A radial contraction about a
+  screen-space centre would fake it convincingly and is a look decision, not a
+  physics one.
+- **The compositing seam.** Naming a source makes the head opaque and folds the
+  page into the scene, which moves one blend out of the browser compositor's
+  encoded space into three's linear one. It is unavoidable from inside the
+  scene and it is measured, bounded and explained in
+  `meta/changes/liquid-glass-snapshot-lens/implementation-notes.md`. If the
+  owner dislikes the tone shift, the answer is a lower `lens.amount`, not a
+  cleverer shader.
+
+Four things the last two changes leave you:
 
 - **A same-build A/B proves a gate is inert, never that a build is unchanged.**
   `tools/smoke/pool-shot.mjs` compared `pool.amount` 0 against 0 and reported a
   perfect zero-pixel match while the head was 93 per cent gone, because the
   defect was in the shared material graph. Only `bun run eval`, which scores
-  against a committed baseline from another build, caught it. For a real
-  cross-build number, run `tools/smoke/solid-body-shot.mjs` on both branches
-  and diff the PNGs; the eval's own captures are not pose-pinned and have a
-  12,000 pixel noise floor.
+  against a committed baseline from another build, caught it.
+- **A periodic test pattern is worse than a flat one.** The lens lab hero
+  started as 44 px stripes; a displacement of one period is indistinguishable
+  from none, to the eye and to a correlation search alike, and it cost a round
+  of false conclusions. Both lab backgrounds are aperiodic now, on purpose.
 - **`transformNormalToView` normalises.** It ends in `transformDirection`, so
   handing it a vector that can be zero gives NaN, and GLSL `mix(a, NaN, 0)` is
-  NaN, not `a`. Perturb inside a unit vector. Same trap waits for anything that
-  builds a direction from a gradient.
-- **`directionToFaceDirection` is not re-exported from `three/tsl`** and
-  `faceDirection` is not the same quantity. If you add a normal override, the
-  `FrontSide` front and the `BackSide` interior need their own node.
-- **`EngineImpl.applyPoolLayer`** reconciles the pool against `pool.amount`
-  every frame beside `applyGlassLayering`, and tears the pool down rather than
-  hiding it. Anything that adds a scene-level object for the liquid programme
-  should follow that shape, or the shipped configuration starts paying for it.
+  NaN, not `a`. Perturb inside a unit vector.
+- **Gate on the resource, not on the number, when the feature needs one.**
+  `pool.amount` is a number gate because the pool is pure computation;
+  `lens.amount` ships at 1 and the SOURCE ELEMENT is the gate, because a lens
+  with no snapshot would sample a placeholder and fill the head with a flat
+  colour. Both reconcile every frame beside `applyGlassLayering`, and both tear
+  their resources down rather than hiding them.
 
-Other unblocked items, in order: 5 `chromium-lens` and 10 `interior-glyphs`.
-Items 7 `stage-participants` and 8 `fluidity-driver` are unblocked by this
-change, but both want the owner's ruling on the pool first.
+Still open from the tier 1 pool change, unchanged:
+
+- Work item 5 of the tier 1 todo is scoped down. The materials the library
+  builds fade at the waterline; the authored `mouth_interior` and `eye_trim`
+  materials and the eyeball still terminate at the hard clip. Reasoning is in
+  the module header of `src/shaders/materials.ts`.
+- The tier 1 change never got an independent review; it shipped on a
+  self-review after both delegated reviewers hit a provider usage limit.
+  `src/shaders/pool-surface.ts` and the breathe block in
+  `src/shaders/materials.ts` are the parts worth another pair of eyes.
 
 Earlier handoff, kept for the hull and solid-body traps:
 
@@ -71,6 +91,9 @@ Earlier handoff, kept for the hull and solid-body traps:
 - `src/asset/rig.ts` has a grid-accelerated raycaster (`computeThickness`) with
   a correct DDA over triangle buckets and a budget that degrades to zero rather
   than stalling.
+- `directionToFaceDirection` is not re-exported from `three/tsl` and
+  `faceDirection` is not the same quantity. If you add a normal override, the
+  `FrontSide` front and the `BackSide` interior need their own node.
 
 # Feature-shading lab: session state
 
@@ -128,6 +151,19 @@ this file tracks their purpose and what remains owner-session-only.
   silhouette floor, inertness at `pool.amount = 0`, morph survival under
   maximum breathe, and, with `--cost`, a vsync-free frame cost against a real
   Chrome. `pool.amount` ships at 0: the look is not owner-approved yet.
+- `demo/lens-lab.html` plus `tools/smoke/lens-shot.mjs` - rung 3 of the
+  backdrop ladder: a hero section refracted through the head via a rasterised
+  DOM snapshot. Live controls for `lens.amount` and the signed `lens.strength`,
+  a source on/off pair, an explicit recapture, and a hero-text button for
+  watching the snapshot go stale on purpose. The hero background is APERIODIC
+  on purpose; a repeating pattern makes a one-period displacement look like no
+  displacement. Dev-only, deliberately absent from `demo/vite.config.ts`. The
+  smoke script measures a presence floor, a noise floor, the bound sample
+  window against the document-space layout arithmetic, the bounded colour-space
+  seam, visible displacement (lensed against lensed, so the seam cancels), an
+  untouched page outside the silhouette, the sign response, and exact
+  restoration when the source is dropped. The lens ships with no source named:
+  the look is not owner-approved yet, and in fact nobody has looked at it.
 
 ## Where the approved look lives
 

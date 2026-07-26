@@ -13,7 +13,10 @@ export default defineConfig({
       formats: ['es'],
     },
     rollupOptions: {
-      external: [/^three/, /^kokoro-js/],
+      // `kokoro-js` and `@zumer/snapdom` are optional peers reached only
+      // through a dynamic import. External keeps both out of `dist/` entirely,
+      // so a consumer who never opts in ships neither byte nor install.
+      external: [/^three/, /^kokoro-js/, /^@zumer\/snapdom/],
     },
     target: 'es2022',
     sourcemap: true,
