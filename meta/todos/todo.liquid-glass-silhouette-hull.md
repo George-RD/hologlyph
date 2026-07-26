@@ -6,9 +6,12 @@ created: 2026-07-25
 
 # Silhouette hull bake and per-frame CPU projection
 
-Shared dependency of the live CSS glass layer, the physics participants, and
-every fluid tier (`dec.liquid-glass-architecture`). Nothing above rung 1 of the
-backdrop ladder can start until this exists.
+Order 2 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+parallel with the other unblocked items.
+
+Blocking dependency of the live CSS glass layer (item 6) and the physics
+participants (item 7), which both need a screen-space outline. The lens rungs do
+not need it: they are WebGL texture sources and never touch `clip-path`.
 
 The CSS glass layer must be confined to the head shape with `clip-path`, which
 needs a screen-space polygon every frame. Deriving it from canvas alpha would

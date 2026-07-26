@@ -105,29 +105,33 @@ that way later; the library will not assume it.
 
 ## Recommended order
 
-Cairn orders open todos alphabetically, which is not the intended sequence.
-The recommended order, and why each step sits where it does:
+Cairn orders open todos alphabetically, which is not the intended sequence, so
+each todo carries an `Order N of 9` line matching this list. Items 1 to 5 are
+`status: open` and mutually independent; items 6 to 9 are `status: blocked`
+until their prerequisite lands.
 
 1. `todo.liquid-glass-solid-body` - largest look gain per unit of cost, one
    extra draw call, independent of every backdrop question. Start here.
-2. `todo.liquid-glass-silhouette-hull` - the shared contract. Everything from
-   rung 2 upward is blocked on it.
+2. `todo.liquid-glass-silhouette-hull` - the shared contract. The compositor
+   glass layer and the physics participants both need it. The lens rungs do
+   not: they are WebGL texture sources and never touch `clip-path`.
 3. `todo.liquid-glass-tier1-pool` - the owner-facing payoff: a head emerging
    from a rippling pool. Lab only until approved.
-4. `todo.liquid-glass-live-css-layer` - live page content inside the head,
-   cross-browser. Needs step 2, and needs
-   `todo.liquid-glass-firefox-verify` resolved before it lands in `src/`.
-5. `todo.liquid-glass-snapshot-lens` - opt-in true lensing everywhere.
-6. `todo.liquid-glass-stage-participants` - the fluid starts touching the page.
-7. `todo.liquid-glass-fluidity-driver` - the fluidity knob and the simulation
-   that writes it. No viseme cost, so no owner gate beyond the usual lab
-   approval.
-8. `todo.liquid-glass-chromium-lens` - enhancement only, never load-bearing.
+4. `todo.liquid-glass-snapshot-lens` - opt-in true lensing on every engine.
+5. `todo.liquid-glass-chromium-lens` - enhancement only, never load-bearing.
+6. `todo.liquid-glass-live-css-layer` - live page content inside the head,
+   cross-browser. Needs item 2, and needs `todo.liquid-glass-firefox-verify`
+   resolved before it lands in `src/`.
+7. `todo.liquid-glass-stage-participants` - the fluid starts touching the page.
+   Needs item 3.
+8. `todo.liquid-glass-fluidity-driver` - the fluidity knob and the simulation
+   that writes it. Needs item 3. No viseme cost, so no owner gate beyond the
+   usual lab approval.
 9. `todo.liquid-glass-topology-fluid` - the only stage that gives up authored
    visemes, and only where there is no face. Possibly never.
 
-Steps 1 to 3 need no host-facing contract and no new public surface, so they
-can proceed without committing to any of the integration rungs.
+Items 1 to 4 need no host-facing contract and no new public surface, so they can
+proceed without committing to any of the integration rungs.
 
 ## Rationale
 

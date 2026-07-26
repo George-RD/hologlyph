@@ -6,8 +6,11 @@ created: 2026-07-25
 
 # Solid-body glass: backfaces, thickness, absorption
 
-Recommended first shading step (`dec.liquid-glass-architecture`). Highest
-perceptual gain per unit of cost, and independent of every backdrop question.
+Order 1 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+parallel with the other unblocked items.
+
+Highest perceptual gain per unit of cost, and independent of every backdrop
+question.
 
 The head currently reads as a translucent shell, not a block. What makes glass
 read as solid is seeing the inside of the far surface through the near one, and

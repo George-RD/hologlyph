@@ -1,10 +1,13 @@
 ---
 node: hologlyph.runtime.shaders
-status: open
+status: blocked
 created: 2026-07-25
 ---
 
 # Tier 4: topology-changing fluid, and the only real viseme trade
+
+Order 9 of 9 (`dec.liquid-glass-architecture`). Blocked on
+`todo.liquid-glass-fluidity-driver`.
 
 Last stage, and possibly never (`dec.liquid-glass-architecture`). Do not start
 before `todo.liquid-glass-fluidity-driver` is approved.

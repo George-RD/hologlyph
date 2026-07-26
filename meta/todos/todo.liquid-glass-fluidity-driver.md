@@ -1,10 +1,13 @@
 ---
 node: hologlyph.runtime.shaders
-status: open
+status: blocked
 created: 2026-07-25
 ---
 
 # Tier 3: fluidity as a driver of the rig, not a replacement for it
+
+Order 8 of 9 (`dec.liquid-glass-architecture`). Blocked on
+`todo.liquid-glass-tier1-pool`.
 
 The head stays the head. How molten it behaves is a parameter
 (`dec.liquid-glass-architecture`). Follows tier 1 and tier 2; needs WebGPU

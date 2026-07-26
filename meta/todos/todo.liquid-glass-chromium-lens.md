@@ -6,6 +6,9 @@ created: 2026-07-25
 
 # Chromium HTML-in-Canvas lensing, as a capability-gated enhancement
 
+Order 5 of 9 (`dec.liquid-glass-architecture`). No prerequisite; may run in
+parallel with the other unblocked items.
+
 Rung 3 of the backdrop ladder, Chromium half
 (`dec.liquid-glass-architecture`). Must never be load-bearing.
 
