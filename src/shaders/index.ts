@@ -9,6 +9,7 @@
 import { Plane, Vector3 } from 'three';
 import type * as THREE from 'three';
 import {
+  type BehaviorState,
   clamp01,
   DEFAULT_HEAD_CONFIG,
   type HeadConfig,
@@ -18,6 +19,15 @@ import {
   type TextSkinEngine,
   type VFXEngine,
 } from '../contracts';
+import {
+  FLUID_REST,
+  fluidAccel,
+  fluidGravity,
+  fluidIntegrate,
+  fluidStateAmount,
+  type FluidState,
+  type FluidVec3,
+} from './fluid';
 import {
   buildEyeballMaterial,
   buildSkinMaterial,
@@ -97,6 +107,34 @@ export {
   poolWaterlineRadius,
   poolWaveStep,
 } from './pool';
+export {
+  FLUID_CARRIER_CLAMP,
+  FLUID_CARRIER_DRAG,
+  FLUID_DAMPING_RATIO,
+  FLUID_DRIVE_ACCEL,
+  FLUID_EMERGENCE_SCALE,
+  FLUID_MAX_STEP,
+  FLUID_MAX_SUBSTEPS,
+  FLUID_OMEGA_SLACK,
+  FLUID_OMEGA_STIFF,
+  FLUID_REDUCED_DRIVE,
+  FLUID_REST,
+  FLUID_SCROLL_SCALE,
+  FLUID_SOFT_EPS,
+  FLUID_STATE_GAIN,
+  fluidAccel,
+  fluidDisplacement,
+  fluidDrive,
+  fluidFaceWeight,
+  fluidGravity,
+  fluidHeightWeight,
+  fluidIntegrate,
+  fluidOmega,
+  fluidSoftRamp,
+  fluidStateAmount,
+  fluidSubsteps,
+} from './fluid';
+export type { FluidState, FluidVec3 } from './fluid';
 export type { PoolProfile } from './pool';
 // `createPoolSurface` is deliberately NOT re-exported here. It is the only
 // part of the pool that touches `three/webgpu` render targets, and nothing
@@ -152,6 +190,18 @@ export function createVFXEngine(): VFXEngine {
   let disposed = false;
   /** Monotonic seconds driving the pool breathe, damped under reduced motion. */
   let poolTime = 0;
+  /**
+   * Tier 3 solver state and the drive the host wrote for this frame
+   * (dec.liquid-glass-fluidity). Held here rather than per binding: there is
+   * one body, so there is one sloshing mode, and every material that dresses
+   * it reads the same flow vector.
+   */
+  let fluidState: FluidState = FLUID_REST;
+  let fluidBehaviour: BehaviorState = 'idle';
+  let fluidDriveLevel = 0;
+  let fluidCarrier: FluidVec3 = [0, 0, 0];
+  /** Reused, never reallocated: written into every skin binding each frame. */
+  const fluidFlow = new Vector3(0, 0, 0);
   /**
    * Bound page snapshot, or null. The presence of a texture is the hard gate
    * on the lens: `skin.lens.amount` alone must never open it, because the
@@ -225,6 +275,12 @@ export function createVFXEngine(): VFXEngine {
       // identity with the shipped chain at gate 0, so a zero breathe must
       // close the gate rather than merely zero the displacement.
       u.poolNormalGate.value = config.pool.breathe > 0 ? clamp01(config.pool.amount) : 0;
+
+      u.fluidCrisp.value = config.fluid.crisp;
+      u.fluidReach.value = config.fluid.reach;
+      // `fluidAmount` and `fluidNormalGate` are NOT written here. Both carry
+      // the behaviour gain, which changes without a config write, so `update`
+      // owns them and this function must not race it back to the raw config.
 
       applyLensToUniforms(u, config);
     }
@@ -348,6 +404,21 @@ export function createVFXEngine(): VFXEngine {
       for (const binding of skinBindings) applyLensToUniforms(binding.uniforms, activeConfig);
     },
 
+    setFluidDrive(
+      behaviour: BehaviorState,
+      drive: number,
+      carrierVelocity: readonly [number, number, number],
+    ): void {
+      if (disposed) return;
+      fluidBehaviour = behaviour;
+      fluidDriveLevel = Number.isFinite(drive) ? drive : 0;
+      fluidCarrier = [
+        Number.isFinite(carrierVelocity[0]) ? carrierVelocity[0] : 0,
+        Number.isFinite(carrierVelocity[1]) ? carrierVelocity[1] : 0,
+        Number.isFinite(carrierVelocity[2]) ? carrierVelocity[2] : 0,
+      ];
+    },
+
     setReducedMotion(reducedMotion: boolean): void {
       reduced = reducedMotion;
     },
@@ -371,10 +442,42 @@ export function createVFXEngine(): VFXEngine {
       // `rootOffsetY`, so world Y 0 sits at local Y `-rootOffsetY`.
       const waterY = -state.rootOffsetY;
 
+      // Tier 3 (dec.liquid-glass-fluidity). The gate is hard: at amount 0 the
+      // solver is not integrated at all, the state is held at rest so a later
+      // switch-on does not resume mid-slosh, and every uniform the field
+      // touches is exactly 0, which is what makes the material graph an
+      // identity rather than an approximation of the shipped look.
+      const fluidAmount = fluidStateAmount(activeConfig.fluid.amount, fluidBehaviour);
+      if (fluidAmount <= 0) {
+        fluidState = FLUID_REST;
+        fluidFlow.set(0, 0, 0);
+      } else {
+        // Reduced motion is damped exactly once, by `fluidDrive` in the caller,
+        // the same way the pool damps its ripple drive. Damping again here
+        // would square the factor and leave the reduced response at five per
+        // cent rather than the twenty-two the constant names. The sag is not
+        // damped at all: a resting droop is a shape, not a motion.
+        fluidState = fluidIntegrate(
+          fluidState,
+          fluidAccel(
+            fluidGravity(activeConfig.fluid.sag, activeConfig.fluid.tension),
+            fluidDriveLevel,
+            activeConfig.fluid.wobble,
+            fluidCarrier,
+          ),
+          dt,
+          activeConfig.fluid.tension,
+        );
+        fluidFlow.set(fluidState.offset[0], fluidState.offset[1], fluidState.offset[2]);
+      }
+
       for (const binding of skinBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
         binding.uniforms.poolTime.value = poolTime;
         binding.uniforms.poolWaterY.value = waterY;
+        binding.uniforms.fluidAmount.value = fluidAmount;
+        binding.uniforms.fluidNormalGate.value = fluidAmount;
+        binding.uniforms.fluidFlow.value.copy(fluidFlow);
       }
       for (const binding of eyeBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
@@ -387,6 +490,9 @@ export function createVFXEngine(): VFXEngine {
       skinBindings.length = 0;
       eyeBindings.length = 0;
       lens = null;
+      fluidState = FLUID_REST;
+      fluidCarrier = [0, 0, 0];
+      fluidDriveLevel = 0;
       plane.constant = 0;
     },
   };

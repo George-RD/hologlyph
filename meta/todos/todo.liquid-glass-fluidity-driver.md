@@ -1,17 +1,20 @@
 ---
 node: hologlyph.runtime.shaders
-status: blocked
+status: done
 created: 2026-07-25
 ---
 
 # Tier 3: fluidity as a driver of the rig, not a replacement for it
 
-Order 8 (`dec.liquid-glass-architecture`). Blocked on
-`todo.liquid-glass-tier1-pool`.
+Order 8 (`dec.liquid-glass-architecture`). Landed 2026-07-27 as
+`liquid-glass-fluidity-driver`, gated at `fluid.amount: 0` and lab-only in
+`demo/fluid-lab.html` until the owner approves the look.
 
 The head stays the head. How molten it behaves is a parameter
-(`dec.liquid-glass-architecture`). Follows tier 1 and tier 2; needs WebGPU
-compute for the simulation, and degrades to tier 1 on WebGL2.
+(`dec.liquid-glass-architecture`). Built on tier 1. The simulation is a damped
+modal solver integrated on the CPU rather than a WebGPU compute pass, so there
+is no capability branch and no WebGL2 fallback to maintain; the reasoning and
+the price are in `dec.liquid-glass-fluidity`.
 
 ## Why visemes are safe here
 

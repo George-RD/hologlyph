@@ -1,13 +1,26 @@
 ---
 node: hologlyph.runtime.core
-status: blocked
+status: open
 created: 2026-07-25
 ---
 
 # Stage participants: the opt-in contract that lets the fluid touch the page
 
-Order 7 (`dec.liquid-glass-architecture`). Blocked on
-`todo.liquid-glass-tier1-pool`.
+Order 7 (`dec.liquid-glass-architecture`). Unblocked 2026-07-27: both
+prerequisites have landed. `todo.liquid-glass-tier1-pool` gave it a water
+surface (2026-07-26) and `todo.liquid-glass-fluidity-driver` gave it a body
+that can be pushed around (2026-07-27), which is what work item 2 below means
+by "feed them to the simulation as colliders".
+
+One thing changed shape while item 8 was built: the tier 3 solver is a SINGLE
+damped mode (`dec.liquid-glass-fluidity`), and one global mode cannot squeeze
+against a page element on one side only. This item therefore also grows
+`FLUID_MODES` in `src/shaders/fluid.ts` from one to a small basis, with each
+mode weighted by where on the body it acts. That is a constant and a loop, not
+a redesign, and the decision records it as the intended extension point.
+
+The pool half of this item still touches the look the owner has not ruled on,
+so confirm the pool lab ruling before starting if one has not arrived.
 
 Rung 4 of the backdrop ladder (`dec.liquid-glass-architecture`). This is what
 turns "a glass head on a page" into "a fluid that interacts with the page", and

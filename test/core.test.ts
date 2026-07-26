@@ -85,6 +85,11 @@ interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
   _headConfig: HeadConfig;
   headConfigCalls: HeadConfigOverrides[];
   lensBindings: Array<LensBinding | null>;
+  fluidDrives: Array<{
+    state: BehaviorState;
+    drive: number;
+    carrier: readonly [number, number, number];
+  }>;
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -348,12 +353,13 @@ vi.mock('../src/text-skin', () => ({
 }));
 
 vi.mock('../src/shaders', async () => ({
-  // The pool maths is pure and imports nothing GPU-shaped, so the fake uses
-  // the real functions: a stubbed profile would let the engine's waterline
-  // wiring pass while being wrong. The import is dynamic because `vi.mock`
-  // factories are hoisted above every top-level import in the file, so a
-  // static binding is not in scope here.
+  // The pool and fluid maths are pure and import nothing GPU-shaped, so the
+  // fake uses the real functions: a stubbed profile or a stubbed drive would
+  // let the engine's waterline and fluidity wiring pass while being wrong. The
+  // imports are dynamic because `vi.mock` factories are hoisted above every
+  // top-level import in the file, so a static binding is not in scope here.
   ...(await import('../src/shaders/pool')),
+  ...(await import('../src/shaders/fluid')),
   createVFXEngine() {
     const vfx: FakeVfx = {
       emergenceValue: 0,
@@ -391,6 +397,7 @@ vi.mock('../src/shaders', async () => ({
           pool: { ...this._headConfig.pool, ...config.pool },
           interior: { ...this._headConfig.interior, ...config.interior },
           lens: { ...this._headConfig.lens, ...config.lens },
+          fluid: { ...this._headConfig.fluid, ...config.fluid },
         };
       },
       setEmergence(p: number) {
@@ -402,6 +409,14 @@ vi.mock('../src/shaders', async () => ({
       lensBindings: [],
       setLens(binding: LensBinding | null) {
         this.lensBindings.push(binding);
+      },
+      fluidDrives: [],
+      setFluidDrive(
+        state: BehaviorState,
+        drive: number,
+        carrier: readonly [number, number, number],
+      ) {
+        this.fluidDrives.push({ state, drive, carrier: [carrier[0], carrier[1], carrier[2]] });
       },
       update() {},
       disposeCount: 0,
@@ -1434,6 +1449,50 @@ describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => 
     rafCb?.(4000);
     expect(Number.isFinite(pool.updates.at(-1)!.drive)).toBe(true);
     expect(pool.updates.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('feeds the fluid solver only once the gate is open', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+
+    // Shipped configuration: no matrix recomposed, no bone read, no call.
+    rafCb?.(4000);
+    rafCb?.(4016);
+    expect(vfx.fluidDrives).toHaveLength(0);
+
+    vfx.setHeadConfig({ fluid: { amount: 1 } });
+    engine.setScrollProgress(0.6);
+    rafCb?.(4032);
+    const first = vfx.fluidDrives.at(-1);
+    expect(first).toBeDefined();
+    expect(first!.drive).toBeGreaterThan(0);
+    // The behaviour state picks the melt gain, so it has to be the live one.
+    expect(first!.state).toBe(engine.behavior.state);
+    // First carrier sample has no previous pose to difference against.
+    expect(first!.carrier).toEqual([0, 0, 0]);
+
+    // Travel is consumed by the frame that used it, exactly as the pool's is.
+    rafCb?.(4048);
+    expect(vfx.fluidDrives.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('keeps the carrier velocity finite once the head is moving', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    vfx.setHeadConfig({ fluid: { amount: 1 } });
+
+    // The solver reads its own last offset, so one non-finite carrier reading
+    // would poison the flow vector permanently rather than for a frame.
+    for (let i = 0; i < 6; i++) rafCb?.(4000 + i * 16);
+    expect(vfx.fluidDrives.length).toBeGreaterThan(1);
+    for (const sample of vfx.fluidDrives) {
+      expect(Number.isFinite(sample.drive)).toBe(true);
+      for (const v of sample.carrier) expect(Number.isFinite(v)).toBe(true);
+    }
 
     engine.dispose();
   });

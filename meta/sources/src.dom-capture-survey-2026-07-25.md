@@ -48,6 +48,27 @@ Host: macOS 27, Apple M2 Max, DPR 2. Page under test:
 | Safari 26 | Opened directly, window captured with `screencapture` | Renders the blob-shaped frosted glass over sharp page text | Not measured |
 | Playwright WebKit 26.5 | Headless | Inconclusive: composites no filter at all | 33 ms, software raster, meaningless |
 | Firefox 151 (Playwright) | Headed and headless | Not obtained | Browser fails to start on this host: GPU helper failure headed, `RenderCompositorSWGL failed mapping default framebuffer` headless |
+| Firefox 141.0.3 (stock, `/Applications/Firefox.app`) | Four routes attempted 2026-07-27, see below | Not obtained | Not obtained |
+
+### Firefox retry, 2026-07-27
+
+A real Firefox 141.0.3 is installed on this host, so the verdict was attempted
+again. Every non-interactive route is closed, and the reasons are host
+capability rather than the web platform:
+
+| Route | Outcome |
+| --- | --- |
+| Playwright 1.61.1 `firefox` with `channel: 'moz-firefox'` (WebDriver BiDi against the stock build), headed | Hangs at `launch()`; killed at 180 s with no page |
+| Headed launch plus desktop capture | macOS Screen Recording permission is not granted to this process: the computer tool returns `DESKTOP_PERMISSION_DENIED` and `screencapture` returns `could not create image from display` |
+| `firefox --headless --screenshot` | Same SWGL failure as the Playwright build: `RenderCompositorSWGL failed mapping default framebuffer`, no PNG written |
+| `firefox --remote-debugging-port 9223` | Process starts headed but never opens the BiDi listener, so no `browsingContext.captureScreenshot` |
+
+The page itself loads and renders in a headed window (`demo/backdrop-clip-spike.html`
+served from the demo dev server), so the only missing piece is a way to read
+pixels back. `todo.liquid-glass-firefox-verify` therefore stays `blocked`, and
+the blocker is now precise: it needs either Screen Recording permission granted
+to the agent process, or a human to look at the window and report whether the
+frost is blob-shaped or rectangular.
 
 An earlier vsync-locked Chrome run reported 8.33 ms for every mode including the
 no-filter baseline, which establishes only that the effect fits inside a frame.
