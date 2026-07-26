@@ -432,6 +432,24 @@ describe('bakeFeatureMasks and bakeThickness', () => {
     expect(() => bakeThickness(mesh)).not.toThrow();
     expect(mesh.geometry.attributes.aThickness).toBeUndefined();
   });
+
+  it('fills a plain aThickness attribute a rig brought with it, without throwing', () => {
+    // `bakeFeatureMasks` declares the mask as one channel of an interleaved
+    // buffer, and the bake used to flag the upload through `attr.data`. A rig
+    // that ships its own `aThickness` as an ordinary accessor is legal glTF
+    // and has no `.data`, which threw on mount. Degrade, do not throw.
+    const geometry = makeNearestHitProbe();
+    const count = geometry.attributes.position?.count ?? 0;
+    const plain = new THREE.BufferAttribute(new Float32Array(count), 1);
+    geometry.setAttribute('aThickness', plain);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());
+
+    expect(() => bakeThickness(mesh)).not.toThrow();
+    expect(plain.getX(PROBE_FAR)).toBeCloseTo(1, 5);
+    // `needsUpdate` is a set-only accessor in three; the version counter is
+    // the readable side of the same flag.
+    expect(plain.version).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

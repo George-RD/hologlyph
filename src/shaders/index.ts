@@ -103,6 +103,34 @@ export type { PoolProfile } from './pool';
 // but the engine's own pool reconciler has any use for it, so it is imported
 // from its module directly rather than widened into the shader barrel.
 export type { PoolSurface, PoolSurfaceState, PoolUniforms } from './pool-surface';
+export {
+  INTERIOR_AXIS_SLICES,
+  INTERIOR_DAMPING_RATIO,
+  INTERIOR_DEPTH_MAX,
+  INTERIOR_DEPTH_MIN,
+  INTERIOR_GLYPH_MAX,
+  INTERIOR_MAX_STEP,
+  INTERIOR_REDUCED_DRIFT,
+  INTERIOR_STIFFNESS_LOOSE,
+  INTERIOR_STIFFNESS_RIGID,
+  interiorAxisAt,
+  interiorBodyAxis,
+  interiorDepthDim,
+  interiorDriftTargets,
+  interiorIntegrate,
+  interiorSpring,
+  sampleInteriorSites,
+} from './interior-glyphs';
+export type { InteriorAxis, InteriorSites } from './interior-glyphs';
+// `createInteriorGlyphField` is deliberately NOT re-exported here, for the
+// same reason `createPoolSurface` is not: it is the only part of the field
+// that builds a mesh and a node material, and only the engine's own
+// reconciler has any use for it.
+export type {
+  InteriorGlyphField,
+  InteriorGlyphFieldOptions,
+  InteriorGlyphState,
+} from './interior-glyph-field';
 
 /**
  * Create the VFX engine.

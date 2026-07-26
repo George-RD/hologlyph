@@ -24,6 +24,7 @@ import {
   V_SCALE,
 } from '../src/shaders/materials';
 import { adaptToBackdrop } from '../src/shaders/glass';
+import { INTERIOR_GLYPH_MAX } from '../src/shaders/interior-glyphs';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type { TextSkinEngine } from '../src/contracts';
 
@@ -334,6 +335,10 @@ describe('owner-approved head configuration', () => {
         amount: 0, bias: 0.04, ripple: 1, meniscus: 0.55, contact: 0.7,
         breathe: 0.006, fade: 0.14, tint: '#4f8fbf',
       },
+      interior: {
+        count: 0, size: 0.02, drift: 0.008, inertia: 0.55, depthFade: 0.65,
+        brightness: 0.55, tint: '#9fe7ff',
+      },
       lens: {
         amount: 1, strength: 0.06, recaptureMs: 250,
       },
@@ -342,10 +347,15 @@ describe('owner-approved head configuration', () => {
     // lab-only until the owner approves the look, and at 0 the engine builds
     // no pool at all (dec.liquid-glass-architecture, item 3).
     expect(DEFAULT_HEAD_CONFIG.pool.amount).toBe(0);
+    // `interior.count` is the item 10 gate, and ships at 0 for the same
+    // reason: the field is lab-only until the owner approves the look, and at
+    // 0 the engine samples nothing and adds no draw call.
+    expect(DEFAULT_HEAD_CONFIG.interior.count).toBe(0);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.pool)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.interior)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.lens)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
@@ -365,6 +375,63 @@ describe('owner-approved head configuration', () => {
     expect(merged.pool.tint).toBe(DEFAULT_HEAD_CONFIG.pool.tint);
     expect(merged.pool.ripple).toBe(DEFAULT_HEAD_CONFIG.pool.ripple);
     expect(Object.isFrozen(merged.pool)).toBe(true);
+  });
+
+  it('normalises and freezes the interior block', () => {
+    const merged = normaliseHeadConfig({
+      interior: {
+        count: 9000,
+        size: -1,
+        drift: -0.5,
+        inertia: 4,
+        depthFade: -2,
+        brightness: 6,
+        tint: 'nope',
+      },
+    });
+    // Capped: the sort and the buffer writes are linear in the count.
+    expect(merged.interior.count).toBe(INTERIOR_GLYPH_MAX);
+    expect(merged.interior.size).toBe(0);
+    expect(merged.interior.drift).toBe(0);
+    expect(merged.interior.inertia).toBe(1);
+    expect(merged.interior.depthFade).toBe(0);
+    // The contract says an interior glyph never outshines the surface text.
+    expect(merged.interior.brightness).toBe(1);
+    expect(merged.interior.tint).toBe(DEFAULT_HEAD_CONFIG.interior.tint);
+    expect(Object.isFrozen(merged.interior)).toBe(true);
+  });
+
+  it('takes an integral count, never a fraction of a glyph', () => {
+    expect(normaliseHeadConfig({ interior: { count: 7.9 } }).interior.count).toBe(7);
+    expect(normaliseHeadConfig({ interior: { count: -3 } }).interior.count).toBe(0);
+  });
+
+  it('rejects every non-finite interior value rather than poisoning the field', () => {
+    // `Math.max(0, NaN)` is NaN and `clamp01(NaN)` is NaN. A NaN inertia
+    // reaches the spring, and the integrator reads its own last position, so
+    // the field never recovers even from a later good config.
+    const merged = normaliseHeadConfig({
+      interior: {
+        count: Number.NaN,
+        size: Number.NaN,
+        drift: Number.POSITIVE_INFINITY,
+        inertia: Number.NaN,
+        depthFade: Number.NaN,
+        brightness: Number.NaN,
+      },
+    });
+    for (const value of [
+      merged.interior.count,
+      merged.interior.size,
+      merged.interior.drift,
+      merged.interior.inertia,
+      merged.interior.depthFade,
+      merged.interior.brightness,
+    ]) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
+    expect(merged.interior.inertia).toBe(DEFAULT_HEAD_CONFIG.interior.inertia);
+    expect(merged.interior.count).toBe(DEFAULT_HEAD_CONFIG.interior.count);
   });
 
   it('gates the lens on a bound snapshot, not on lens.amount', () => {

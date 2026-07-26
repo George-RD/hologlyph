@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph interior glyph lab (item 10)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070d;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      #host {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      #holo { width: 100%; height: 100%; display: block; }
+      #panel {
+        position: fixed;
+        top: 0.75rem;
+        left: 0.75rem;
+        width: 20rem;
+        max-height: calc(100vh - 1.5rem);
+        overflow: auto;
+        padding: 0.9rem 1rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.6rem;
+        background: rgba(6, 10, 20, 0.86);
+        backdrop-filter: blur(6px);
+      }
+      #panel h1 { font-size: 1rem; margin: 0 0 0.25rem; }
+      #panel p.sub { margin: 0 0 0.75rem; opacity: 0.65; font-size: 0.8rem; }
+      fieldset {
+        border: 1px solid #1d2740;
+        border-radius: 0.4rem;
+        margin: 0 0 0.7rem;
+        padding: 0.5rem 0.6rem 0.6rem;
+      }
+      legend { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; }
+      label.row {
+        display: grid;
+        grid-template-columns: 6.5rem 1fr 3rem;
+        gap: 0.4rem;
+        align-items: center;
+        margin: 0.2rem 0;
+      }
+      label.row span { font-size: 0.78rem; opacity: 0.85; }
+      label.row output { font-variant-numeric: tabular-nums; font-size: 0.75rem; opacity: 0.7; text-align: right; }
+      input[type='range'] { width: 100%; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+      button {
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 0.35rem;
+        border: 1px solid var(--accent);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: #04121f; font-weight: 600; }
+      #perf {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.78rem;
+        opacity: 0.8;
+        white-space: pre;
+      }
+      label.check { display: flex; gap: 0.4rem; align-items: center; font-size: 0.78rem; }
+    </style>
+  </head>
+  <body>
+    <div id="host"><canvas id="holo"></canvas></div>
+
+    <div id="panel">
+      <h1>interior glyph lab, item 10</h1>
+      <p class="sub">
+        Lab only. Nothing here ships until the look is approved
+        (dec.liquid-glass-architecture, item 10). Glyphs suspended between the
+        near and far surfaces of the glass. Shake the head and watch them drag.
+      </p>
+
+      <fieldset>
+        <legend>field</legend>
+        <label class="row"><span>count</span><input id="count" type="range" min="0" max="512" step="1" value="240" /><output></output></label>
+        <label class="row"><span>size</span><input id="size" type="range" min="0.002" max="0.04" step="0.001" value="0.02" /><output></output></label>
+        <label class="row"><span>drift</span><input id="drift" type="range" min="0" max="0.05" step="0.001" value="0.008" /><output></output></label>
+        <label class="row"><span>inertia</span><input id="inertia" type="range" min="0" max="1" step="0.01" value="0.55" /><output></output></label>
+        <label class="row"><span>depth fade</span><input id="depthFade" type="range" min="0" max="1" step="0.01" value="0.65" /><output></output></label>
+        <label class="row"><span>brightness</span><input id="brightness" type="range" min="0" max="1" step="0.01" value="0.55" /><output></output></label>
+        <label class="row"><span>tint</span><input id="tint" type="color" value="#9fe7ff" /><output></output></label>
+        <div class="buttons">
+          <button type="button" id="fieldOff">field off</button>
+          <button type="button" id="fieldOn" class="primary">field on</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>surface</legend>
+        <p class="sub" style="margin: 0 0 0.4rem">
+          Turn the skin down to see the field on its own; turn it back up to
+          judge whether the field competes with the surface text.
+        </p>
+        <label class="row"><span>skin opacity</span><input id="baseOpacity" type="range" min="0" max="0.6" step="0.005" value="0.075" /><output></output></label>
+        <label class="row"><span>glass</span><input id="glassAmount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>camera</legend>
+        <label class="row"><span>height</span><input id="camY" type="range" min="-0.6" max="1.2" step="0.01" value="0.2" /><output></output></label>
+        <label class="row"><span>distance</span><input id="camZ" type="range" min="0.6" max="4" step="0.05" value="1.5" /><output></output></label>
+        <label class="row"><span>orbit</span><input id="camYaw" type="range" min="-1.6" max="1.6" step="0.01" value="0" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>scenario</legend>
+        <div class="buttons">
+          <button type="button" id="shake">shake</button>
+          <button type="button" id="nod">nod</button>
+          <button type="button" id="speak">speak</button>
+          <button type="button" id="jaw">jaw open</button>
+        </div>
+        <p class="sub" style="margin: 0.4rem 0 0.2rem">
+          Hold yaw writes straight at the rig, so it only bites with procedural
+          motion frozen. The motion engine rewrites the head rotation from its
+          own base pose on every update otherwise.
+        </p>
+        <label class="row"><span>hold yaw</span><input id="holdYaw" type="range" min="-1" max="1" step="0.01" value="0" /><output></output></label>
+        <label class="check"><input id="frozen" type="checkbox" /> freeze procedural motion</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>frame time</legend>
+        <div id="perf">warming up</div>
+      </fieldset>
+    </div>
+
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
+
+      const canvas = document.getElementById('holo');
+      const host = document.getElementById('host');
+      const engine = createEngine();
+      // Lab-only debug handle, the same one the other demo pages expose.
+      window.__hologlyphEngine = engine;
+
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, host);
+
+      function resize() {
+        engine.resize(host.clientWidth, host.clientHeight);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // --- camera ------------------------------------------------------
+      // Closer than the shipped framing: the field is a hint of depth, and at
+      // the default distance a few hundred sprites of 0.012 units are too
+      // small to judge.
+      const camera = engine.sysRenderer.camera;
+      const cam = { y: 0.2, z: 1.5, yaw: 0 };
+      const LOOK_Y = 0.15;
+      function applyCamera() {
+        camera.position.set(cam.z * Math.sin(cam.yaw), cam.y, cam.z * Math.cos(cam.yaw));
+        camera.lookAt(0, LOOK_Y, 0);
+      }
+      applyCamera();
+
+      // --- field config --------------------------------------------------
+      const interior = {
+        count: 240,
+        size: 0.02,
+        drift: 0.008,
+        inertia: 0.55,
+        depthFade: 0.65,
+        brightness: 0.55,
+        tint: '#9fe7ff',
+      };
+      function pushInterior() {
+        engine.vfx.setHeadConfig({ interior: { ...interior } });
+      }
+
+      const surface = { base: 0.075, glass: 1 };
+      function pushSurface() {
+        engine.vfx.setHeadConfig({
+          skin: { opacity: { base: surface.base }, glass: { amount: surface.glass } },
+        });
+      }
+
+      function bindRange(id, key, target, after) {
+        const input = document.getElementById(id);
+        const out = input.parentElement.querySelector('output');
+        const sync = () => {
+          const value = input.type === 'color' ? input.value : Number(input.value);
+          target[key] = value;
+          out.textContent = input.type === 'color' ? '' : value.toFixed(3);
+          after();
+        };
+        input.addEventListener('input', sync);
+        sync();
+      }
+
+      for (const key of ['count', 'size', 'drift', 'inertia', 'depthFade', 'brightness', 'tint']) {
+        bindRange(key, key, interior, pushInterior);
+      }
+      bindRange('baseOpacity', 'base', surface, pushSurface);
+      bindRange('glassAmount', 'glass', surface, pushSurface);
+      bindRange('camY', 'y', cam, applyCamera);
+      bindRange('camZ', 'z', cam, applyCamera);
+      bindRange('camYaw', 'yaw', cam, applyCamera);
+
+      const countInput = document.getElementById('count');
+      function setCount(value) {
+        countInput.value = String(value);
+        countInput.dispatchEvent(new Event('input'));
+      }
+      document.getElementById('fieldOff').addEventListener('click', () => setCount(0));
+      document.getElementById('fieldOn').addEventListener('click', () => setCount(240));
+
+      // --- scenarios ------------------------------------------------------
+      // `setHeadTarget` is the library seam and it is smoothed, which is
+      // exactly the input the field should be judged against: a real head
+      // turn, not a teleport.
+      document.getElementById('shake').addEventListener('click', () => {
+        const steps = [0.55, -0.55, 0.4, -0.35, 0.15, 0];
+        steps.forEach((yaw, i) => {
+          setTimeout(() => engine.motion.setHeadTarget(yaw, 0), i * 130);
+        });
+      });
+      document.getElementById('nod').addEventListener('click', () => {
+        engine.motion.triggerNod('agree');
+      });
+      document.getElementById('speak').addEventListener('click', () => {
+        void engine.speak('There is text inside this head, and it is floating.');
+      });
+
+      let jawOpen = false;
+      const jawBtn = document.getElementById('jaw');
+      jawBtn.addEventListener('click', () => {
+        jawOpen = !jawOpen;
+        engine.avatar?.setMorph('jaw_open', jawOpen ? 1 : 0);
+        jawBtn.textContent = jawOpen ? 'jaw close' : 'jaw open';
+      });
+
+      // Held yaw, written straight at the rig. Only meaningful with procedural
+      // motion frozen, because the motion engine rewrites the head rotation
+      // from its own base pose on every update otherwise. This is what the
+      // smoke script drives: a step the field has to chase, with nothing else
+      // in the frame moving.
+      const hold = { yaw: 0 };
+      function applyHold() {
+        const head = engine.avatar?.bones?.head;
+        if (head) head.rotation.y = hold.yaw;
+      }
+      bindRange('holdYaw', 'yaw', hold, applyHold);
+
+      const frozen = document.getElementById('frozen');
+      frozen.addEventListener('change', () => {
+        engine.setMotionFrozen(frozen.checked);
+        if (frozen.checked) applyHold();
+      });
+
+      window.__interiorLab = {
+        setInterior(next) {
+          Object.assign(interior, next);
+          pushInterior();
+        },
+        setYaw(yaw) {
+          hold.yaw = yaw;
+          applyHold();
+        },
+        /**
+         * Pin everything that moves by itself. The text skin's row flow is a
+         * GPU UV scroll that never stops, so two captures of an untouched page
+         * differ by the whole glyph grid; zeroing the speed is what makes a
+         * pixel comparison mean anything.
+         */
+        pinPose() {
+          engine.setMotionFrozen(true);
+          engine.sysTextSkin?.setScrollSpeed(0);
+          engine.eyeTextSkin?.setScrollSpeed(0);
+          const avatar = engine.avatar;
+          if (!avatar) return false;
+          for (const bone of Object.values(avatar.bones ?? {})) {
+            bone.rotation.set(0, 0, 0);
+          }
+          hold.yaw = 0;
+          avatar.root.traverse((object) => {
+            if (object.morphTargetInfluences) object.morphTargetInfluences.fill(0);
+          });
+          return true;
+        },
+      };
+
+      // --- frame time -------------------------------------------------------
+      // The field is one draw call and a CPU pass linear in `count`. Read the
+      // cost straight off the page: move `count` between 0 and 512 and watch
+      // the mean and the 95th percentile.
+      const perf = document.getElementById('perf');
+      const WINDOW = 240;
+      const samples = [];
+      let last = 0;
+      function tick(now) {
+        if (last) {
+          samples.push(now - last);
+          if (samples.length > WINDOW) samples.shift();
+        }
+        last = now;
+        if (samples.length === WINDOW && now % 500 < 20) {
+          const sorted = [...samples].sort((a, b) => a - b);
+          const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+          const p95 = sorted[Math.floor(sorted.length * 0.95)];
+          perf.textContent = `mean ${mean.toFixed(2)} ms\np95  ${p95.toFixed(2)} ms\nn    ${samples.length}`;
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

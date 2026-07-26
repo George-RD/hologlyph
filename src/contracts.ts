@@ -409,6 +409,51 @@ export interface HeadPoolConfig {
 }
 
 /**
+ * Sparse glyphs suspended inside the glass (`dec.liquid-glass-architecture`,
+ * item 10). A few hundred camera-facing sprites sampling cells of the same
+ * text-skin canvas the surface samples, placed in the interior volume by the
+ * baked thickness field and dragged off course when the head moves.
+ *
+ * The point is to make the block read as full of text rather than coated in
+ * it, so the field is deliberately sparse and deliberately dim: it is a hint
+ * of depth, not a second face and not a snow globe.
+ *
+ * `count` is a hard gate, not a fade: at 0 nothing is sampled, nothing is
+ * allocated and no object joins the scene, so the shipped configuration is
+ * reproduced exactly.
+ */
+export interface HeadInteriorConfig {
+  /** Glyphs to suspend, capped at `INTERIOR_GLYPH_MAX`. 0 builds nothing. */
+  readonly count: number;
+  /** Sprite half-size in world units. The bust is about 1 unit tall. */
+  readonly size: number;
+  /**
+   * Slow drift amplitude in world units, so the field never looks frozen
+   * while the head is still. Damped under a reduced-motion preference.
+   */
+  readonly drift: number;
+  /**
+   * How far the glyphs lag the head, in [0,1]. 0 pins them to the rig
+   * exactly; 1 leaves them wallowing seconds behind a turn. Reduced motion
+   * forces 0, because the lag IS the shake response.
+   */
+  readonly inertia: number;
+  /**
+   * Share of brightness lost between the nearest and the farthest glyph in
+   * the field. This is what makes the cloud read as depth rather than as
+   * confetti spread across one plane.
+   */
+  readonly depthFade: number;
+  /**
+   * Peak brightness as a fraction of the sampled canvas glyph. Clamped to 1
+   * so an interior glyph can never outshine the surface text it sits behind.
+   */
+  readonly brightness: number;
+  /** Hex tint of the suspended glyphs. */
+  readonly tint: string;
+}
+
+/**
  * Opt-in true lensing of a host-named subtree (`dec.liquid-glass-architecture`,
  * rung 3, item 4). No browser API hands rendered page pixels to WebGL, so the
  * only cross-engine route to per-pixel refraction is to rasterise a subtree
@@ -491,6 +536,7 @@ export interface HeadConfig {
   readonly skin: HeadSkinConfig;
   readonly eyes: HeadEyeConfig;
   readonly pool: HeadPoolConfig;
+  readonly interior: HeadInteriorConfig;
   readonly lens: HeadLensConfig;
 }
 
@@ -505,6 +551,7 @@ export type HeadConfigOverrides = {
   };
   eyes?: Partial<HeadEyeConfig>;
   pool?: Partial<HeadPoolConfig>;
+  interior?: Partial<HeadInteriorConfig>;
   lens?: Partial<HeadLensConfig>;
 };
 
@@ -578,6 +625,18 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     breathe: 0.006,
     fade: 0.14,
     tint: '#4f8fbf',
+  }),
+  // Every non-zero value here is a lab starting point, not an approved look.
+  // `count: 0` is what ships, so none of them is reached until somebody moves
+  // the slider.
+  interior: Object.freeze({
+    count: 0,
+    size: 0.02,
+    drift: 0.008,
+    inertia: 0.55,
+    depthFade: 0.65,
+    brightness: 0.55,
+    tint: '#9fe7ff',
   }),
   // A source element is the hard gate, not this number: with nothing named to
   // rasterise the engine binds no texture and the materials evaluate the

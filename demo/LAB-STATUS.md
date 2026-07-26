@@ -1,28 +1,54 @@
 # Next unit of work
 
-Updated 2026-07-26 after `liquid-glass-snapshot-lens` landed (item 4 of
-`dec.liquid-glass-architecture`).
+Updated 2026-07-26 after `liquid-glass-interior-glyphs` landed (item 10 of
+`dec.liquid-glass-architecture`), which was the last item that was both open
+and unblocked.
 
-**Start here: `meta/todos/todo.liquid-glass-chromium-lens.md`** (Order 5, node
-`hologlyph.runtime.renderer`). `cairn brief` happens to agree this time, but it
-agrees by accident: it orders todos alphabetically, and the `Order N` line in
-each todo is what is authoritative.
+**There is no next todo. `cairn brief` will hand you nothing, and that is
+correct.** Every remaining item in the liquid-glass programme is `blocked`,
+and every one of them is blocked on the same thing.
 
-Read it with your eyes open, though. Item 5 is the Chromium half of rung 3 and
-the decision says outright that it must never be load-bearing: it is
-Chromium-only, behind a flag, on an origin trial that expires at Chrome 150,
-and it cannot see the page behind our canvas at all, only immediate children of
-it. The measurements are already done in
-`meta/research/res.dom-backdrop-capture.md` and the spike is committed at
-`demo/html-in-canvas-spike.html`; the work is a capability check and a
-detected-only path, not an investigation.
+**Start here: get the owner in front of the three labs.** Three features now
+ship gated off because nobody has judged them:
 
-**The higher-value move, if the owner is available, is a look session on the
-two labs.** Two features now ship gated off because nobody has judged them:
-`pool.amount` at 0 (`demo/pool-lab.html`) and the snapshot lens with no source
-named (`demo/lens-lab.html`). A ruling on the pool unblocks items 7
-`stage-participants` and 8 `fluidity-driver`, which are far more of the liquid
-programme than item 5 is. Say so rather than grinding through the order.
+- `demo/pool-lab.html`, `pool.amount` at 0 (item 3).
+- `demo/lens-lab.html`, the snapshot lens with no source named (item 4), plus
+  `demo/live-lens-lab.html` for the Chromium half (item 5).
+- `demo/interior-glyph-lab.html`, `interior.count` at 0 (item 10).
+
+Serve them with `bun run dev` and open the paths directly; none of the three is
+in `demo/vite.config.ts`, so none is deployed.
+
+A ruling on the pool is the one that pays: it unblocks item 7
+`stage-participants` and item 8 `fluidity-driver`, which are most of what is
+left of the programme. Item 6 additionally needs
+`todo.liquid-glass-firefox-verify`, which needs a host where the Firefox
+Playwright build actually starts, and this one does not.
+
+If the owner is not available, the honest options are, in order:
+
+1. `todo.liquid-glass-firefox-verify` on a machine where Firefox starts. It is
+   the only blocker in the programme that is not a taste call.
+2. The three non-liquid follow-ups at the bottom of this file
+   (`todo.lab-control-refinements`, `todo.background-adaptive-look`,
+   `todo.textskin-port-owner-config`).
+3. Say the programme is owner-blocked and stop, rather than starting item 7 or
+   8 against a look nobody has approved.
+
+What item 10 leaves you, beyond what is in
+`meta/changes/archive/2026-07-26-liquid-glass-interior-glyphs/implementation-notes.md`:
+
+- **Nobody has watched the interior field move either.** The lag is measured on
+  the field's centroid, not judged: a 0.7 rad yaw step leaves it 0.0347 units
+  behind out of 0.0354 of travel, and it settles after about 6 s. Whether that
+  READS as text floating in fluid is unanswered. Shake it in the lab.
+- **The useful size range is narrow.** `interior.size` at 0.012 is texture, at
+  0.045 it is a competing second layer of text. 0.02 is the current default and
+  it was picked by eye in the lab, not derived.
+- **The field is subtle head on and obvious in three-quarter view**, because
+  that is where the skin is thin enough to see through. Judge both.
+
+Item 10 also leaves a lab and a capture, listed with the rest below.
 
 Three follow-ups the snapshot-lens change deliberately left open:
 
@@ -178,6 +204,20 @@ this file tracks their purpose and what remains owner-session-only.
   path contributes nothing), an untouched page outside the silhouette,
   reachable and unreachable controls, and a clean fall-through to the snapshot
   lens with the flag off. Needs a real Chrome; nothing in CI runs it.
+- `demo/interior-glyph-lab.html` plus `tools/smoke/interior-glyph-shot.mjs` -
+  item 10: glyphs suspended inside the glass, with live controls for every
+  field of `HeadInteriorConfig`, a skin-opacity and glass pair for looking at
+  the field on its own, a closer camera than the shipped framing (a few
+  hundred sprites of 0.02 units are too small to judge at 2.4 units out), a
+  shake and a nod scenario, a held-yaw slider that works with procedural
+  motion frozen, and a frame-time readout. `window.__interiorLab` exposes
+  `setInterior`, `setYaw` and `pinPose` for the smoke script. Dev-only,
+  deliberately absent from `demo/vite.config.ts`. The smoke script measures a
+  silhouette floor, a noise floor, engagement split inside and outside the
+  silhouette, exact inertness back at `count: 0`, the lag after a yaw step
+  with a rigid `inertia: 0` control, and reduced motion removing that lag.
+  `interior.count` ships at 0: the look is not owner-approved yet, and nobody
+  has watched it move.
 
 ## Where the approved look lives
 

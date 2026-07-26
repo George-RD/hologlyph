@@ -32,6 +32,7 @@ System Library "Web-native text-skinned talking-head library" id "hologlyph" {
             path "./test/evals-ghosting.test.ts"
             path "./test/shaders-glass.test.ts"
             path "./test/shaders-pool.test.ts"
+            path "./test/shaders-interior.test.ts"
             contract "meta/contracts/shaders.md"
         }
         Module Motion "MotionEngine: blendshapes, gaze/saccades, gestures" id "hologlyph.runtime.motion" {
