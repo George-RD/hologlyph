@@ -375,6 +375,39 @@ export interface SkinBackdropConfig {
   readonly auto: boolean;
 }
 
+/**
+ * Tier 1 liquid surface (`dec.liquid-glass-architecture`): the pool the bust
+ * emerges from. A damped height field simulated on the GPU, an analytic
+ * meniscus where the body crosses the waterline, and a bounded outward
+ * breathe on the shell itself.
+ *
+ * `amount` is a hard gate, not a fade: at 0 the engine builds no pool objects,
+ * allocates no render targets and leaves every material graph evaluating to
+ * the shipped look, so the approved configuration is reproduced exactly.
+ */
+export interface HeadPoolConfig {
+  /** Master mix; 0 builds no pool at all and is the shipped default. */
+  readonly amount: number;
+  /**
+   * Rest height of the surface above the waterline, world units. The global
+   * clip plane discards everything below world Y 0, so this bias is also the
+   * bound on how far a trough may travel down before it would be clipped.
+   */
+  readonly bias: number;
+  /** Ring-wave amplitude injected per unit of scroll or emergence drive. */
+  readonly ripple: number;
+  /** Meniscus pull-up at the contact contour, as a fraction of `bias`. */
+  readonly meniscus: number;
+  /** Brightness of the bright contact ring at the contour. */
+  readonly contact: number;
+  /** Outward-only shell breathe amplitude, world units. */
+  readonly breathe: number;
+  /** Height of the band above the waterline over which internals fade out. */
+  readonly fade: number;
+  /** Hex body tint of the water. */
+  readonly tint: string;
+}
+
 export interface HeadSkinConfig {
   readonly opacity: SkinOpacityConfig;
   readonly shading: SkinShadingConfig;
@@ -399,6 +432,7 @@ export interface HeadEyeConfig {
 export interface HeadConfig {
   readonly skin: HeadSkinConfig;
   readonly eyes: HeadEyeConfig;
+  readonly pool: HeadPoolConfig;
 }
 
 export type HeadConfigOverrides = {
@@ -411,6 +445,7 @@ export type HeadConfigOverrides = {
     backdrop?: Partial<SkinBackdropConfig>;
   };
   eyes?: Partial<HeadEyeConfig>;
+  pool?: Partial<HeadPoolConfig>;
 };
 
 export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
@@ -473,6 +508,16 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     irisSize: 0.43,
     irisColor: '#d78bf8',
     scleraColor: '#e1edf9',
+  }),
+  pool: Object.freeze({
+    amount: 0,
+    bias: 0.04,
+    ripple: 1,
+    meniscus: 0.55,
+    contact: 0.7,
+    breathe: 0.006,
+    fade: 0.14,
+    tint: '#4f8fbf',
   }),
 });
 

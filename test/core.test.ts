@@ -24,6 +24,7 @@ import type {
   Expression,
   HeadConfig,
   HeadConfigOverrides,
+  HeadPoolConfig,
   LoadedAvatar,
   GazeMode,
   MotionEngine,
@@ -69,10 +70,12 @@ interface FakeTextSkin extends TextSkinEngine {
   updateCalls: number;
   reduced: boolean | undefined;
 }
-interface FakeVfx extends VFXEngine {
+interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
   disposeCount: number;
   emergenceValue: number;
   reduced: boolean;
+  /** Writable here so a test can place the waterline anywhere on the rig. */
+  rootOffsetY: number;
   _headConfig: HeadConfig;
   headConfigCalls: HeadConfigOverrides[];
   setReducedMotion(reduce: boolean): void;
@@ -91,6 +94,15 @@ interface FakeAsset extends AssetLoader {
   attachRendererCalls: unknown[];
 }
 
+interface FakePool {
+  object: THREE.Object3D;
+  configs: HeadPoolConfig[];
+  updates: { dt: number; rootOffsetY: number; waterlineRadius: number; drive: number }[];
+  disposeCount: number;
+  setConfig(config: HeadPoolConfig): void;
+  update(dt: number, state: { rootOffsetY: number; waterlineRadius: number; drive: number }): void;
+  dispose(): void;
+}
 interface Registry {
   behavior: FakeBehavior[];
   motion: FakeMotion[];
@@ -100,6 +112,7 @@ interface Registry {
   vfx: FakeVfx[];
   renderer: FakeRenderer[];
   asset: FakeAsset[];
+  pool: FakePool[];
 }
 
 // --- Shared helpers + per-subsystem instance registry ----------------------
@@ -149,6 +162,7 @@ const h = vi.hoisted(() => {
     vfx: [],
     renderer: [],
     asset: [],
+    pool: [],
   };
 
    return { makeEmitter, buildAdapter, registry, demoAdapter: undefined as TTSAdapter | undefined, avatarOverride: undefined as LoadedAvatar | undefined, skinMaterialOverride: null as THREE.Material | null };
@@ -314,7 +328,13 @@ vi.mock('../src/text-skin', () => ({
   },
 }));
 
-vi.mock('../src/shaders', () => ({
+vi.mock('../src/shaders', async () => ({
+  // The pool maths is pure and imports nothing GPU-shaped, so the fake uses
+  // the real functions: a stubbed profile would let the engine's waterline
+  // wiring pass while being wrong. The import is dynamic because `vi.mock`
+  // factories are hoisted above every top-level import in the file, so a
+  // static binding is not in scope here.
+  ...(await import('../src/shaders/pool')),
   createVFXEngine() {
     const vfx: FakeVfx = {
       emergenceValue: 0,
@@ -349,6 +369,7 @@ vi.mock('../src/shaders', () => ({
             backdrop: { ...this._headConfig.skin.backdrop, ...config.skin?.backdrop },
           },
           eyes: { ...this._headConfig.eyes, ...config.eyes },
+          pool: { ...this._headConfig.pool, ...config.pool },
         };
       },
       setEmergence(p: number) {
@@ -368,6 +389,30 @@ vi.mock('../src/shaders', () => ({
   },
   buildEyeballMaterial() {
     return { material: { isEyeball: true, dispose() {} } as unknown as THREE.Material };
+  },
+}));
+
+// The engine loads the pool's GPU half as its own chunk, so the mock has to
+// sit on that specifier, not on the `../src/shaders` barrel.
+vi.mock('../src/shaders/pool-surface', () => ({
+  createPoolSurface(_renderer: unknown, config: HeadPoolConfig) {
+    const pool: FakePool = {
+      object: new THREE.Group(),
+      configs: [config],
+      updates: [],
+      disposeCount: 0,
+      setConfig(next: HeadPoolConfig) {
+        this.configs.push(next);
+      },
+      update(dt, state) {
+        this.updates.push({ dt, ...state });
+      },
+      dispose() {
+        this.disposeCount++;
+      },
+    };
+    h.registry.pool.push(pool);
+    return pool;
   },
 }));
 
@@ -1185,5 +1230,165 @@ describe('glass body draw order', () => {
     expect(mouthMat.transparent).toBe(true);
 
     engine.dispose();
+  });
+});
+
+describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => {
+  // The shared registry is never cleared between suites, so a stale entry
+  // from a neighbouring test would satisfy `at(-1)` before this engine has
+  // built anything.
+  beforeEach(() => {
+    h.registry.pool.length = 0;
+  });
+
+  /** A bust-shaped body whose radius pinches at the neck. */
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const positions: number[] = [];
+    const ring = (radius: number, y: number) => {
+      for (let s = 0; s < 16; s++) {
+        const a = (s / 16) * Math.PI * 2;
+        positions.push(Math.cos(a) * radius, y, Math.sin(a) * radius);
+      }
+    };
+    for (let i = 0; i <= 8; i++) ring(0.6, (i / 8) * 0.6);
+    for (let i = 0; i <= 4; i++) ring(0.15, 0.6 + (i / 4) * 0.4);
+    for (let i = 0; i <= 8; i++) ring(0.5, 1.0 + (i / 8) * 0.8);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  async function mountBust(): Promise<{ engine: ReturnType<typeof createEngine> }> {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    return { engine };
+  }
+
+  /** Turn the pool on and run the frame that reconciles it into the scene. */
+  function enablePool(engine: ReturnType<typeof createEngine>, time = 16): FakePool {
+    engine.vfx.setHeadConfig({ pool: { amount: 1 } });
+    rafCb?.(time);
+    const pool = h.registry.pool.at(-1);
+    if (!pool) throw new Error('pool was not built');
+    return pool;
+  }
+
+  it('builds nothing at amount 0 and tears the pool back down when it returns', async () => {
+    const { engine } = await mountBust();
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    rafCb?.(16);
+    rafCb?.(32);
+    expect(h.registry.pool).toHaveLength(0);
+
+    const pool = enablePool(engine, 48);
+    expect(scene.children).toContain(pool.object);
+
+    engine.vfx.setHeadConfig({ pool: { amount: 0 } });
+    rafCb?.(64);
+    expect(pool.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(pool.object);
+    // Torn down, not hidden: the shipped configuration must not hold a pair of
+    // render targets alive for a surface nobody can see.
+    expect(h.registry.pool).toHaveLength(1);
+
+    engine.dispose();
+  });
+
+  it('builds the pool once and pushes config only when it changes', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+    const pushes = pool.configs.length;
+    for (let i = 0; i < 20; i++) rafCb?.(2000 + 16 * i);
+    expect(h.registry.pool).toHaveLength(1);
+    // The reconciler runs every frame; re-pushing an unchanged config would
+    // reparse the tint hex sixty times a second for nothing.
+    expect(pool.configs.length).toBe(pushes);
+
+    engine.vfx.setHeadConfig({ pool: { tint: '#123456' } });
+    rafCb?.(3000);
+    expect(pool.configs.length).toBe(pushes + 1);
+    expect(pool.configs.at(-1)?.tint).toBe('#123456');
+
+    engine.dispose();
+  });
+
+  it('feeds the waterline radius from the rig, not from a constant', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    const pool = enablePool(engine);
+
+    // Settled: the base sits on the plane, so the widest part is in the water.
+    vfx.rootOffsetY = 0;
+    rafCb?.(4000);
+    expect(pool.updates.at(-1)!.waterlineRadius).toBeGreaterThan(0.5);
+
+    // Mid-emergence: the neck is on the plane, so the hole pinches.
+    vfx.rootOffsetY = -0.8;
+    rafCb?.(4016);
+    expect(pool.updates.at(-1)!.waterlineRadius).toBeLessThan(0.3);
+
+    engine.dispose();
+  });
+
+  it('drives ripples from scroll travel and consumes it once', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+
+    // Several calls between frames accumulate as distance covered, not as the
+    // last hop, so a host that streams scroll events is not under-reported.
+    engine.setScrollProgress(0.2);
+    engine.setScrollProgress(0.5);
+    rafCb?.(4000);
+    expect(pool.updates.at(-1)!.drive).toBeGreaterThan(0);
+
+    // Travel is consumed by the frame that used it.
+    rafCb?.(4016);
+    expect(pool.updates.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('drops a non-finite scroll progress instead of poisoning the field', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+
+    // `clamp01(NaN)` is NaN, and one NaN texel spreads across the whole height
+    // field within a second and never decays.
+    engine.setScrollProgress(Number.NaN);
+    engine.setScrollProgress(Number.POSITIVE_INFINITY);
+    rafCb?.(4000);
+    expect(Number.isFinite(pool.updates.at(-1)!.drive)).toBe(true);
+    expect(pool.updates.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('disposes the pool with the engine', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    engine.dispose();
+    expect(pool.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(pool.object);
   });
 });

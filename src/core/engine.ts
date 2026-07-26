@@ -25,6 +25,7 @@ import type {
   EngineOptions,
   Expression,
   LoadedAvatar,
+  HeadPoolConfig,
   MotionEngine,
   RendererHost,
   SpeechEngine,
@@ -43,7 +44,16 @@ import { createRendererHost } from '../renderer';
 import { createSpeechEngine } from '../speech/engine';
 import { createDemoTTSAdapter } from '../speech/adapters/demo';
 import { createTextSkinEngine } from '../text-skin';
-import { createVFXEngine, buildEyeballMaterial } from '../shaders';
+import {
+  createVFXEngine,
+  buildEyeballMaterial,
+  poolRadialProfile,
+  poolRippleDrive,
+  poolWaterlineRadius,
+  type PoolProfile,
+  type PoolSurface,
+} from '../shaders';
+import { createPoolSurface } from '../shaders/pool-surface.js';
 import { createEmitter } from './emitter.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
 import { resolveBackdropColor } from './backdrop.js';
@@ -198,6 +208,23 @@ class EngineImpl implements Engine {
   private motionFrozen = false;
   private observed = false;
   private reducedMotionMql: MediaQueryList | null = null;
+  private reducedMotion = false;
+
+  /**
+   * Tier 1 pool (dec.liquid-glass-architecture, item 3). Built the first frame
+   * `pool.amount` goes above 0 and torn straight back down when it returns to
+   * 0, so the shipped configuration allocates no render targets and adds no
+   * draw call.
+   */
+  private pool: PoolSurface | null = null;
+  /** Last pool config pushed to the surface; null forces the next write. */
+  private appliedPoolConfig: HeadPoolConfig | null = null;
+  /** Radial profile of the loaded body; says how wide the hole in the water is. */
+  private poolProfile: PoolProfile | null = null;
+  /** Scroll travel accumulated since the last frame consumed it. */
+  private scrollTravel = 0;
+  private scrollProgress = 0;
+  private lastEmergence = 0;
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -326,7 +353,19 @@ class EngineImpl implements Engine {
   }
 
   setScrollProgress(progress: number): void {
-    this.sysBehavior.setScrollProgress(progress);
+    // Accumulate travel rather than sampling position: a host may call this
+    // several times between frames, and the pool wants the distance covered,
+    // not the last hop.
+    //
+    // Non-finite input is dropped rather than clamped. `clamp01(NaN)` is NaN,
+    // and a host dividing by a zero-height container produces exactly that;
+    // once NaN reaches the height field the Laplacian spreads it to every
+    // texel and the pool never recovers, with nothing logged anywhere.
+    if (!Number.isFinite(progress)) return;
+    const clamped = clamp01(progress);
+    this.scrollTravel += Math.abs(clamped - this.scrollProgress);
+    this.scrollProgress = clamped;
+    this.sysBehavior.setScrollProgress(clamped);
   }
 
   setTextSkinSource(source: TextSkinSource): void {
@@ -361,6 +400,12 @@ class EngineImpl implements Engine {
     this.sysTextSkin.dispose();
     this.eyeTextSkin.dispose();
     this.disposeOverlayMeshes();
+    if (this.pool) {
+      this.sysRenderer.scene.remove(this.pool.object);
+      this.pool.dispose();
+      this.pool = null;
+    }
+    this.poolProfile = null;
     if (this.avatar) {
       this.sysRenderer.scene.remove(this.avatar.root);
       this.avatar.dispose();
@@ -621,7 +666,70 @@ class EngineImpl implements Engine {
       }
     });
 
+    // The pool needs to know how wide the hole in the water is at every
+    // emergence, and that is a property of the rig, not a constant: a
+    // replacement bust must not silently inherit the shipped one's waterline.
+    // Bind-pose positions are enough. Emergence moves the body through the
+    // plane but never rotates it, and the breathe is millimetric.
+    //
+    // Read through `getX/getY/getZ`, not off `.array`: a meshopt-compressed
+    // GLB hands back an interleaved, quantised attribute whose raw buffer is
+    // neither a flat XYZ stream nor in model units, and the profile would
+    // silently describe a body nobody has.
+    const profileSource = bodyMesh?.geometry.attributes.position;
+    if (profileSource) {
+      const flat = new Float32Array(profileSource.count * 3);
+      for (let i = 0; i < profileSource.count; i++) {
+        flat[i * 3] = profileSource.getX(i);
+        flat[i * 3 + 1] = profileSource.getY(i);
+        flat[i * 3 + 2] = profileSource.getZ(i);
+      }
+      this.poolProfile = poolRadialProfile(flat);
+    } else {
+      this.poolProfile = null;
+    }
+
     this.applyGlassLayering();
+  }
+
+  /**
+   * Build or tear down the tier 1 pool to match `pool.amount`.
+   *
+   * A gate, not a fade: at 0 there is no pool object, no render target pair
+   * and no extra draw, so the approved look costs exactly what it did before
+   * this change. Reconciled from the live config every frame for the same
+   * reason `applyGlassLayering` is: `engine.vfx.setHeadConfig` is a public
+   * surface that renders nothing itself.
+   *
+   * Loaded statically. A lazy chunk was built and measured: it moved only
+   * 0.9 kB gzip off the first-load path, because rollup hoists everything the
+   * chunk shares with the entry into a third file, and it split
+   * `dist/hologlyph.js` into a stub plus that shared chunk. Not worth an
+   * asynchronous build path and its three race windows for 0.9 kB.
+   */
+  private applyPoolLayer(): void {
+    const config = this.sysVfx.headConfig.pool;
+    const want = config.amount > 0;
+    if (!want) {
+      if (this.pool) {
+        this.sysRenderer.scene.remove(this.pool.object);
+        this.pool.dispose();
+        this.pool = null;
+      }
+      return;
+    }
+    if (!this.pool) {
+      this.pool = createPoolSurface(this.sysRenderer.gpuRenderer, config);
+      this.sysRenderer.scene.add(this.pool.object);
+      this.appliedPoolConfig = config;
+      return;
+    }
+    // `normaliseHeadConfig` mints a frozen object per `setHeadConfig`, so
+    // identity is a sound change test, and it keeps the tint out of a hex
+    // parse on every single frame.
+    if (config === this.appliedPoolConfig) return;
+    this.appliedPoolConfig = config;
+    this.pool.setConfig(config);
   }
 
   /**
@@ -651,6 +759,7 @@ class EngineImpl implements Engine {
 
   private applyMotionAndObservation(host: Element): void {
     const reduced = this.options.reducedMotion ?? this.prefersReducedMotion();
+    this.reducedMotion = reduced;
     this.sysMotion.setReducedMotion(reduced);
     // Thread reduced motion into VFX and the text skin as well as motion
     // (dec.renderer-posture); the text skin pauses its row flow.
@@ -796,8 +905,29 @@ class EngineImpl implements Engine {
       this.sysBehavior.dispatch({ type: 'submerge-complete' });
     }
     this.applyGlassLayering();
+    this.applyPoolLayer();
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
+
+    // Pool drive. Both inputs are speeds: how fast the page is moving and how
+    // fast the body is crossing the plane. Travel is consumed here so a frame
+    // that renders nothing cannot bank scroll into a later splash.
+    const emergence = this.sysVfx.emergence;
+    if (this.pool) {
+      const scrollVelocity = dt > 0 ? this.scrollTravel / dt : 0;
+      const emergenceVelocity = dt > 0 ? (emergence - this.lastEmergence) / dt : 0;
+      const rootOffsetY = this.sysVfx.rootOffsetY;
+      this.pool.update(dt, {
+        rootOffsetY,
+        waterlineRadius: this.poolProfile
+          ? poolWaterlineRadius(this.poolProfile, rootOffsetY)
+          : 0,
+        drive: poolRippleDrive(scrollVelocity, emergenceVelocity, this.reducedMotion),
+      });
+    }
+    this.scrollTravel = 0;
+    this.lastEmergence = emergence;
+
     // While frozen, skip the motion update entirely: idle and gaze phase off
     // wall-clock time, so even dt=0 would keep breathing between frames.
     if (!this.motionFrozen) this.sysMotion.update(dt, this.elapsed);
@@ -829,6 +959,7 @@ class EngineImpl implements Engine {
   };
 
   private readonly onReducedMotion = (event: MediaQueryListEvent): void => {
+    this.reducedMotion = event.matches;
     this.sysMotion.setReducedMotion(event.matches);
     // Mirror the reduced-motion preference into VFX and the text skin.
     this.sysVfx.setReducedMotion(event.matches);
