@@ -30,6 +30,7 @@ import {
   DataTexture,
   FrontSide,
   LinearFilter,
+  NoBlending,
   RepeatWrapping,
   Vector2,
   Vector3,
@@ -61,6 +62,7 @@ import {
   pow,
   saturate,
   screenUV,
+  select,
   sin,
   smoothstep,
   texture,
@@ -70,6 +72,7 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
+import { MELT_MIN_JACOBIAN } from './melt';
 import type * as THREE from 'three';
 import {
   clamp01,
@@ -255,6 +258,32 @@ export interface HeadUniforms {
   /** Bind-space height each slot's band is centred on. */
   stageBandY: readonly { value: number }[];
   /**
+   * The melt master gate (dec.liquid-glass-melt). 0 makes the whole map an
+   * exact identity: `mi` is 0, so the collapse is `y` and the radial scale is
+   * exactly 1.
+   */
+  meltAmount: { value: number };
+  /** Radial spread at the crown when fully melted, multiple of bind radius. */
+  meltSpread: { value: number };
+  /** Puddle plane height above the base, as a fraction of the bind height. */
+  meltFloor: { value: number };
+  /** How far the crown lags the base; 0 melts every height together. */
+  meltLag: { value: number };
+  /** Bind-space base of the loaded body, from `setBodyExtent`. */
+  meltMinY: { value: number };
+  /**
+   * Bind-space height of the loaded body, `maxY - minY`. Deliberately not
+   * called `meltHeight`: that is the normalised-height function in `melt.ts`.
+   * 0 for an unmeasured body, which leaves the melt inert.
+   */
+  meltExtent: { value: number };
+  /**
+   * Crossfade to the melt-deformed shading normal, 0 or 1. Derived from the
+   * amount for the same reason `poolNormalGate` is derived from the breathe:
+   * at 0 the normal chain must be `normalView` itself, bit for bit.
+   */
+  meltNormalGate: { value: number };
+  /**
    * Crossfade to the lensed composite on the interior pass, 0 or 1. Derived,
    * not configured: at 0 the material emits `output` unchanged, so a head
    * with no page snapshot bound is bit-identical to the shipped look. It may
@@ -282,6 +311,17 @@ export interface BuiltSkinMaterial {
    * silhouette fresnel) have no meaning on an inside face and are absent.
    */
   interior: THREE.Material;
+  /**
+   * Depth-only occlusion mask for the body, drawn at `renderOrder 0` so the
+   * eyeballs, the mouth interior and the eye trim behind it are bounded by the
+   * shell rather than showing through it.
+   *
+   * Built here rather than in the core because it must carry the same
+   * `positionNode` as the two visible passes. A rigid mask behind a melting
+   * body would show the mouth cavity and the eyeballs through the puddle, and
+   * `MeshBasicMaterial` cannot take a `positionNode` at all.
+   */
+  mask: THREE.Material;
   scroll: ScrollUniform;
   uniforms: HeadUniforms;
 }
@@ -504,6 +544,15 @@ export function normaliseHeadConfig(
       // zero rather than by intent.
       reach: Math.max(1e-3, finiteOr(overrides.fluid?.reach, base.fluid.reach)),
     },
+    melt: {
+      // Same `finiteOr` discipline as the fluid: the melt map divides by the
+      // bind extent and by the vertical Jacobian, and a NaN would reach the
+      // shading normal, then the fresnel, then the alpha.
+      amount: clamp01(finiteOr(overrides.melt?.amount, base.melt.amount)),
+      spread: Math.max(0, finiteOr(overrides.melt?.spread, base.melt.spread)),
+      floor: Math.max(0, finiteOr(overrides.melt?.floor, base.melt.floor)),
+      lag: Math.max(0, finiteOr(overrides.melt?.lag, base.melt.lag)),
+    },
     stage: {
       // Same `finiteOr` discipline: a NaN here would reach the participant
       // modes, and a NaN mode never returns to rest.
@@ -539,6 +588,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.interior);
   Object.freeze(config.lens);
   Object.freeze(config.fluid);
+  Object.freeze(config.melt);
   Object.freeze(config.stage);
   Object.freeze(config.compositor);
   return Object.freeze(config);
@@ -598,6 +648,18 @@ export function buildSkinMaterial(
   interior.depthTest = true;
   interior.depthWrite = false;
   interior.side = BackSide;
+
+  // Depth-only occlusion mask. Owned here rather than by the core because it
+  // must carry the same `positionNode` as the two visible passes: a rigid mask
+  // behind a melting body would show the mouth cavity and the eyeballs through
+  // the puddle. `MeshBasicMaterial` cannot take one at all, which is why this
+  // is a node material.
+  const mask = new MeshBasicNodeMaterial();
+  mask.colorWrite = false;
+  mask.depthWrite = true;
+  mask.depthTest = true;
+  mask.blending = NoBlending;
+  mask.side = FrontSide;
 
   prepTexture(skin.texture);
 
@@ -678,6 +740,19 @@ export function buildSkinMaterial(
     uStageFlow.push(uniform(new Vector3(0, 0, 0)));
     uStageBandY.push(uniform(0));
   }
+  // The melt (dec.liquid-glass-melt). A function of bind-space height alone,
+  // which is why the extent has to arrive as a uniform: the shader cannot
+  // derive it and there is no spare vertex attribute to bake it into. An
+  // unmeasured body leaves `uMeltExtent` at 0, and every melt term below
+  // multiplies out to exactly nothing.
+  const uMeltAmount = uniform(config.melt.amount);
+  const uMeltSpread = uniform(config.melt.spread);
+  const uMeltFloor = uniform(config.melt.floor);
+  const uMeltLag = uniform(config.melt.lag);
+  const uMeltMinY = uniform(0);
+  const uMeltExtent = uniform(0);
+  const uMeltNormalGate = uniform(clamp01(config.melt.amount));
+
 
   // Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4). The gate
   // opens only once the engine binds a real texture, so a head with nothing
@@ -741,6 +816,13 @@ export function buildSkinMaterial(
     stageBand: uStageBand as unknown as { value: number },
     stageFlow: uStageFlow as unknown as readonly { value: THREE.Vector3 }[],
     stageBandY: uStageBandY as unknown as readonly { value: number }[],
+    meltAmount: uMeltAmount as unknown as { value: number },
+    meltSpread: uMeltSpread as unknown as { value: number },
+    meltFloor: uMeltFloor as unknown as { value: number },
+    meltLag: uMeltLag as unknown as { value: number },
+    meltMinY: uMeltMinY as unknown as { value: number },
+    meltExtent: uMeltExtent as unknown as { value: number },
+    meltNormalGate: uMeltNormalGate as unknown as { value: number },
     lensGate: uLensGate as unknown as { value: number },
     lensAmount: uLensAmount as unknown as { value: number },
     lensWindow: uLensWindow as unknown as { value: THREE.Vector4 },
@@ -914,7 +996,78 @@ export function buildSkinMaterial(
   // wrong and the interior wall shades against a normal pointing outward.
   const surfaceTangential = surfaceGradient.sub(normalLocal.mul(dot(surfaceGradient, normalLocal)));
   const breatheNormalLocal = normalLocal.sub(surfaceTangential);
-  const breatheNormalViewRaw = transformNormalToView(breatheNormalLocal);
+
+  // ---------------------------------------------------------------------
+  // The melt (dec.liquid-glass-melt), mirroring `melt.ts` term for term.
+  //
+  // OUTERMOST map: it consumes the breathe-and-fluid displaced position, so
+  // the features it supersedes still compose under it rather than being
+  // bypassed, and the authored visemes are further upstream still.
+  //
+  // The height it reads is `surfacePosition.y`, not `positionLocal.y`, because
+  // that is what being the outermost map means: the Jacobian below is taken
+  // with respect to the map's own input. At the shipped defaults the two are
+  // the same node's value anyway, since `pool.amount` and `fluid.amount` are
+  // both 0 and `surfaceOffset` multiplies out to exactly zero. With either
+  // feature on, the melt composes over the displaced surface rather than
+  // under it, which is the intended order.
+  //
+  // The extent is a uniform because the shader cannot derive it and both
+  // interleaved vertex buffers are full. It is measured from BIND positions
+  // at avatar load. Until the core measures a body it is 0, and `meltGate`
+  // folds that back into an amount of exactly 0, so an unmeasured rig is the
+  // shipped head rather than a head collapsed onto the origin.
+  // ---------------------------------------------------------------------
+  const meltExtentSafe = uMeltExtent.max(1e-4);
+  const meltGate = smoothstep(0, 1e-4, uMeltExtent);
+  const meltAmount = uMeltAmount.mul(meltGate);
+  const meltH = saturate(surfacePosition.y.sub(uMeltMinY).div(meltExtentSafe));
+  const meltRaw = meltAmount.mul(uMeltLag.add(1)).sub(uMeltLag.mul(meltH));
+  const meltMi = saturate(meltRaw);
+  const meltTarget = uMeltMinY.add(uMeltFloor.mul(uMeltExtent));
+  const meltScale = float(1).add(uMeltSpread.mul(meltMi).mul(meltH));
+  const meltPosition = vec3(
+    surfacePosition.x.mul(meltScale),
+    surfacePosition.y.add(meltMi.mul(meltTarget.sub(surfacePosition.y))),
+    surfacePosition.z.mul(meltScale),
+  );
+
+  // `mi` is a clamp, so its slope is the interior one inside the band and zero
+  // on either shoulder. Exact strict comparisons, matching `melt.ts`'s
+  // `raw > 0 && raw < 1` rather than approximating it with a narrow ramp: a
+  // ramp would hand back a fractional slope in the transition and the two
+  // implementations would disagree there.
+  const meltDmi = select(
+    meltRaw.greaterThan(0).and(meltRaw.lessThan(1)),
+    uMeltLag.negate().div(meltExtentSafe),
+    float(0),
+  );
+  const meltSPrime = uMeltSpread.mul(meltDmi.mul(meltH).add(meltMi.div(meltExtentSafe)));
+  const meltGPrime = float(1).sub(meltMi).add(meltDmi.mul(meltTarget.sub(surfacePosition.y)));
+
+  // The inverse transpose of the melt's own Jacobian, which is triangular
+  // because the map is a function of y alone. This cannot ride the
+  // `surfaceGradient` path above: that path assumes a scalar displacement
+  // along the vertex normal, and the melt is a shear plus two scales.
+  //
+  // `g'` reaches 0 at full melt, and an unguarded divide puts an infinity here
+  // that lands in the fresnel, then the alpha, then the silhouette, which is
+  // the collapse recorded a few lines above. `.max` is not optional.
+  //
+  // At `melt.amount = 0` this is `n * 1 - 0` over `1`, which is `n` bit for
+  // bit, so the chain below still reproduces the shipped normal exactly.
+  const meltShear = surfacePosition.x
+    .mul(breatheNormalLocal.x)
+    .add(surfacePosition.z.mul(breatheNormalLocal.z));
+  const meltNormalLocal = vec3(
+    breatheNormalLocal.x,
+    meltScale
+      .mul(breatheNormalLocal.y)
+      .sub(meltSPrime.mul(meltShear))
+      .div(meltGPrime.max(MELT_MIN_JACOBIAN)),
+    breatheNormalLocal.z,
+  );
+  const breatheNormalViewRaw = transformNormalToView(meltNormalLocal);
   // At gate 0 the second operand is exactly how three builds `normalView`
   // itself, and `mix(a, b, 0)` is `a` bit for bit, so the shipped shading
   // chain is reproduced rather than approximated. `normalView` inside each
@@ -923,7 +1076,7 @@ export function buildSkinMaterial(
   //
   // One gate for two features: `max(x, 0)` is exactly `x`, so a head with the
   // pool on and the fluid off still lands on the tier 1 value it shipped with.
-  const surfaceNormalGate = uPoolNormalGate.max(uFluidNormalGate);
+  const surfaceNormalGate = uPoolNormalGate.max(uFluidNormalGate).max(uMeltNormalGate);
   const breatheNormalFront = mix(normalView, breatheNormalViewRaw, surfaceNormalGate);
   const breatheNormalInterior = mix(normalView, breatheNormalViewRaw.negate(), surfaceNormalGate);
 
@@ -1025,7 +1178,7 @@ export function buildSkinMaterial(
     .add(bodyShare.mul(waterFadeMix))
     .clamp(0, 1);
   material.opacityNode = totalAlpha;
-  material.positionNode = surfacePosition;
+  material.positionNode = meltPosition;
   material.normalNode = breatheNormalFront;
 
   // Blinn highlight against the scene key light, in world space so it tracks
@@ -1061,8 +1214,12 @@ export function buildSkinMaterial(
     .clamp(0, 1);
   // The interior rides the same displacement as the front, or the two halves
   // of one body separate at the seam.
-  interior.positionNode = surfacePosition;
+  interior.positionNode = meltPosition;
   interior.normalNode = breatheNormalInterior;
+
+  // Same displacement again. The mask exists to bound the internals against
+  // the shell, so it has to be the shell's current shape, not its bind shape.
+  mask.positionNode = meltPosition;
 
   // ---------------------------------------------------------------------
   // Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4).
@@ -1130,6 +1287,7 @@ export function buildSkinMaterial(
   return {
     material: material as unknown as THREE.Material,
     interior: interior as unknown as THREE.Material,
+    mask: mask as unknown as THREE.Material,
     scroll: uScroll as unknown as ScrollUniform,
     uniforms,
   };

@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.shaders
-status: blocked
+status: done
 created: 2026-07-27
 ---
 
@@ -44,3 +44,22 @@ them together once before fixing either default.
 
 Acceptance: a ruling on all six gated features, recorded as a source artefact,
 and this todo set to done.
+
+## Ruling, 2026-07-27
+
+The session ran. The outcome is recorded verbatim in
+`src.owner-look-2026-07-27`, which is the artefact this todo asked for and the
+one later decisions are adjudicated against.
+
+In short: the pool is cut, tier 3 fluid and the stage participants missed, the
+compositor layer was rejected on the shape of its clip rather than on its
+content, the interior glyphs are kept as experimental and default off, and of
+the two backdrop rungs the lens is preferred. No shipped default moves, so
+every gated feature stays at 0.
+
+What the session opened rather than closed is the melt: the owner wants the
+head to morph from a flat puddle up into the head, and to squeeze between page
+elements. That is `dec.liquid-glass-melt`.
+
+Two defects surfaced and have their own todos:
+`todo.interior-glyph-containment` and `todo.silhouette-hull-halo`.

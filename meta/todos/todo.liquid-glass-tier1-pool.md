@@ -39,3 +39,16 @@ obstacles, any implicit surface. Those are tiers 2 and 3.
 Acceptance: a lab page showing the head emerging from a rippling pool with a
 visible meniscus, scroll-coupled, under about 1 ms of added GPU time, with
 visemes and expressions untouched and reduced motion respected.
+
+## CUT 2026-07-27
+
+**CUT 2026-07-27** by `src.owner-look-2026-07-27`. `pool.amount` stays 0
+permanently and the pool is not a direction to revisit.
+
+> "thats not at all what i was getting at, so we can cut hte pool"
+
+The code is deliberately not deleted. `poolRadialProfile` and `PoolProfile`
+supply the bust's bind extent, which `dec.liquid-glass-melt` consumes through
+`VFXEngine.setBodyExtent`, and `poolWaterlineRadius` still floors the
+compositor outline. The profile is built at avatar load and is not gated on
+`pool.amount`, so cutting the look leaves the helpers standing.

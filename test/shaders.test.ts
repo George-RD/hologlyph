@@ -8,6 +8,7 @@ import {
   easeEmergence,
   visibleFraction,
 } from '../src/shaders/emergence';
+import { MELT_FLOOR, MELT_LAG, MELT_SPREAD } from '../src/shaders/melt';
 import {
   blendedProjectionUV,
   buildSkinMaterial,
@@ -40,6 +41,8 @@ interface NodeMaterialShape {
   colorNode: TslNode;
   emissiveNode: TslNode;
   opacityNode: TslNode;
+  positionNode: TslNode;
+  normalNode: TslNode;
 }
 
 /** True when `target` appears anywhere in `root`'s node graph. */
@@ -176,6 +179,7 @@ describe('VFX engine (no GPU objects)', () => {
 
     skinMaterials.front.dispose();
     skinMaterials.interior.dispose();
+    skinMaterials.mask.dispose();
     eyeMaterial.dispose();
     bindingsLive = false;
 
@@ -183,12 +187,13 @@ describe('VFX engine (no GPU objects)', () => {
     vfx.dispose();
   });
 
-  it('keeps the skin binding alive while either half of the pair survives', () => {
-    // The two materials share one uniform set, and the engine drops the
-    // interior overlay on avatar replace while the front keeps rendering. If
-    // the binding retired on the first dispose, the survivor would stop
-    // receiving scroll and config updates.
-    for (const disposeFirst of ['front', 'interior'] as const) {
+  it('keeps the skin binding alive while any of the three passes survives', () => {
+    // The three materials share one uniform set, and the engine drops the
+    // overlay passes on avatar replace while the front keeps rendering. If the
+    // binding retired on the first dispose, the survivors would stop receiving
+    // scroll and config updates.
+    const PASSES = ['front', 'interior', 'mask'] as const;
+    for (const disposeFirst of PASSES) {
       const vfx = createVFXEngine();
       let scrollReads = 0;
       const skin = {
@@ -198,22 +203,28 @@ describe('VFX engine (no GPU objects)', () => {
           return 0.25;
         },
       } as unknown as TextSkinEngine;
-      const pair = vfx.createSkinMaterial(skin);
-      const survivor = disposeFirst === 'front' ? pair.interior : pair.front;
+      const passes = vfx.createSkinMaterial(skin);
+      const survivors = PASSES.filter((pass) => pass !== disposeFirst).map((pass) => passes[pass]);
 
-      pair[disposeFirst].dispose();
+      passes[disposeFirst].dispose();
       // A repeated dispose must not retire the binding either.
-      pair[disposeFirst].dispose();
+      passes[disposeFirst].dispose();
       vfx.update(0.016);
       expect(scrollReads, `${disposeFirst} disposed first`).toBeGreaterThan(0);
 
       vfx.setHeadConfig({ skin: { glass: { amount: 0.4 } } });
       expect(vfx.headConfig.skin.glass.amount).toBe(0.4);
 
-      const before = scrollReads;
-      survivor.dispose();
+      // One survivor left is still a live binding.
+      survivors[0]?.dispose();
+      const midway = scrollReads;
       vfx.update(0.016);
-      expect(scrollReads, `${disposeFirst}: binding retired once both are gone`).toBe(before);
+      expect(scrollReads, `${disposeFirst}: one survivor keeps it alive`).toBeGreaterThan(midway);
+
+      const before = scrollReads;
+      survivors[1]?.dispose();
+      vfx.update(0.016);
+      expect(scrollReads, `${disposeFirst}: binding retired once all three are gone`).toBe(before);
       vfx.dispose();
     }
   });
@@ -345,6 +356,9 @@ describe('owner-approved head configuration', () => {
       fluid: {
         amount: 0, sag: 0.05, wobble: 1, tension: 0.55, crisp: 2, reach: 0.6,
       },
+      melt: {
+        amount: 0, spread: 1.6, floor: 0.06, lag: 0.55,
+      },
       stage: {
         amount: 1, squeeze: 0.5, band: 0.45, push: 0.6, maxPush: 24, displace: 1,
       },
@@ -368,6 +382,16 @@ describe('owner-approved head configuration', () => {
     // content inside the head, and at 0 the engine authors no DOM node at all
     // (dec.liquid-glass-compositor).
     expect(DEFAULT_HEAD_CONFIG.compositor.amount).toBe(0);
+    // `melt.amount` IS a gate and ships at 0: at 0 the map is an exact
+    // identity, so the shipped head is reproduced bit for bit
+    // (dec.liquid-glass-melt).
+    expect(DEFAULT_HEAD_CONFIG.melt.amount).toBe(0);
+    // The defaults are literals in `contracts.ts`, which may not import from a
+    // runtime module, so they are pinned against the shader constants here
+    // rather than left to drift.
+    expect(DEFAULT_HEAD_CONFIG.melt.spread).toBe(MELT_SPREAD);
+    expect(DEFAULT_HEAD_CONFIG.melt.floor).toBe(MELT_FLOOR);
+    expect(DEFAULT_HEAD_CONFIG.melt.lag).toBe(MELT_LAG);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
@@ -375,6 +399,7 @@ describe('owner-approved head configuration', () => {
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.interior)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.lens)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.stage)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.melt)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.compositor)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
@@ -583,6 +608,50 @@ describe('buildSkinMaterial (no GPU objects)', () => {
     // depth or the eyeballs and mouth cavity would resolve against it.
     expect(interior.depthWrite).toBe(false);
     expect(material.depthWrite).toBe(true);
+  });
+
+  it('builds the occlusion mask as a depth-only pass carrying the same displacement', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior, mask } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    expect(mask).not.toBe(material);
+    expect(mask).not.toBe(interior);
+    expect(mask.colorWrite).toBe(false);
+    expect(mask.depthWrite).toBe(true);
+    expect(mask.depthTest).toBe(true);
+    expect(mask.blending).toBe(THREE.NoBlending);
+    expect(mask.side).toBe(THREE.FrontSide);
+
+    // The whole reason the mask moved out of the core: it must melt with the
+    // body, or the puddle shows the mouth cavity and the eyeballs through it
+    // (dec.liquid-glass-melt).
+    const front = material as unknown as NodeMaterialShape;
+    const shape = mask as unknown as NodeMaterialShape;
+    expect(shape.positionNode).toBe(front.positionNode);
+  });
+
+  it('gates the melt on both the amount and a measured body extent', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    // Shipped defaults: melt off, and no body measured yet. Both have to be
+    // inert on their own, because `setBodyExtent` lands after the material is
+    // built and a host may raise the amount before an avatar loads.
+    expect(uniforms.meltAmount.value).toBe(0);
+    expect(uniforms.meltNormalGate.value).toBe(0);
+    expect(uniforms.meltExtent.value).toBe(0);
+    expect(uniforms.meltMinY.value).toBe(0);
+    expect(uniforms.meltSpread.value).toBe(MELT_SPREAD);
+    expect(uniforms.meltFloor.value).toBe(MELT_FLOOR);
+    expect(uniforms.meltLag.value).toBe(MELT_LAG);
+
+    // The map reaches the vertex stage, and the extent reaches the map.
+    const front = material as unknown as NodeMaterialShape;
+    expect(reachesNode(front.positionNode, uniforms.meltAmount)).toBe(true);
+    expect(reachesNode(front.positionNode, uniforms.meltExtent)).toBe(true);
+    // And the shading normal follows it, or the melt reads as texture swim
+    // rather than as liquid.
+    expect(reachesNode(front.normalNode, uniforms.meltNormalGate)).toBe(true);
   });
 
   it('wires the baked thickness into both Beer-Lambert terminals', () => {

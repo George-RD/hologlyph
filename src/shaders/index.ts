@@ -239,6 +239,15 @@ export function createVFXEngine(): VFXEngine {
    * with a flat colour.
    */
   let lens: LensBinding | null = null;
+  /**
+   * Bind-space extent of the loaded body, for the melt map
+   * (`dec.liquid-glass-melt`). Held here rather than per binding because there
+   * is one body: every material that dresses it melts on the same numbers, and
+   * a material built after the measurement has to be able to pick them up.
+   * Zero extent means unmeasured, and an unmeasured body does not melt.
+   */
+  let bodyMinY = 0;
+  let bodyExtent = 0;
 
   const state = {
     emergence: 0,
@@ -311,6 +320,18 @@ export function createVFXEngine(): VFXEngine {
       // `fluidAmount` and `fluidNormalGate` are NOT written here. Both carry
       // the behaviour gain, which changes without a config write, so `update`
       // owns them and this function must not race it back to the raw config.
+
+      u.meltAmount.value = config.melt.amount;
+      u.meltSpread.value = config.melt.spread;
+      u.meltFloor.value = config.melt.floor;
+      u.meltLag.value = config.melt.lag;
+      // Derived, not configured, exactly as `poolNormalGate` is: at 0 the
+      // shading normal must be `normalView` itself rather than a value that
+      // happens to equal it.
+      u.meltNormalGate.value = clamp01(config.melt.amount);
+      // `meltMinY` and `meltExtent` are NOT written here. They are measured
+      // from the rig, not configured, and a config write must not race
+      // `setBodyExtent` back to zero.
       u.stageBand.value = config.stage.band;
       // `stageFlow` and `stageBandY` are NOT written here either: they are
       // per-frame solver output, and a config write mid-frame must not race
@@ -378,7 +399,7 @@ export function createVFXEngine(): VFXEngine {
       // avatar replace while the front material lives on. Counting materials
       // rather than events keeps a repeated `dispose()` from retiring the
       // binding while its other half is still rendering.
-      const live = new Set<THREE.Material>([built.material, built.interior]);
+      const live = new Set<THREE.Material>([built.material, built.interior, built.mask]);
       const retire = (material: THREE.Material) => (): void => {
         live.delete(material);
         if (live.size > 0) return;
@@ -387,7 +408,15 @@ export function createVFXEngine(): VFXEngine {
       };
       built.material.addEventListener('dispose', retire(built.material));
       built.interior.addEventListener('dispose', retire(built.interior));
-      return { front: built.material, interior: built.interior };
+      built.mask.addEventListener('dispose', retire(built.mask));
+      // A replaced avatar gets a fresh material with `meltExtent` at 0, which
+      // is inert. Push the measured extent straight back in, the same way the
+      // lens binding is: the core measures the body AFTER this call, but a
+      // second avatar swapped in later would otherwise lose the melt until
+      // something else wrote it.
+      built.uniforms.meltMinY.value = bodyMinY;
+      built.uniforms.meltExtent.value = bodyExtent;
+      return { front: built.material, interior: built.interior, mask: built.mask };
     },
 
     createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material {
@@ -456,6 +485,20 @@ export function createVFXEngine(): VFXEngine {
     setStageColliders(colliders: readonly StageCollider[]): void {
       if (disposed) return;
       stageColliders = colliders;
+    },
+
+    setBodyExtent(minY: number, maxY: number): void {
+      if (disposed) return;
+      // A degenerate or non-finite extent leaves the melt inert rather than
+      // dividing by it: the shader gates the whole map on a positive extent.
+      const span = maxY - minY;
+      const usable = Number.isFinite(minY) && Number.isFinite(maxY) && span > 0;
+      bodyMinY = usable ? minY : 0;
+      bodyExtent = usable ? span : 0;
+      for (const binding of skinBindings) {
+        binding.uniforms.meltMinY.value = bodyMinY;
+        binding.uniforms.meltExtent.value = bodyExtent;
+      }
     },
 
     get stageFlow(): Float32Array {

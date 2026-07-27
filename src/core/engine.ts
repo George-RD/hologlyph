@@ -13,7 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
-import { FrontSide, Matrix4, Mesh, MeshBasicMaterial, NoBlending, SkinnedMesh, Vector3 } from 'three';
+import { FrontSide, Matrix4, Mesh, NoBlending, SkinnedMesh, Vector3 } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -31,6 +31,7 @@ import type {
   LensSourceOptions,
   MotionEngine,
   RendererHost,
+  SkinMaterials,
   SpeechEngine,
   StageCollider,
   TextSkinEngine,
@@ -271,6 +272,13 @@ class EngineImpl implements Engine {
 
   private avatar: LoadedAvatar | null = null;
   private skinMaterial: THREE.Material | null = null;
+  /**
+   * The three passes `buildSkinMaterial` owns: the front surface, the interior
+   * wall and the occlusion mask. Held together because they share one uniform
+   * set and one displacement, so they are built and torn down as a unit
+   * (`dec.liquid-glass-melt`).
+   */
+  private skinMaterials: SkinMaterials | null = null;
   private occlusionMaskMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
   private interiorMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
   private readonly displacedMaterials = new Set<THREE.Material>();
@@ -834,6 +842,7 @@ class EngineImpl implements Engine {
     this.sysTextSkin.dispose();
     this.eyeTextSkin.dispose();
     this.disposeOverlayMeshes();
+    this.disposeSkinMaterials();
     this.teardownLens();
     this.teardownStage();
     this.teardownCompositorGlass();
@@ -953,6 +962,10 @@ class EngineImpl implements Engine {
 
   private replaceAvatar(candidateAvatar: LoadedAvatar): void {
     this.disposeOverlayMeshes();
+    // The outgoing avatar's three skin passes go with it. A fresh set is built
+    // below, and the VFX engine retires the old binding once all three are
+    // gone.
+    this.disposeSkinMaterials();
     this.disposeInteriorGlyphs();
     this.interiorBody = null;
     // A new body is a new carrier: differencing the next pose against the old
@@ -1008,6 +1021,7 @@ class EngineImpl implements Engine {
       return eyeballMat;
     };
     this.skinMaterial = headMat;
+    this.skinMaterials = skinMats;
     this.displacedMaterials.clear();
     const allMeshes = new Set<THREE.Mesh>(this.avatar.morphMeshes);
     this.avatar.root.traverse((obj) => {
@@ -1098,16 +1112,9 @@ class EngineImpl implements Engine {
     this.layeredMaterials.clear();
     this.glassLayeringActive = null;
     if (bodyMesh) {
-      const occlusionMaskMaterial = new MeshBasicMaterial({
-        colorWrite: false,
-        depthWrite: true,
-        depthTest: true,
-        blending: NoBlending,
-        side: FrontSide,
-      });
-      this.occlusionMaskMesh = cloneOverlayMesh(bodyMesh, occlusionMaskMaterial, 0);
+      this.occlusionMaskMesh = cloneOverlayMesh(bodyMesh, skinMats.mask, 0);
       this.interiorMesh = cloneOverlayMesh(bodyMesh, skinMats.interior, -1);
-      this.layeredMaterials.add(occlusionMaskMaterial);
+      this.layeredMaterials.add(skinMats.mask);
       const overlayParent = bodyMesh.parent ?? this.avatar.root;
       overlayParent.add(this.occlusionMaskMesh);
       overlayParent.add(this.interiorMesh);
@@ -1157,8 +1164,16 @@ class EngineImpl implements Engine {
         flat[i * 3 + 2] = profileSource.getZ(i);
       }
       this.poolProfile = poolRadialProfile(flat);
+      // The melt is a function of normalised bind height, and the shader
+      // cannot derive the extent: there is no spare vertex attribute and both
+      // interleaved buffers are full. The profile already measured it
+      // (dec.liquid-glass-melt).
+      this.sysVfx.setBodyExtent(this.poolProfile.minY, this.poolProfile.maxY);
     } else {
       this.poolProfile = null;
+      // No body, no extent. Zero leaves the melt inert rather than collapsing
+      // whatever else is in the scene onto the origin.
+      this.sysVfx.setBodyExtent(0, 0);
     }
     this.interiorBody = bodyMesh ? resolveInteriorBody(bodyMesh, this.avatar) : null;
 
@@ -1465,24 +1480,43 @@ class EngineImpl implements Engine {
   }
 
   /**
-   * Tear down the occlusion mask and interior overlay passes. Idempotent, and
+   * Detach the occlusion mask and interior overlay passes. Idempotent, and
    * safe to call before the avatar itself is disposed: the overlays only ever
-   * borrow the primary mesh's geometry, so only their materials are owned.
+   * borrow the primary mesh's geometry.
+   *
+   * Detach only. Both overlay materials are built and owned by
+   * `buildSkinMaterial` now that the mask has to carry the same displacement
+   * the visible passes do (`dec.liquid-glass-melt`), so all three are disposed
+   * together in `disposeSkinMaterials`. Disposing one of the three from here
+   * would tear a pass out of a set that shares one uniform block.
    */
   private disposeOverlayMeshes(): void {
-    for (const overlay of [this.occlusionMaskMesh, this.interiorMesh]) {
-      if (!overlay) continue;
-      overlay.removeFromParent();
-      const mats = Array.isArray(overlay.material) ? overlay.material : [overlay.material];
-      for (const mat of mats) mat?.dispose();
-    }
+    this.occlusionMaskMesh?.removeFromParent();
+    this.interiorMesh?.removeFromParent();
     this.occlusionMaskMesh = null;
     this.interiorMesh = null;
-    // The mask material is gone and the authored internals are about to be
-    // disposed or re-collected, so holding either would pin textures for the
-    // rest of a disposed engine's life.
+    // The authored internals are about to be disposed or re-collected, so
+    // holding them would pin textures for the rest of a disposed engine's
+    // life.
     this.layeredMaterials.clear();
     this.glassLayeringActive = null;
+  }
+
+  /**
+   * Dispose the three passes `buildSkinMaterial` owns, as a unit.
+   *
+   * They share one uniform set and one node graph, so they live and die
+   * together; the VFX engine retires the binding only once all three are gone.
+   * Idempotent: three's `dispose` is, and the reference is cleared here.
+   */
+  private disposeSkinMaterials(): void {
+    const mats = this.skinMaterials;
+    if (!mats) return;
+    this.skinMaterials = null;
+    mats.front.dispose();
+    mats.interior.dispose();
+    mats.mask.dispose();
+    this.skinMaterial = null;
   }
 
   private disposeDisplacedMaterials(): void {

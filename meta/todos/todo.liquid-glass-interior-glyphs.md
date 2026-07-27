@@ -90,3 +90,19 @@ with count, drift, and inertia sliders, plus a capture under
 Shaking the head visibly drags the glyphs and they settle. Surface text and
 visemes untouched, reduced motion respected. Owner reaction decides whether any
 of it becomes library work.
+
+## Ruling 2026-07-27
+
+Judged in `demo/interior-glyph-lab.html`. Kept, with a defect
+(`src.owner-look-2026-07-27`):
+
+> "somewhat works, though the glyphs pop out the head when i increase drift.
+> That can be an experimental feature default off"
+
+So `interior.count` stays 0 and the feature is documented as experimental
+rather than cut.
+
+The leak is real and has no containment today: `interiorDriftTargets` in
+`src/shaders/interior-glyphs.ts` is `rest + sin(t) * amplitude`, so any glyph
+whose clearance to the skin is smaller than `config.drift` translates straight
+through it. Tracked as `todo.interior-glyph-containment`.

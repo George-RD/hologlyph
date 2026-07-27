@@ -1,80 +1,103 @@
 # Next unit of work
 
-Updated 2026-07-27, fourth pass. The last agent-shaped item in
-`dec.liquid-glass-architecture` landed: rungs 2 and 3 in the same page are now
-mutually exclusive (`dec.liquid-glass-rung-exclusion`,
-`todo.liquid-glass-ladder-exclusion`), with `demo/ladder-lab.html` to judge
-them side by side. The engineering backlog is finished except for item 9,
-which is a product call.
+Updated 2026-07-27, fifth pass. **The owner look session happened.** Most of
+the liquid-glass programme was ruled against. The verbatim rulings are in
+`meta/sources/src.owner-look-2026-07-27.md` and every affected todo carries an
+annotation pointing at it.
 
-**Start here: get the owner in front of the labs.** Tracked as
-`todo.liquid-glass-owner-look-session`, which carries the walk order and what a
-ruling has to produce. Six features ship gated off because nobody has judged
-them:
+What the session decided:
 
-- `demo/pool-lab.html`, `pool.amount` at 0 (item 3).
-- `demo/lens-lab.html`, the snapshot lens with no source named (item 4), plus
-  `demo/live-lens-lab.html` for the Chromium half (item 5).
-- `demo/interior-glyph-lab.html`, `interior.count` at 0 (item 10).
-- `demo/fluid-lab.html`, `fluid.amount` at 0 (item 8).
-- `demo/stage-lab.html`, which needs `fluid.amount` above 0 to show anything at
-  all, so it is judged with item 8 rather than after it (item 7).
-- `demo/compositor-lab.html`, `compositor.amount` at 0 (item 6).
+- **The pool is cut.** "thats not at all what i was getting at, so we can cut
+  hte pool". `pool.amount` stays 0 permanently and it is not a direction to
+  revisit. `poolRadialProfile` survives, because the melt reads the bust extent
+  from it.
+- **Tier 3 fluid missed.** "i turn on liquid, and its just like a gravity
+  effect? and it all bulges". `fluid.amount` stays 0.
+- **Stage participants missed.** "the bumping into objects is a bit weird, and
+  doesnt hit the mark". The collider plumbing stays, because the squeeze will
+  reuse it.
+- **The compositor layer was rejected on its shape**, not its content: "its
+  just a weird patch behind the head? though i do see objects on the page
+  through the head, so thats working well". That patch is the hull halo, now
+  tracked as `todo.silhouette-hull-halo`.
+- **Interior glyphs stay, experimental and default off.** The glyphs leak out
+  of the body at high drift; tracked as `todo.interior-glyph-containment`.
+- **Of the two backdrop rungs the lens wins**, which is what
+  `dec.liquid-glass-rung-exclusion` already encodes.
 
-Plus one lab that is not a feature: `demo/ladder-lab.html` points both backdrop
-rungs at the same `#hero`, so the compositor frost and the lens can be judged
-as the alternatives they now are rather than on two different pages.
+What the owner asked for instead: "I want to be able to morph the whole head,
+from a flat puddle, up into the head. And i want to be bale to make the head
+squeeze and move between things."
 
-Serve them with `bun run dev` and open the paths directly; none of these is in
-`demo/vite.config.ts`, so none is deployed.
+**Start here: `demo/melt-lab.html`.** That is the first half of the ask,
+shipped 2026-07-27 as `liquid-head-melt` and gated at `melt.amount: 0`
+(`dec.liquid-glass-melt`). A vertex melt on the real bust, not a particle
+field: neither ask changes topology, so the rig, the authored visemes, the
+glyphs and the glass all survive and it runs on WebGL2. Press **cycle** in the
+lab and watch the whole sweep.
 
-The ruling that pays most is still the FLUID one: items 7 and 8 both hang off
-`fluid.amount`, which ships at 0, so a judgement there decides whether roughly
-half the programme ever appears on screen. The compositor ruling is the next
-largest, because rung 2 is the only backdrop rung that needs nothing from the
-host page and would therefore be the sensible default if it looks right.
+Two things will be obvious and both are known, written up in
+`meta/changes/liquid-head-melt/implementation-notes.md`:
 
-**If the owner is not available, the honest options are, in order.** There is
-no agent-shaped engineering item left in `dec.liquid-glass-architecture`: item
-9 needs a product call and next unit of work 3 landed on 2026-07-27 as
-`liquid-glass-ladder-exclusion` (PR #79, plus the review fixes in #81). So
-this list is what is left.
+1. **The internals do not melt.** Two eyeballs and the mouth cavity hang in
+   mid-air above the puddle from about `amount 0.6`. The eyeball is a node
+   material and could take the map; `mouth_interior` and `eye_trim` are
+   authored glTF materials that cannot take a `positionNode` at all. Tracked as
+   `todo.melt-internals`. A visibility gate was deliberately not built: hiding
+   a mesh mid-sweep is the popping the acceptance forbids.
+2. **The puddle has no thickness at exactly `amount 1`.** Every height
+   collapses onto one plane, so the shell's front and back coincide and the
+   glass has no volume left. The one-line fix, a collapse band rather than a
+   plane, is written up in the notes and needs a decision because the map is
+   fixed by `dec.liquid-glass-melt`.
 
-1. **The independent review `demo/pool-lab.html`'s change never got.** Listed
+**The escalation criterion did not fire.** At `amount 1` the rim is a smooth
+ellipse with no facial features on it, so mesh displacement has not failed and
+the particle field in `todo.liquid-glass-topology-fluid` is not warranted on
+this evidence. What is missing is thickness and three unwired meshes, and
+neither is something a particle field would fix for free.
+
+The other lab that landed with it is `demo/compare-lab.html`: the hand-rolled
+`demo/index.html` head beside the library `demo/engine.html` head, which the
+owner asked for and which had never been checked by eye. The one shading
+difference that is not explained by their different framing is recorded in the
+same notes: the library head carries a broad specular sheen where the
+hand-rolled one has tighter highlights, and its feature contrast is flatter.
+
+Serve them with `bun run dev` and open the paths directly; none of the labs is
+in `demo/vite.config.ts`, so none is deployed.
+
+**What is left after the melt, in order.**
+
+1. **The second half of the ask: the squeeze.** The melt driven by the stage
+   colliders. Deliberately not built yet, because building it on an unapproved
+   melt is exactly what produced tier 3. It needs the melt judged first.
+2. **`todo.melt-internals`**, which has to be settled before the melt can be
+   shown properly: the floating eyeballs are the loudest thing in the lab and
+   they are not a statement about the direction.
+3. **The independent review `demo/pool-lab.html`'s change never got.** Listed
    under "Still open from the tier 1 pool change" below:
    `src/shaders/pool-surface.ts` and the breathe block in
    `src/shaders/materials.ts` shipped on a self-review and have never been
-   read by anything but their author.
+   read by anything but their author. Less urgent now the pool is cut, but the
+   breathe block is still shipped code.
 
-   Worth knowing what that costs, because the ladder exclusion nearly shipped
-   the same way and did not. Every delegated route was quota-refused
-   (`reviewer`, `scout`, `sonic` and the general worker all tunnel through
-   Codex; `gemini-reviewer` is Cloud Code Assist, resets 2026-07-28), so it
-   went out on a self-review. A later pass through
-   `completion(model="default")`, which still had capacity, raised nineteen
-   findings. Five were real and one of those was a **shipped bug**: the
-   exclusion predicate ignored `skin.glass.amount`, so a bound lens with the
-   glass off stood rung 2 down while painting nothing, leaving the head with
-   neither rung. The self-review had explicitly judged that area clean. Fixed
-   in #81. The full triage, confirmed and rejected, is in
-   `meta/changes/archive/2026-07-27-liquid-glass-ladder-exclusion/implementation-notes.md`.
-
-   The lesson for the pool change: a self-review is not a review, and
-   `completion(model="default")` is a usable fallback when every subagent
-   backend is refusing.
-2. **The hull halo**, if a bright backdrop is ever approved. The clip polygon
-   is 27 to 41 per cent larger in area than the true silhouette, so the
-   compositor frost extends slightly past the head. Invisible on the shipped
-   dark page. Raising `DIRECTION_COUNT` in
-   `tools/asset-pipeline/silhouette-hull.ts` tightens it on a known curve and
-   needs a decision superseding the point budget in
-   `todo.liquid-glass-silhouette-hull`.
-3. **Merging `glass` into `main`** is the other thing waiting on the owner, not
-   on an agent. Pushing to `main` redeploys the live demo, so `main` only
-   receives `glass` once the owner is happy with the look end to end, which is
-   the same sitting as `todo.liquid-glass-owner-look-session`.
-4. Say the programme is owner-blocked and stop, rather than tuning a look
-   nobody has approved.
+   Worth knowing what a self-review costs. Every delegated route was
+   quota-refused (`reviewer`, `scout`, `sonic` and the general worker all
+   tunnel through Codex; `gemini-reviewer` is Cloud Code Assist), so the ladder
+   exclusion went out on a self-review. A later pass through
+   `completion(model="default")` raised nineteen findings, five real, one a
+   **shipped bug**: the exclusion predicate ignored `skin.glass.amount`. Fixed
+   in #81. The melt used the same route deliberately and it found two more
+   real ones.
+4. **The hull halo**, `todo.silhouette-hull-halo`, now that the owner has named
+   it. Raising `DIRECTION_COUNT` in `tools/asset-pipeline/silhouette-hull.ts`
+   tightens the polygon on a known curve, and needs a decision superseding the
+   point budget in `todo.liquid-glass-silhouette-hull` plus an asset rebake.
+5. **Merging `glass` into `main`** is still the owner's call, not an agent's.
+   Pushing to `main` redeploys the live demo, so `main` only receives `glass`
+   once the owner is happy with the look end to end. Nothing in the melt change
+   moves a shipped default, so the live demo is unaffected either way.
 
 What the ladder exclusion leaves you, beyond
 `meta/changes/archive/2026-07-27-liquid-glass-ladder-exclusion/implementation-notes.md`:
@@ -384,6 +407,24 @@ this file tracks their purpose and what remains owner-session-only.
   seven ancestor shapes and probes screenshot pixels with the filter on and
   off. No dev server: the page is built inline. Run it before assuming any
   layout is safe for a `backdrop-filter`.
+- `demo/melt-lab.html` - the melt (`dec.liquid-glass-melt`), the owner's
+  puddle-to-head ask. Live controls for every field of `HeadMeltConfig`
+  (`amount`, `spread`, `floor`, `lag`), a head/puddle pair for A/B-ing the
+  gate, and a **cycle** button that sweeps 0 to 1 to 0 over six seconds,
+  because the morph is what is being judged and a hand-dragged slider does not
+  show it. Motion is frozen on boot: the melt runs in bind space, so a yawed
+  head carries its puddle round with it. The panel states the escalation
+  criterion so whoever runs the session knows what question they are
+  answering. `melt.amount` ships at 0, where the map is an exact identity.
+  Dev-only, deliberately absent from `demo/vite.config.ts`.
+- `demo/compare-lab.html` - the hand-rolled head beside the library head, which
+  the owner asked for and which had never been checked by eye. Two same-origin
+  iframes at 50vw by 100vh, `./index.html` on the left and `./engine.html` on
+  the right, each page's own chrome hidden by an injected stylesheet and the
+  right one driven to `setScrollProgress(1)` on a retry loop because
+  `demo/main.ts` drives emergence from page scroll and an iframe never
+  scrolls. Cameras are deliberately NOT synchronised: the two pages frame the
+  bust differently and the comparison is of the look, not of pixels. Dev-only.
 
 ## Where the approved look lives
 
@@ -393,11 +434,22 @@ this file tracks their purpose and what remains owner-session-only.
 
 ## Open follow-ups (meta/todos/)
 
-- todo.liquid-glass-owner-look-session - the ruling gate above. BLOCKED on the
-  owner, and the only reason the backlog looks empty.
+- todo.liquid-glass-owner-look-session - DONE. The session ran on 2026-07-27;
+  the ruling is `src.owner-look-2026-07-27` and it is summarised at the top of
+  this file.
+- todo.melt-internals - OPEN, and the next thing the melt needs: the eyeballs,
+  mouth cavity and eye trim do not melt with the shell.
+- todo.interior-glyph-containment - OPEN. Glyphs translate through the skin at
+  high drift; the clearance is already sampled at seed time.
+- todo.silhouette-hull-halo - OPEN. The frost patch the owner named. Needs a
+  decision superseding the point budget, plus an asset rebake.
 - todo.liquid-glass-firefox-verify - BLOCKED on a photographable Firefox.
-- todo.liquid-glass-live-css-layer - BLOCKED on the above.
-- todo.liquid-glass-topology-fluid - BLOCKED on an explicit owner decision.
+- todo.liquid-glass-live-css-layer - DONE, and now ruled against on shape
+  rather than content. See the hull halo above.
+- todo.liquid-glass-topology-fluid - BLOCKED on an explicit owner decision, and
+  the melt's escalation criterion did not fire, so nothing warrants it yet.
+  `dec.liquid-glass-melt` bounds its scope if it is ever taken: entered only
+  where there is no face, and the rig keeps the 15 authored visemes.
 - The feature-shading follow-ups this section used to list
   (todo.textskin-port-owner-config, todo.lab-control-refinements,
   todo.background-adaptive-look) are all `status: done`. Their lab artefacts
