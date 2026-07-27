@@ -494,6 +494,83 @@ export interface HeadFluidConfig {
 }
 
 /**
+ * Stage participants (`dec.liquid-glass-participants`): the opt-in contract
+ * that lets the fluid touch the page. A host marks elements it already owns
+ * with `data-hologlyph-obstacle` (the fluid is squeezed by it) or
+ * `data-hologlyph-body` (the fluid pushes it around); everything here is the
+ * strength of that coupling.
+ *
+ * The PARTICIPANTS are the gate, not `amount`: a page that marks nothing has
+ * no rect to read, no mode to integrate and no transform to write, so the
+ * drop-in head is reproduced exactly and `amount` can default to 1 the way
+ * `lens.amount` does.
+ */
+export interface HeadStageConfig {
+  /** Master strength of the coupling in both directions. */
+  readonly amount: number;
+  /**
+   * World units of flow the body holds per world unit an obstacle overlaps
+   * it. This is how hard the head is squeezed by page furniture.
+   */
+  readonly squeeze: number;
+  /**
+   * Half-width of the Gaussian band each participant's mode acts over, world
+   * units: the weight is `exp(-((y - centre) / band)^2)`, so the mode has
+   * faded to a third of its peak at `band` and to nothing by twice it.
+   *
+   * Sized against the measured rig, not against `BUST_HEIGHT`, which is the
+   * emergence travel and not the geometry: the shipped bust's head spans
+   * roughly one world unit from jaw to crown. The default puts the effective
+   * band at about that, which is what makes a shoulder-height obstacle
+   * squeeze the shoulder rather than the crown.
+   */
+  readonly band: number;
+  /**
+   * Reaction on the participant, as a fraction of the flow it caused. 1 moves
+   * the element exactly as far as the body bulged; 0 leaves the page still.
+   */
+  readonly push: number;
+  /** Hard cap on that reaction, CSS pixels. Page layout must stay legible. */
+  readonly maxPush: number;
+  /**
+   * Depth of the dent a submerged participant holds in the tier 1 pool, as a
+   * fraction of `pool.bias`. The pool clamps its own waves to that bias, so
+   * expressing the dent in the same unit keeps an obstacle from punching the
+   * surface through the clip plane.
+   */
+  readonly displace: number;
+}
+
+/**
+ * One measured participant, resolved into the scene
+ * (`dec.liquid-glass-participants`). Produced by the core stage from a DOM
+ * rect and consumed by the VFX engine and the pool; neither of those ever
+ * sees an `Element`.
+ */
+export interface StageCollider {
+  /**
+   * Bind-space height at which this participant acts, world units. Bind
+   * space, not world: the shader weights the mode against `positionLocal`,
+   * which the emergence ramp translates rather than deforms.
+   */
+  readonly bandY: number;
+  /**
+   * Unit direction the body piles along, world space. It points from the
+   * obstacle toward the body axis, because that is the side the liquid is
+   * squeezed out to.
+   */
+  readonly direction: readonly [number, number, number];
+  /** How far the participant reaches inside the body, world units. */
+  readonly overlap: number;
+  /** World X of the participant's centre, for the pool footprint. */
+  readonly poolX: number;
+  /** Half-width of that footprint, world units. */
+  readonly poolHalfWidth: number;
+  /** How far the participant reaches below the waterline, world units. */
+  readonly submerged: number;
+}
+
+/**
  * Opt-in true lensing of a host-named subtree (`dec.liquid-glass-architecture`,
  * rung 3, item 4). No browser API hands rendered page pixels to WebGL, so the
  * only cross-engine route to per-pixel refraction is to rasterise a subtree
@@ -579,6 +656,7 @@ export interface HeadConfig {
   readonly interior: HeadInteriorConfig;
   readonly lens: HeadLensConfig;
   readonly fluid: HeadFluidConfig;
+  readonly stage: HeadStageConfig;
 }
 
 export type HeadConfigOverrides = {
@@ -595,6 +673,7 @@ export type HeadConfigOverrides = {
   interior?: Partial<HeadInteriorConfig>;
   lens?: Partial<HeadLensConfig>;
   fluid?: Partial<HeadFluidConfig>;
+  stage?: Partial<HeadStageConfig>;
 };
 
 export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
@@ -700,6 +779,17 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     crisp: 2,
     reach: 0.6,
   }),
+  // Marked participants are the gate, so these are live the moment a host
+  // writes `data-hologlyph-obstacle` on something, and inert on every page
+  // that does not (dec.liquid-glass-participants).
+  stage: Object.freeze({
+    amount: 1,
+    squeeze: 0.5,
+    band: 0.45,
+    push: 0.6,
+    maxPush: 24,
+    displace: 1,
+  }),
 });
 
 /**
@@ -747,6 +837,24 @@ export interface VFXEngine extends Disposable {
     drive: number,
     carrierVelocity: readonly [number, number, number],
   ): void;
+  /**
+   * Hand the solver this frame's measured participants
+   * (`dec.liquid-glass-participants`). One localised mode per collider, up to
+   * `FLUID_PARTICIPANT_MODES`; anything beyond that is dropped rather than
+   * folded together, because two obstacles averaged into one mode cancel
+   * instead of denting both sides.
+   *
+   * An empty list is the normal case and releases every participant mode back
+   * to rest, so a page that marks nothing is the shipped head exactly.
+   */
+  setStageColliders(colliders: readonly StageCollider[]): void;
+  /**
+   * The solved flow of each participant mode, XYZ per slot, world units.
+   * Written in place every frame so the core can push the participants back
+   * without allocating; `length` is `3 * FLUID_PARTICIPANT_MODES` and slots
+   * past the collider count are 0.
+   */
+  readonly stageFlow: Float32Array;
   update(dt: number): void;
   /** Shorten or snap emergence ramps when reduced motion is requested. */
   setReducedMotion(reduced: boolean): void;
@@ -821,6 +929,17 @@ export interface Engine extends Emitter<EngineEvents>, Disposable {
    * sampled window settles after moving, never per frame.
    */
   captureLens(): void;
+  /**
+   * Rescan the document for `data-hologlyph-obstacle` and
+   * `data-hologlyph-body` (`dec.liquid-glass-participants`).
+   *
+   * The engine scans once at mount and then watches the marked elements. It
+   * does NOT watch the whole document for new markers unless it found at
+   * least one at mount, because a subtree `MutationObserver` on a page that
+   * uses none of this is exactly the cost the drop-in promise forbids. A host
+   * that marks its first participant after mount calls this.
+   */
+  refreshStage(): void;
   /** Freeze or unfreeze all procedural motion (idle, gaze, nods) so
    * successive frames hold an identical pose; used by deterministic
    * captures. Rendering and text-skin flow continue. */

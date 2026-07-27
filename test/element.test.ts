@@ -174,6 +174,10 @@ class FakeEngine implements Engine {
   captureLens(): void {
     this.captureLensCalls += 1;
   }
+  refreshStageCalls = 0;
+  refreshStage(): void {
+    this.refreshStageCalls += 1;
+  }
   resize(width: number, height: number): void {
     this.resizeCalls.push({ width, height });
   }

@@ -13,6 +13,7 @@ System Library "Web-native text-skinned talking-head library" id "hologlyph" {
             path "./test/core-backdrop.test.ts"
             path "./test/core-lens.test.ts"
             path "./test/core-element-lens.test.ts"
+            path "./test/core-participants.test.ts"
             contract "meta/contracts/core.md"
         }
         Module Renderer "Three.js renderer, WebGPU/WebGL2 fallback, camera" id "hologlyph.runtime.renderer" {

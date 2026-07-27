@@ -1,29 +1,38 @@
 # Next unit of work
 
-Updated 2026-07-26 after `liquid-glass-interior-glyphs` landed (item 10 of
+Updated 2026-07-27 after `liquid-glass-stage-participants` landed (item 7 of
 `dec.liquid-glass-architecture`), which was the last item that was both open
 and unblocked.
 
 **There is no next todo. `cairn brief` will hand you nothing, and that is
 correct.** Every remaining item in the liquid-glass programme is `blocked`,
-and every one of them is blocked on the same thing.
+and the two blockers are an owner ruling and a Firefox host.
 
-**Start here: get the owner in front of the three labs.** Three features now
+**Start here: get the owner in front of the five labs.** Five features now
 ship gated off because nobody has judged them:
 
 - `demo/pool-lab.html`, `pool.amount` at 0 (item 3).
 - `demo/lens-lab.html`, the snapshot lens with no source named (item 4), plus
   `demo/live-lens-lab.html` for the Chromium half (item 5).
 - `demo/interior-glyph-lab.html`, `interior.count` at 0 (item 10).
+- `demo/fluid-lab.html`, `fluid.amount` at 0 (item 8).
+- `demo/stage-lab.html`, which needs `fluid.amount` above 0 to show anything at
+  all, so it is judged with item 8 rather than after it (item 7).
 
-Serve them with `bun run dev` and open the paths directly; none of the three is
+Serve them with `bun run dev` and open the paths directly; none of the five is
 in `demo/vite.config.ts`, so none is deployed.
 
-A ruling on the pool is the one that pays: it unblocks item 7
-`stage-participants` and item 8 `fluidity-driver`, which are most of what is
-left of the programme. Item 6 additionally needs
-`todo.liquid-glass-firefox-verify`, which needs a host where the Firefox
-Playwright build actually starts, and this one does not.
+The ruling that pays is now the FLUID one, not the pool one. Items 7 and 8 are
+built and measured but both hang off `fluid.amount`, which ships at 0, so a
+judgement there decides whether roughly half the programme ever appears on
+screen. The pool ruling still gates item 3 and the participant dent that rides
+on it. Item 6 additionally needs `todo.liquid-glass-firefox-verify`, which
+needs a host where the Firefox Playwright build actually starts, and this one
+does not.
+
+What is genuinely left after a ruling is item 6
+(`todo.liquid-glass-live-css-layer`, which also wants Firefox) and item 9,
+tier 4 (`todo.liquid-glass-topology-fluid`).
 
 If the owner is not available, the honest options are, in order:
 
@@ -32,8 +41,22 @@ If the owner is not available, the honest options are, in order:
 2. The three non-liquid follow-ups at the bottom of this file
    (`todo.lab-control-refinements`, `todo.background-adaptive-look`,
    `todo.textskin-port-owner-config`).
-3. Say the programme is owner-blocked and stop, rather than starting item 7 or
-   8 against a look nobody has approved.
+3. Say the programme is owner-blocked and stop, rather than tuning a look
+   nobody has approved.
+
+What item 7 leaves you, beyond what is in
+`meta/changes/liquid-glass-stage-participants/implementation-notes.md`:
+
+- **Nobody has watched a page get shoved.** The reaction is measured (a
+  `data-hologlyph-body` element takes exactly the capped 24 px and an
+  obstacle takes 0) but whether a card sliding 24 px as the head squeezes past
+  reads as fluid or as a layout bug is a taste call. Scroll
+  `demo/stage-lab.html` and judge it.
+- **The three-mode cap is observable, not tuned.** Tick the late-arrival box in
+  the lab and the fourth card is dropped rather than merged. Whether three is
+  the right number for a real page is unanswered.
+- **`stage.squeeze` at 0.5 is a lab starting point.** So are `push` at 0.6 and
+  `maxPush` at 24. None was derived.
 
 What item 10 leaves you, beyond what is in
 `meta/changes/archive/2026-07-26-liquid-glass-interior-glyphs/implementation-notes.md`:
@@ -48,7 +71,7 @@ What item 10 leaves you, beyond what is in
 - **The field is subtle head on and obvious in three-quarter view**, because
   that is where the skin is thin enough to see through. Judge both.
 
-Item 10 also leaves a lab and a capture, listed with the rest below.
+Items 7 and 10 also leave labs and captures, listed with the rest below.
 
 Three follow-ups the snapshot-lens change deliberately left open:
 
@@ -231,6 +254,37 @@ this file tracks their purpose and what remains owner-session-only.
   with a rigid `inertia: 0` control, and reduced motion removing that lag.
   `interior.count` ships at 0: the look is not owner-approved yet, and nobody
   has watched it move.
+- `demo/stage-lab.html` plus `tools/smoke/stage-shot.mjs` - item 7, rung 4:
+  stage participants, the opt-in contract that lets the fluid touch the page.
+  A 320vh scrolling page with three marked cards that sweep past a fixed head:
+  a `data-hologlyph-obstacle` pair flanking the head, which is the case a
+  single global mode could not express, and one card carrying only
+  `data-hologlyph-body`, which is the one that gets shoved. Live controls for
+  every field of `HeadStageConfig`, the `fluid.amount` gate with a shut/open
+  pair, `pool.amount` and `pool.bias` for the dent half, a checkbox that marks
+  a FOURTH element at runtime and calls `engine.refreshStage()`, jump buttons,
+  a coupling readout (per-slot flow straight off `VFXEngine.stageFlow` plus the
+  transform the engine actually wrote) and a frame-time readout.
+  `window.__stageLab` exposes `setStage`, `setFluid`, `setPool`, `addLate`,
+  `removeLate`, `pushOf`, `restOf`, `activeSlots`, `flow` and `pinPose` for the
+  smoke script. The camera is FIXED here where the other labs make it live:
+  `stageProjection` assumes an eye looking down -Z, so an orbit control would
+  put every participant where it is not, and the card offsets are world
+  distances written in vh that only mean what they say at this eye. Half the
+  viewport has to hold the panel, that world-space gap and a readable card, so
+  a media query narrows the panel and the cards below 1400 px; under about
+  1230 px the panel simply covers the left-hand card, which costs paint and not
+  measurement. Dev-only, deliberately absent from `demo/vite.config.ts`.
+  Measured in the lab at a 1440x900 viewport: the flanking pair solves two
+  equal and opposite modes rather than the one averaged mode that would
+  cancel, the drifter saturates the 24 px `maxPush` cap (37.3 px uncapped),
+  marking a fourth element leaves the three solved modes bit-identical
+  because the rescan walks the document in order and stops at three, and with
+  `pinPose` holding the frame the gate at 0 against the gate at 1 differs by
+  118120 pixels against a zero-pixel noise floor and restores to a one-pixel
+  match. `fluid.amount` ships at 0, so on the shipped build a page
+  may mark whatever it likes and nothing couples: the look is not
+  owner-approved yet.
 
 ## Where the approved look lives
 

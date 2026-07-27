@@ -286,3 +286,88 @@ export function fluidDisplacement(
   const cosine = (normal[0] * flow[0] + normal[1] * flow[1] + normal[2] * flow[2]) / length;
   return clamp01(amount) * weight * fluidSoftRamp(cosine) * length;
 }
+
+// ---------------------------------------------------------------------------
+// Modal basis (dec.liquid-glass-participants)
+// ---------------------------------------------------------------------------
+
+/**
+ * Size of the modal basis. Mode 0 is the global mode tier 3 shipped with:
+ * gravity, the page drive and the carrier drag all act on it, and its spatial
+ * weight is `fluidHeightWeight`, so a head with no participants is bit for bit
+ * the head `dec.liquid-glass-fluidity` describes.
+ *
+ * The remaining modes are participant slots. They exist because one global
+ * mode cannot squeeze against a page element on one side only: two obstacles
+ * facing each other produce opposite flow vectors, and summing them into one
+ * mode cancels rather than denting both sides. Kept small deliberately, since
+ * every slot is three uniforms and an unrolled term in the vertex graph.
+ */
+export const FLUID_MODES = 4;
+
+/** Participant slots in the basis: everything but the global mode. */
+export const FLUID_PARTICIPANT_MODES = FLUID_MODES - 1;
+
+/**
+ * Spatial weight of a participant mode: a Gaussian band centred on the height
+ * the participant acts at. Gaussian rather than the exponential decay mode 0
+ * uses, because a participant is a local event with a body above AND below it,
+ * whereas gravity only ever acts downward from the waterline.
+ */
+export function fluidBandWeight(y: number, centre: number, band: number): number {
+  const d = (y - centre) / Math.max(1e-4, band);
+  return Math.exp(-d * d);
+}
+
+/**
+ * Flow a squeezing participant holds the body at, world units. `direction` is
+ * the way the liquid piles, which is from the obstacle toward the body axis,
+ * and is assumed unit length.
+ */
+export function fluidSqueezeTarget(
+  overlap: number,
+  squeeze: number,
+  direction: FluidVec3,
+): FluidVec3 {
+  const scale = Math.max(0, overlap) * Math.max(0, squeeze);
+  return [direction[0] * scale, direction[1] * scale, direction[2] * scale];
+}
+
+/**
+ * Acceleration that settles a mode at exactly `target`. Same trick as
+ * `fluidGravity`, and for the same reason: at equilibrium `omega^2 * x = a`,
+ * so scaling by the stiffness makes the resting squeeze independent of
+ * `tension` and leaves tension governing only the wobble about it.
+ */
+export function fluidTargetAccel(target: FluidVec3, tension: number): FluidVec3 {
+  const omega = fluidOmega(tension);
+  const k = omega * omega;
+  return [target[0] * k, target[1] * k, target[2] * k];
+}
+
+/**
+ * Newton's third law, in CSS pixels. The body bulged along `flow`, so the
+ * participant that squeezed it is pushed the other way, converted through the
+ * canvas scale and capped so page furniture stays where a reader can find it.
+ *
+ * World Y is up and CSS Y is down, so the vertical term keeps its sign while
+ * the horizontal one flips.
+ */
+export function fluidReaction(
+  flow: FluidVec3,
+  pixelsPerWorldUnit: number,
+  gain: number,
+  maxPixels: number,
+): readonly [number, number] {
+  const scale = Math.max(0, gain) * Math.max(0, pixelsPerWorldUnit);
+  let x = -flow[0] * scale;
+  let y = flow[1] * scale;
+  const cap = Math.max(0, maxPixels);
+  const length = Math.hypot(x, y);
+  if (length > cap && length > 0) {
+    const k = cap / length;
+    x *= k;
+    y *= k;
+  }
+  return [x, y];
+}

@@ -16,15 +16,19 @@ import {
   type HeadConfigOverrides,
   type LensBinding,
   type SkinMaterials,
+  type StageCollider,
   type TextSkinEngine,
   type VFXEngine,
 } from '../contracts';
 import {
+  FLUID_PARTICIPANT_MODES,
   FLUID_REST,
   fluidAccel,
   fluidGravity,
   fluidIntegrate,
+  fluidSqueezeTarget,
   fluidStateAmount,
+  fluidTargetAccel,
   type FluidState,
   type FluidVec3,
 } from './fluid';
@@ -115,14 +119,17 @@ export {
   FLUID_EMERGENCE_SCALE,
   FLUID_MAX_STEP,
   FLUID_MAX_SUBSTEPS,
+  FLUID_MODES,
   FLUID_OMEGA_SLACK,
   FLUID_OMEGA_STIFF,
+  FLUID_PARTICIPANT_MODES,
   FLUID_REDUCED_DRIVE,
   FLUID_REST,
   FLUID_SCROLL_SCALE,
   FLUID_SOFT_EPS,
   FLUID_STATE_GAIN,
   fluidAccel,
+  fluidBandWeight,
   fluidDisplacement,
   fluidDrive,
   fluidFaceWeight,
@@ -130,9 +137,12 @@ export {
   fluidHeightWeight,
   fluidIntegrate,
   fluidOmega,
+  fluidReaction,
   fluidSoftRamp,
+  fluidSqueezeTarget,
   fluidStateAmount,
   fluidSubsteps,
+  fluidTargetAccel,
 } from './fluid';
 export type { FluidState, FluidVec3 } from './fluid';
 export type { PoolProfile } from './pool';
@@ -140,7 +150,8 @@ export type { PoolProfile } from './pool';
 // part of the pool that touches `three/webgpu` render targets, and nothing
 // but the engine's own pool reconciler has any use for it, so it is imported
 // from its module directly rather than widened into the shader barrel.
-export type { PoolSurface, PoolSurfaceState, PoolUniforms } from './pool-surface';
+export { POOL_OBSTACLE_SLOTS } from './pool-surface';
+export type { PoolObstacle, PoolSurface, PoolSurfaceState, PoolUniforms } from './pool-surface';
 export {
   INTERIOR_AXIS_SLICES,
   INTERIOR_DAMPING_RATIO,
@@ -193,8 +204,8 @@ export function createVFXEngine(): VFXEngine {
   /**
    * Tier 3 solver state and the drive the host wrote for this frame
    * (dec.liquid-glass-fluidity). Held here rather than per binding: there is
-   * one body, so there is one sloshing mode, and every material that dresses
-   * it reads the same flow vector.
+   * one body, so there is one global sloshing mode, and every material that
+   * dresses it reads the same flow vector.
    */
   let fluidState: FluidState = FLUID_REST;
   let fluidBehaviour: BehaviorState = 'idle';
@@ -202,6 +213,25 @@ export function createVFXEngine(): VFXEngine {
   let fluidCarrier: FluidVec3 = [0, 0, 0];
   /** Reused, never reallocated: written into every skin binding each frame. */
   const fluidFlow = new Vector3(0, 0, 0);
+
+  /**
+   * Participant modes (dec.liquid-glass-participants). One damped oscillator
+   * per marked page element, each localised to the height its element presses
+   * at. Separate states rather than one summed mode, because two obstacles
+   * facing each other carry opposite flow vectors and their mean is nothing.
+   */
+  const stageStates: FluidState[] = [];
+  const stageBandY: number[] = [];
+  const stageFlows: Vector3[] = [];
+  for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+    stageStates.push(FLUID_REST);
+    stageBandY.push(0);
+    stageFlows.push(new Vector3(0, 0, 0));
+  }
+  /** This frame's measured participants, capped at the slot count. */
+  let stageColliders: readonly StageCollider[] = [];
+  /** Published solved flow, XYZ per slot. Written in place, never reallocated. */
+  const stageFlow = new Float32Array(FLUID_PARTICIPANT_MODES * 3);
   /**
    * Bound page snapshot, or null. The presence of a texture is the hard gate
    * on the lens: `skin.lens.amount` alone must never open it, because the
@@ -281,6 +311,10 @@ export function createVFXEngine(): VFXEngine {
       // `fluidAmount` and `fluidNormalGate` are NOT written here. Both carry
       // the behaviour gain, which changes without a config write, so `update`
       // owns them and this function must not race it back to the raw config.
+      u.stageBand.value = config.stage.band;
+      // `stageFlow` and `stageBandY` are NOT written here either: they are
+      // per-frame solver output, and a config write mid-frame must not race
+      // them back to zero.
 
       applyLensToUniforms(u, config);
     }
@@ -419,6 +453,15 @@ export function createVFXEngine(): VFXEngine {
       ];
     },
 
+    setStageColliders(colliders: readonly StageCollider[]): void {
+      if (disposed) return;
+      stageColliders = colliders;
+    },
+
+    get stageFlow(): Float32Array {
+      return stageFlow;
+    },
+
     setReducedMotion(reducedMotion: boolean): void {
       reduced = reducedMotion;
     },
@@ -471,6 +514,48 @@ export function createVFXEngine(): VFXEngine {
         fluidFlow.set(fluidState.offset[0], fluidState.offset[1], fluidState.offset[2]);
       }
 
+      // Participant modes (dec.liquid-glass-participants). Gated on the SAME
+      // effective amount as the global mode, and deliberately so: the CSS
+      // reaction is Newton's third law on this interaction, so a page whose
+      // head is rigid must not watch its own furniture slide about. Both
+      // sides of the coupling appear together or neither does.
+      const stageAmount = fluidAmount > 0 ? clamp01(activeConfig.stage.amount) : 0;
+      for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+        const collider = stageAmount > 0 ? stageColliders[i] : undefined;
+        if (!collider) {
+          // Released, not decayed: a participant that scrolled away should not
+          // leave the body holding a dent nobody can see the cause of, and a
+          // slot at exact rest contributes exactly zero to the vertex graph.
+          stageStates[i] = FLUID_REST;
+          stageFlows[i]?.set(0, 0, 0);
+          stageBandY[i] = 0;
+          stageFlow[i * 3] = 0;
+          stageFlow[i * 3 + 1] = 0;
+          stageFlow[i * 3 + 2] = 0;
+          continue;
+        }
+        const previous = stageStates[i] ?? FLUID_REST;
+        const next = fluidIntegrate(
+          previous,
+          fluidTargetAccel(
+            fluidSqueezeTarget(
+              collider.overlap * stageAmount,
+              activeConfig.stage.squeeze,
+              collider.direction,
+            ),
+            activeConfig.fluid.tension,
+          ),
+          dt,
+          activeConfig.fluid.tension,
+        );
+        stageStates[i] = next;
+        stageBandY[i] = collider.bandY;
+        stageFlows[i]?.set(next.offset[0], next.offset[1], next.offset[2]);
+        stageFlow[i * 3] = next.offset[0];
+        stageFlow[i * 3 + 1] = next.offset[1];
+        stageFlow[i * 3 + 2] = next.offset[2];
+      }
+
       for (const binding of skinBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
         binding.uniforms.poolTime.value = poolTime;
@@ -478,6 +563,13 @@ export function createVFXEngine(): VFXEngine {
         binding.uniforms.fluidAmount.value = fluidAmount;
         binding.uniforms.fluidNormalGate.value = fluidAmount;
         binding.uniforms.fluidFlow.value.copy(fluidFlow);
+        for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+          const flow = stageFlows[i];
+          const slot = binding.uniforms.stageFlow[i];
+          const centre = binding.uniforms.stageBandY[i];
+          if (flow && slot) slot.value.copy(flow);
+          if (centre) centre.value = stageBandY[i] ?? 0;
+        }
       }
       for (const binding of eyeBindings) {
         binding.scroll.value = binding.skin.scrollOffset;
@@ -493,6 +585,13 @@ export function createVFXEngine(): VFXEngine {
       fluidState = FLUID_REST;
       fluidCarrier = [0, 0, 0];
       fluidDriveLevel = 0;
+      stageColliders = [];
+      stageFlow.fill(0);
+      for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+        stageStates[i] = FLUID_REST;
+        stageBandY[i] = 0;
+        stageFlows[i]?.set(0, 0, 0);
+      }
       plane.constant = 0;
     },
   };
