@@ -6,11 +6,17 @@ created: 2026-07-25
 
 # Tier 4: topology-changing fluid, and the only real viseme trade
 
-Order 9 (`dec.liquid-glass-architecture`). Blocked on
-`todo.liquid-glass-fluidity-driver`.
+Order 9 (`dec.liquid-glass-architecture`). Its stated prerequisite,
+`todo.liquid-glass-fluidity-driver`, LANDED 2026-07-27, so this item is
+unblocked in principle and stays `blocked` for a different reason.
 
-Last stage, and possibly never (`dec.liquid-glass-architecture`). Do not start
-before `todo.liquid-glass-fluidity-driver` is approved.
+Two things still gate it, and neither is engineering. Tier 3 ships at
+`fluid.amount: 0` and nobody has judged it yet
+(`todo.liquid-glass-owner-look-session`), so the thing tier 4 would extend is
+not itself approved. And tier 4 is the one stage that gives up authored
+visemes, which is a product call about whether the head is ever allowed to stop
+being a head. Do not start it without an explicit owner decision superseding
+the "possibly never" clause in `dec.liquid-glass-architecture`.
 
 Tier 3 turns fluidity up and down on the rig, which covers sag, wobble, surface
 tension, squeeze, and flow. One class of behaviour it cannot do, because a

@@ -48,7 +48,7 @@ Host: macOS 27, Apple M2 Max, DPR 2. Page under test:
 | Safari 26 | Opened directly, window captured with `screencapture` | Renders the blob-shaped frosted glass over sharp page text | Not measured |
 | Playwright WebKit 26.5 | Headless | Inconclusive: composites no filter at all | 33 ms, software raster, meaningless |
 | Firefox 151 (Playwright) | Headed and headless | Not obtained | Browser fails to start on this host: GPU helper failure headed, `RenderCompositorSWGL failed mapping default framebuffer` headless |
-| Firefox 141.0.3 (stock, `/Applications/Firefox.app`) | Four routes attempted 2026-07-27, see below | Not obtained | Not obtained |
+| Firefox 141.0.3 (stock, `/Applications/Firefox.app`) | Five routes attempted 2026-07-27, see below | Not obtained | Not obtained |
 
 ### Firefox retry, 2026-07-27
 
@@ -62,6 +62,14 @@ capability rather than the web platform:
 | Headed launch plus desktop capture | macOS Screen Recording permission is not granted to this process: the computer tool returns `DESKTOP_PERMISSION_DENIED` and `screencapture` returns `could not create image from display` |
 | `firefox --headless --screenshot` | Same SWGL failure as the Playwright build: `RenderCompositorSWGL failed mapping default framebuffer`, no PNG written |
 | `firefox --remote-debugging-port 9223` | Process starts headed but never opens the BiDi listener, so no `browsingContext.captureScreenshot` |
+| `firefox --marionette` on a throwaway profile with `marionette.port` set (retried 2026-07-27) | Process starts headed and paints the page, but port 2828 never accepts a connection inside 60 s. Same shape as the `--remote-debugging-port` failure and preceded by the same `sandbox_extension_issue_file_to_process ... Operation not permitted` line, so this host denies the browser its listener socket rather than the protocol being unavailable |
+
+`--headless --screenshot` was retried directly against the stock build on
+2026-07-27 and fails identically to the Playwright build, so that row is
+confirmed rather than inferred. It would not have settled the question anyway:
+headless macOS Firefox composites through SWGL, not the GPU WebRender path the
+design depends on, so a clip verdict read from it would not be evidence about
+bug 1579957.
 
 The page itself loads and renders in a headed window (`demo/backdrop-clip-spike.html`
 served from the demo dev server), so the only missing piece is a way to read
