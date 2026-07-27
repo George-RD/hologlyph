@@ -1206,6 +1206,18 @@ class EngineImpl implements Engine {
   }
 
   /**
+   * Is the lens putting pixels on the glass right now?
+   *
+   * Contribution, not intent (dec.liquid-glass-rung-exclusion). A source the
+   * host named whose snapshot has not resolved, or whose rasteriser would not
+   * load at all, binds nothing and shows nothing, and must not be allowed to
+   * stand a working rung down on the strength of an intention.
+   */
+  private lensContributing(): boolean {
+    return this.lens?.binding != null && this.sysVfx.headConfig.lens.amount > 0;
+  }
+
+  /**
    * Build or tear down the compositor glass layer to match `compositor.amount`
    * (dec.liquid-glass-compositor).
    *
@@ -1213,6 +1225,14 @@ class EngineImpl implements Engine {
    * with no resource whose absence could be the gate instead. At 0 nothing
    * exists, so a page that never touches this config is byte-identical to the
    * build before the feature.
+   *
+   * The lens closes the same gate (dec.liquid-glass-rung-exclusion). Rungs 2
+   * and 3 of the backdrop ladder both answer "what is behind the glass", so a
+   * page that opens both must see exactly one, and it is the higher rung
+   * because the host had to name a subtree to get it. Down this branch rather
+   * than a hide, for the reason the amount gate takes it too: an invisible
+   * `backdrop-filter` element still costs the compositor a backdrop capture on
+   * every scroll, which is the expensive half of the feature.
    *
    * Returns null when there is nothing to sync this frame. An engine with no
    * `backdrop-filter` lands there permanently, and `compositorUnavailable`
@@ -1224,7 +1244,7 @@ class EngineImpl implements Engine {
    */
   private applyCompositorGlass(): CompositorGlass | null {
     const config = this.sysVfx.headConfig.compositor;
-    if (config.amount <= 0 || !this.canvas) {
+    if (config.amount <= 0 || !this.canvas || this.lensContributing()) {
       if (this.compositor) {
         this.compositor.dispose();
         this.compositor = null;
@@ -1550,7 +1570,6 @@ class EngineImpl implements Engine {
     this.applyGlassLayering();
     this.applyPoolLayer();
     this.applyInteriorGlyphs();
-    const compositorGlass = this.applyCompositorGlass();
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
 
@@ -1561,6 +1580,13 @@ class EngineImpl implements Engine {
       this.lens.sync(this.sysVfx.headConfig.lens.strength);
       this.sysVfx.setLens(this.lens.binding);
     }
+
+    // Compositor glass, AFTER the lens and not before it
+    // (dec.liquid-glass-rung-exclusion). The lens stands this rung down while
+    // it is contributing, and both lens sources publish `binding` from inside
+    // `sync()`, so reconciling first would gate this frame's layer on last
+    // frame's lens and leave the frost up for a frame after a snapshot lands.
+    const compositorGlass = this.applyCompositorGlass();
 
     // Stage participants (dec.liquid-glass-participants). Immediately after
     // the lens so both layout reads land in one batch, and before the pool

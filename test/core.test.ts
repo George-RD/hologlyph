@@ -1817,6 +1817,98 @@ describe('compositor glass lifecycle (dec.liquid-glass-compositor)', () => {
     // host's own tree. Leaving that behind would be a leak the host can see.
     expect(layerIn(canvas)).toBeNull();
   });
+
+  /**
+   * Rung 2 against rung 3 (`dec.liquid-glass-rung-exclusion`). The two answer
+   * the same question, so a page that opens both gates must see exactly one of
+   * them, and it must be the one the host had to ask for.
+   */
+  describe('exclusion against the lens (dec.liquid-glass-rung-exclusion)', () => {
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+    const stubRasteriser = () => (): Promise<CanvasImageSource> =>
+      Promise.resolve({ width: 4, height: 4 } as unknown as CanvasImageSource);
+
+    it('stands the layer down on the first frame a bound lens contributes', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      // ONE frame. Both lens sources publish `binding` from inside `sync()`,
+      // so a reconciler that ran before the lens would still be reading last
+      // frame's null here and would leave the frost up for a frame.
+      rafCb?.(32);
+      expect(layerIn(canvas)).toBeNull();
+
+      engine.dispose();
+    });
+
+    it('brings the layer back when the source is dropped', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      rafCb?.(16);
+      expect(layerIn(canvas)).toBeNull();
+
+      engine.setLensSource(null);
+      rafCb?.(32);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('brings the layer back when the lens is mixed out', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      rafCb?.(16);
+      expect(layerIn(canvas)).toBeNull();
+
+      // A bound texture that contributes nothing is not the lens showing. The
+      // head is translucent again, so the frost is what is behind it.
+      engine.vfx.setHeadConfig({ lens: { amount: 0 } });
+      rafCb?.(32);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('keeps the layer while a named capture has not resolved', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      // Intent is not contribution. Naming a subtree whose rasteriser never
+      // answers must not take away the rung that does work.
+      engine.setLensSource(document.createElement('section'), {
+        rasterise: () => new Promise<CanvasImageSource>(() => {}),
+      });
+      await settle();
+      rafCb?.(16);
+      rafCb?.(32);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('keeps the layer when the rasteriser fails outright', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      engine.on('error', () => {});
+      engine.setLensSource(document.createElement('section'), {
+        rasterise: () => Promise.reject(new Error('no rasteriser')),
+      });
+      await settle();
+      rafCb?.(16);
+      // The ladder degrading downward: rung 3 was asked for, could not be
+      // built, and rung 2 carries on exactly as it did.
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+  });
 });
 
 describe('interior glyph field lifecycle (dec.liquid-glass-architecture, item 10)', () => {

@@ -116,27 +116,31 @@ item 4 (2026-07-26), item 5 (2026-07-26), item 6 (2026-07-27), item 7
 (2026-07-27), item 8 (2026-07-27), item 10 (2026-07-26).
 
 **Next unit of work, in order of how actionable it is right now.** As of
-2026-07-27, with item 6 landed, item 9 is the only engineering item left in the
-programme and it is gated on a product call. Read this list, not `cairn brief`.
+2026-07-27, with items 6 and 3-below landed, item 9 is the only engineering
+item left in the programme and it is gated on a product call. Read this list,
+not `cairn brief`.
 
-1. **An owner look session** over the six labs that now ship gated off:
+1. **An owner look session** over the labs that now ship gated off:
    `demo/pool-lab.html`, `demo/lens-lab.html` (with `demo/live-lens-lab.html`
    as its Chromium half, judged as one ruling), `demo/interior-glyph-lab.html`,
    `demo/fluid-lab.html`, `demo/stage-lab.html` and
-   `demo/compositor-lab.html`. Nothing in the programme turns on by default
-   until these are approved, and the whole point of shipping every feature at
-   zero was to make this one session the gate. This is the highest-value thing
-   that can happen next, and it needs the owner, not an agent. Tracked as
-   `todo.liquid-glass-owner-look-session`.
+   `demo/compositor-lab.html`, with `demo/ladder-lab.html` as the place rungs 2
+   and 3 are compared side by side. Nothing in the programme turns on by
+   default until these are approved, and the whole point of shipping every
+   feature at zero was to make this one session the gate. This is the
+   highest-value thing that can happen next, and it needs the owner, not an
+   agent. Tracked as `todo.liquid-glass-owner-look-session`.
 2. **Item 9, `todo.liquid-glass-topology-fluid`**, is unblocked in principle
    now that item 8 has landed, but it is the one stage that gives up authored
    visemes and may never be entered. It is a product call about whether the
    head is ever allowed to stop being a head, so do not start it without an
    explicit owner decision superseding the "possibly never" clause above.
-3. **Rung 2 and rung 3 in the same page.** Naming a lens source makes the head
-   opaque, which would hide the compositor frost behind it. Nothing stops a
-   host doing both and the result is currently undefined by anything except the
-   draw order. Small, real, and nobody has looked at it.
+3. **Rung 2 and rung 3 in the same page** - RESOLVED 2026-07-27 by
+   `dec.liquid-glass-rung-exclusion` and `todo.liquid-glass-ladder-exclusion`.
+   The rungs are mutually exclusive at any one head, the higher one wins, and
+   the test is contribution rather than intent: the engine removes the
+   compositor layer exactly while a lens binding exists and `lens.amount` is
+   above zero, so a lens that never captures leaves the frost alone.
 
 1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
    unit of cost, one extra draw call, independent of every backdrop question.

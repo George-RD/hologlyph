@@ -104,8 +104,16 @@ part of the contract rather than bugs:
 
 Switching the lens on also makes the head opaque where it covers the named
 subtree, which moves the head-over-page blend from the browser compositor into
-the scene. Turn `skin.lens.amount` down to crossfade back towards the live
+the scene. Turn `lens.amount` down to crossfade back towards the live
 page.
+
+A named source also stands the compositor glass layer down while it is
+contributing pixels. That layer (`compositor`, off by default) frosts the
+live page behind the silhouette, and it answers the same question the lens
+does, so a page running both would show the backdrop twice at two different
+offsets. The higher rung wins, because you had to name a subtree to get it. A
+source that never captures, or one whose rasteriser will not load, does not
+count: the frost stays exactly where it was.
 
 `@zumer/snapdom` is an optional peer dependency, loaded through a dynamic
 import the first time a subtree is named, so it costs nothing when the

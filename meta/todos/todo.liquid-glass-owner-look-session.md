@@ -4,7 +4,7 @@ status: blocked
 created: 2026-07-27
 ---
 
-# Owner look session over the six gated labs
+# Owner look session over the gated labs
 
 Not an engineering item, and the reason `cairn brief` has nothing to offer.
 This is next unit of work 1 in `dec.liquid-glass-architecture`, and it needs the
@@ -17,8 +17,9 @@ plan: land the mechanism, defer the look, and settle all six in one sitting
 against the two criteria in `dec.liquid-glass-architecture`, that it must look
 great and it must feel authentic.
 
-Run `bun run dev`, then walk these in order. Each ships off; each has a slider
-that takes it to full.
+Run `bun run dev`, then walk these in order. The first six ship off and each
+has a slider that takes it to full; the seventh is where two of them are
+settled against each other rather than a feature of its own.
 
 | Lab | Knob | What to rule on |
 | --- | --- | --- |
@@ -27,7 +28,8 @@ that takes it to full.
 | `demo/interior-glyph-lab.html` | `interior.count`, 0 | Glyphs suspended inside the glass: density, drift, and whether they fight the surface text |
 | `demo/fluid-lab.html` | `fluid.amount`, 0 | Sag and wobble on the rig. Check a viseme sentence at every setting, since the whole tier 3 argument is that the mouth stays exact |
 | `demo/stage-lab.html` | `stage.amount` plus marked participants | Whether the head squeezing against page elements reads as physics or as a glitch. Needs `fluid.amount` above zero to show anything, so judge it after the fluid lab |
-| `demo/compositor-lab.html` | `compositor.amount`, 0 | Live page content frosted inside the head. Blur, saturation and tint, and the bigger question of whether real page content inside the silhouette beats the shipped flat-colour adaptation. Compare it directly against `demo/lens-lab.html`: the two rungs solve the same problem differently and only one of them needs the host to name a subtree |
+| `demo/compositor-lab.html` | `compositor.amount`, 0 | Live page content frosted inside the head. Blur, saturation and tint, and the bigger question of whether real page content inside the silhouette beats the shipped flat-colour adaptation |
+| `demo/ladder-lab.html` | both of the above | Rungs 2 and 3 over the SAME `#hero`, which is where the previous two rows are settled against each other. They are mutually exclusive by construction (`dec.liquid-glass-rung-exclusion`), so this is one ruling, not two: frost, lens, or neither. No ruling of its own is needed if the two rows above already agree |
 
 What a ruling looks like: for each lab, either a default value to ship, or
 "stays at zero", plus anything that has to change first. Record the outcome as a
@@ -40,5 +42,5 @@ moves the surface the interior glyphs are suspended behind, and `pool.amount`
 sets the waterline the stage participants dent. If both are approved, look at
 them together once before fixing either default.
 
-Acceptance: a ruling on all six, recorded as a source artefact, and this todo
-set to done.
+Acceptance: a ruling on all six gated features, recorded as a source artefact,
+and this todo set to done.
