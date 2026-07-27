@@ -112,34 +112,31 @@ not from `cairn brief`. Items 1 to 5 were `status: open` and mutually
 independent; the rest are `status: blocked` until their prerequisite lands.
 
 Landed so far: item 1 (2026-07-26), item 2 (2026-07-26), item 3 (2026-07-26),
-item 4 (2026-07-26), item 5 (2026-07-26), item 7 (2026-07-27), item 8
-(2026-07-27), item 10 (2026-07-26). Both of those changes were archived on
-2026-07-27.
+item 4 (2026-07-26), item 5 (2026-07-26), item 6 (2026-07-27), item 7
+(2026-07-27), item 8 (2026-07-27), item 10 (2026-07-26).
 
 **Next unit of work, in order of how actionable it is right now.** As of
-2026-07-27 the engineering backlog is empty: every remaining item waits on an
-input this repository cannot produce for itself, so `cairn brief` reports
-nothing and that report is misleading rather than wrong. Read this list, not
-`cairn brief`.
+2026-07-27, with item 6 landed, item 9 is the only engineering item left in the
+programme and it is gated on a product call. Read this list, not `cairn brief`.
 
-1. **An owner look session** over the five labs that now ship gated off:
-   `demo/pool-lab.html`, `demo/lens-lab.html`, `demo/interior-glyph-lab.html`,
-   `demo/fluid-lab.html` and `demo/stage-lab.html`. Nothing in the programme
-   turns on by default until these are approved, and the whole point of
-   shipping five features at zero was to make this one session the gate. This
-   is the highest-value thing that can happen next, and it needs the owner, not
-   an agent. Tracked as `todo.liquid-glass-owner-look-session`.
-2. **Item 6, `todo.liquid-glass-live-css-layer`**, once
-   `todo.liquid-glass-firefox-verify` is answered. That todo names its exact
-   blocker and lists five closed routes, so do not spend a session
-   rediscovering them: it needs either macOS Screen Recording permission
-   granted to the process driving the session, or a human to open the spike
-   page in Firefox and report two values.
-3. **Item 9, `todo.liquid-glass-topology-fluid`**, is unblocked in principle
+1. **An owner look session** over the six labs that now ship gated off:
+   `demo/pool-lab.html`, `demo/lens-lab.html` (with `demo/live-lens-lab.html`
+   as its Chromium half, judged as one ruling), `demo/interior-glyph-lab.html`,
+   `demo/fluid-lab.html`, `demo/stage-lab.html` and
+   `demo/compositor-lab.html`. Nothing in the programme turns on by default
+   until these are approved, and the whole point of shipping every feature at
+   zero was to make this one session the gate. This is the highest-value thing
+   that can happen next, and it needs the owner, not an agent. Tracked as
+   `todo.liquid-glass-owner-look-session`.
+2. **Item 9, `todo.liquid-glass-topology-fluid`**, is unblocked in principle
    now that item 8 has landed, but it is the one stage that gives up authored
    visemes and may never be entered. It is a product call about whether the
    head is ever allowed to stop being a head, so do not start it without an
    explicit owner decision superseding the "possibly never" clause above.
+3. **Rung 2 and rung 3 in the same page.** Naming a lens source makes the head
+   opaque, which would hide the compositor frost behind it. Nothing stops a
+   host doing both and the result is currently undefined by anything except the
+   draw order. Small, real, and nobody has looked at it.
 
 1. `todo.liquid-glass-solid-body` - LANDED 2026-07-26. Largest look gain per
    unit of cost, one extra draw call, independent of every backdrop question.
@@ -159,9 +156,14 @@ nothing and that report is misleading rather than wrong. Read this list, not
    `<canvas layoutsubtree>`, `refract` uploads live DOM every frame instead of
    a snapshot. Either gate missing, and on every other engine, the snapshot
    lens is built exactly as before.
-6. `todo.liquid-glass-live-css-layer` - live page content inside the head,
-   cross-browser. Needs item 2, and needs `todo.liquid-glass-firefox-verify`
-   resolved before it lands in `src/`.
+6. `todo.liquid-glass-live-css-layer` - LANDED 2026-07-27. Live page content
+   inside the head, cross-browser: `compositor.*` puts a `backdrop-filter`
+   layer behind the canvas, clipped every frame to the hull from item 2.
+   `todo.liquid-glass-firefox-verify` was closed on tracker evidence rather
+   than answered, and the constraint that actually shaped the module was the
+   backdrop root, which nothing in this decision had anticipated
+   (`dec.liquid-glass-compositor`). Shipped gated at `compositor.amount: 0`
+   and lab-only.
 7. `todo.liquid-glass-stage-participants` - LANDED 2026-07-27. The fluid starts
    touching the page: `data-hologlyph-obstacle` and `data-hologlyph-body`
    markers become colliders, and `FLUID_MODES` grew from one global mode to a

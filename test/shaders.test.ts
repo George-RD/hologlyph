@@ -348,6 +348,9 @@ describe('owner-approved head configuration', () => {
       stage: {
         amount: 1, squeeze: 0.5, band: 0.45, push: 0.6, maxPush: 24, displace: 1,
       },
+      compositor: {
+        amount: 0, blur: 18, saturate: 1.6, tint: '#bfe6ff', tintOpacity: 0.12,
+      },
     });
     // `pool.amount` is the tier 1 gate. It ships at 0 on purpose: the pool is
     // lab-only until the owner approves the look, and at 0 the engine builds
@@ -361,6 +364,10 @@ describe('owner-approved head configuration', () => {
     // are the gate, and a page that marks none has nothing to couple to
     // (dec.liquid-glass-participants).
     expect(DEFAULT_HEAD_CONFIG.stage.amount).toBe(1);
+    // `compositor.amount` IS a gate and ships at 0: rung 2 puts real page
+    // content inside the head, and at 0 the engine authors no DOM node at all
+    // (dec.liquid-glass-compositor).
+    expect(DEFAULT_HEAD_CONFIG.compositor.amount).toBe(0);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
@@ -368,11 +375,36 @@ describe('owner-approved head configuration', () => {
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.interior)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.lens)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.stage)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.compositor)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glass)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.backdrop)).toBe(true);
+  });
+
+  it('normalises and freezes the compositor block', () => {
+    const merged = normaliseHeadConfig({
+      compositor: { amount: 3, blur: -4, saturate: -1, tintOpacity: 2, tint: 'nope' },
+    });
+    expect(merged.compositor.amount).toBe(1);
+    expect(merged.compositor.blur).toBe(0);
+    expect(merged.compositor.saturate).toBe(0);
+    expect(merged.compositor.tintOpacity).toBe(1);
+    expect(merged.compositor.tint).toBe(DEFAULT_HEAD_CONFIG.compositor.tint);
+    expect(Object.isFrozen(merged.compositor)).toBe(true);
+  });
+
+  it('keeps a NaN out of the compositor filter string', () => {
+    // `blur(NaNpx)` is dropped by the CSS parser without a word anywhere, so
+    // the layer would be installed, visible and doing nothing.
+    const merged = normaliseHeadConfig({
+      compositor: { amount: Number.NaN, blur: Number.NaN, saturate: Number.NaN, tintOpacity: Number.NaN },
+    });
+    expect(merged.compositor.amount).toBe(DEFAULT_HEAD_CONFIG.compositor.amount);
+    expect(merged.compositor.blur).toBe(DEFAULT_HEAD_CONFIG.compositor.blur);
+    expect(merged.compositor.saturate).toBe(DEFAULT_HEAD_CONFIG.compositor.saturate);
+    expect(merged.compositor.tintOpacity).toBe(DEFAULT_HEAD_CONFIG.compositor.tintOpacity);
   });
 
   it('normalises and freezes the pool block', () => {

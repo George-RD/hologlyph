@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph compositor glass lab (rung 2)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body {
+        background: #05070d;
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      /*
+        What the head is supposed to frost, and the reason this lab exists.
+
+        It is FIXED and behind everything, so it is genuinely behind the head
+        rather than merely on the same page: rung 2's whole claim is live page
+        content INSIDE the silhouette, and content the head never covers cannot
+        demonstrate it.
+
+        Aperiodic and high contrast, for the reason the lens lab's hero is:
+        against a flat colour a blur is indistinguishable from no blur, and
+        against a repeating stripe a displacement of one period is
+        indistinguishable from none. Six radial blobs at unrelated offsets over
+        a diagonal ramp repeat on no scale the head is near.
+
+        It MOVES, because a still page cannot tell a live backdrop from a
+        snapshot. `--phase` drives it so a capture script can step it to an
+        exact value instead of racing an animation.
+      */
+      #field {
+        position: fixed;
+        inset: -20%;
+        z-index: -1;
+        --phase: 0px;
+        background:
+          radial-gradient(circle at 19% 27%, #ff5f7e 0 9%, transparent 9.4%),
+          radial-gradient(circle at 71% 15%, #7dffc4 0 6%, transparent 6.4%),
+          radial-gradient(circle at 44% 58%, #ffd166 0 11%, transparent 11.4%),
+          radial-gradient(circle at 86% 71%, #c792ff 0 8%, transparent 8.4%),
+          radial-gradient(circle at 33% 88%, #6cc6ff 0 5%, transparent 5.4%),
+          radial-gradient(circle at 58% 41%, #ff9f1c 0 7%, transparent 7.4%),
+          linear-gradient(163deg, #0b1730 0%, #1a2f5c 45%, #07101f 100%);
+        background-position: var(--phase) 0;
+        animation: drift 9s linear infinite;
+      }
+      @keyframes drift {
+        from { background-position: 0 0; }
+        to { background-position: -600px 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #field { animation: none; }
+      }
+      /* Pinned by the capture script: the animation is what makes it race. */
+      #field.pinned { animation: none; }
+
+      .band {
+        position: relative;
+        min-height: 100vh;
+        padding: 4rem 3rem;
+      }
+      h1 {
+        font-size: clamp(2.5rem, 7vw, 6rem);
+        line-height: 0.95;
+        margin: 0 0 1.5rem;
+        letter-spacing: -0.03em;
+        color: #eaf3ff;
+        text-shadow: 0 2px 18px #05070d;
+      }
+      .band p {
+        max-width: 34rem;
+        font-size: 1.1rem;
+        background: rgba(5, 7, 13, 0.72);
+        padding: 0.75rem 1rem;
+        border-radius: 0.4rem;
+      }
+
+      #host {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+      #holo { width: 100%; height: 100%; display: block; }
+
+      #panel {
+        position: fixed;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 21rem;
+        max-height: calc(100vh - 1.5rem);
+        overflow: auto;
+        padding: 0.9rem 1rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.6rem;
+        background: rgba(6, 10, 20, 0.9);
+      }
+      #panel h1 { font-size: 1rem; margin: 0 0 0.25rem; letter-spacing: 0; }
+      #panel p.sub { margin: 0 0 0.75rem; opacity: 0.65; font-size: 0.8rem; }
+      fieldset {
+        border: 1px solid #1d2740;
+        border-radius: 0.4rem;
+        margin: 0 0 0.7rem;
+        padding: 0.5rem 0.6rem 0.6rem;
+      }
+      legend { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; }
+      label.row {
+        display: grid;
+        grid-template-columns: 6.5rem 1fr 3rem;
+        gap: 0.4rem;
+        align-items: center;
+        margin: 0.2rem 0;
+      }
+      label.row span { font-size: 0.78rem; opacity: 0.85; }
+      label.row output { font-variant-numeric: tabular-nums; font-size: 0.75rem; opacity: 0.7; text-align: right; }
+      input[type='range'] { width: 100%; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+      button {
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 0.35rem;
+        border: 1px solid var(--accent);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: #04121f; font-weight: 600; }
+      #status { font-size: 0.78rem; opacity: 0.8; white-space: pre; font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <div id="field"></div>
+    <section class="band">
+      <h1>Live page, inside the head</h1>
+      <p>
+        The head is a transparent canvas over this page. Rung 2 puts a
+        <code>backdrop-filter</code> layer behind it, clipped to the projected
+        silhouette, so what shows through the glass is the real page rather
+        than a snapshot of it. The field behind everything never stops drifting;
+        if the frost inside the head drifts with it, the content is live and
+        this is rung 2 rather than rung 3.
+      </p>
+    </section>
+    <section class="band">
+      <h1>Scroll me</h1>
+      <p>
+        The outline is rewritten every frame from the baked silhouette hull, so
+        the frost has to track the head through a nod, a turn and an emergence
+        without the edge tearing away from the glyphs drawn over it.
+      </p>
+    </section>
+
+    <div id="host"><canvas id="holo"></canvas></div>
+
+    <div id="panel">
+      <h1>compositor glass</h1>
+      <p class="sub">dec.liquid-glass-compositor, rung 2, item 6</p>
+
+      <fieldset>
+        <legend>layer</legend>
+        <label class="row"><span>amount</span><input id="amount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <label class="row"><span>blur px</span><input id="blur" type="range" min="0" max="60" step="1" value="18" /><output></output></label>
+        <label class="row"><span>saturate</span><input id="saturate" type="range" min="0" max="4" step="0.05" value="1.6" /><output></output></label>
+        <label class="row"><span>tint opac</span><input id="tintOpacity" type="range" min="0" max="1" step="0.01" value="0.12" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>glass</legend>
+        <label class="row"><span>glass amt</span><input id="glassAmount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <label class="row"><span>base opac</span><input id="baseOpacity" type="range" min="0" max="1" step="0.005" value="0.075" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>pose</legend>
+        <div class="buttons">
+          <button id="jaw" type="button">jaw open</button>
+          <button id="freeze" type="button">freeze motion</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>host traps</legend>
+        <div class="buttons">
+          <button id="trapRadius" type="button">wrap in rounded clip</button>
+          <button id="trapNone" type="button">clean ancestry</button>
+        </div>
+        <p class="sub" style="margin:0.4rem 0 0">
+          Both wrappers promote a backdrop root above the layer, so the frost
+          samples nothing. The console says which one and why.
+        </p>
+      </fieldset>
+
+      <div id="status">layer off</div>
+    </div>
+
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
+
+      const canvas = document.getElementById('holo');
+      const host = document.getElementById('host');
+      const status = document.getElementById('status');
+      const engine = createEngine();
+      // Lab-only debug handle, the same one the other demo pages expose.
+      window.__hologlyphEngine = engine;
+
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, host);
+
+      function resize() {
+        engine.resize(host.clientWidth, host.clientHeight);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      const compositor = { amount: 1, blur: 18, saturate: 1.6, tintOpacity: 0.12 };
+      const skin = { glassAmount: 1, baseOpacity: 0.075 };
+
+      function pushCompositor() {
+        engine.vfx.setHeadConfig({ compositor: { ...compositor } });
+        // Fixed width and fixed line count. A status line that reflows between
+        // two captures moves pixels outside the head, and the capture script
+        // measures exactly that region to prove the frost is confined.
+        const layer = host.querySelector('[data-hologlyph-compositor]');
+        const points = layer ? layer.style.clipPath.split(',').length : 0;
+        status.textContent = `layer ${layer ? 'live' : ' off'}  clip pts ${String(points).padStart(2, '0')}`;
+      }
+      function pushSkin() {
+        engine.vfx.setHeadConfig({
+          skin: {
+            glass: { amount: skin.glassAmount },
+            opacity: { base: skin.baseOpacity },
+          },
+        });
+      }
+
+      function bindRange(id, key, target, after) {
+        const input = document.getElementById(id);
+        const out = input.parentElement.querySelector('output');
+        const sync = () => {
+          const value = Number(input.value);
+          target[key] = value;
+          out.textContent = value.toFixed(2);
+          after();
+        };
+        input.addEventListener('input', sync);
+        sync();
+      }
+
+      bindRange('amount', 'amount', compositor, pushCompositor);
+      bindRange('blur', 'blur', compositor, pushCompositor);
+      bindRange('saturate', 'saturate', compositor, pushCompositor);
+      bindRange('tintOpacity', 'tintOpacity', compositor, pushCompositor);
+      bindRange('glassAmount', 'glassAmount', skin, pushSkin);
+      bindRange('baseOpacity', 'baseOpacity', skin, pushSkin);
+
+      // --- pose --------------------------------------------------------------
+      let jawOpen = false;
+      const jawBtn = document.getElementById('jaw');
+      jawBtn.addEventListener('click', () => {
+        jawOpen = !jawOpen;
+        engine.avatar?.setMorph('jaw_open', jawOpen ? 1 : 0);
+        jawBtn.textContent = jawOpen ? 'jaw close' : 'jaw open';
+      });
+
+      let frozen = false;
+      const freezeBtn = document.getElementById('freeze');
+      freezeBtn.addEventListener('click', () => {
+        frozen = !frozen;
+        engine.setMotionFrozen(frozen);
+        freezeBtn.textContent = frozen ? 'unfreeze motion' : 'freeze motion';
+      });
+
+      // --- host traps --------------------------------------------------------
+      // Reproduces, in the lab, the two ancestor shapes the spike measured as
+      // fatal. Rebuilding the layer is what re-runs the ancestor walk, so the
+      // amount is cycled rather than the page reloaded.
+      let trap = null;
+      function setTrap(style) {
+        if (trap) {
+          trap.replaceWith(...trap.childNodes);
+          trap = null;
+        }
+        if (style) {
+          trap = document.createElement('div');
+          trap.setAttribute('style', style);
+          host.replaceWith(trap);
+          trap.appendChild(host);
+        }
+        const wanted = compositor.amount;
+        engine.vfx.setHeadConfig({ compositor: { amount: 0 } });
+        requestAnimationFrame(() => {
+          engine.vfx.setHeadConfig({ compositor: { amount: wanted } });
+        });
+      }
+      document.getElementById('trapRadius').addEventListener('click', () => {
+        setTrap('position:fixed;inset:0;overflow:hidden;border-radius:24px');
+      });
+      document.getElementById('trapNone').addEventListener('click', () => setTrap(null));
+
+      // --- scroll ------------------------------------------------------------
+      function updateScroll() {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        engine.setScrollProgress(max > 0 ? window.scrollY / max : 0);
+      }
+      window.addEventListener('scroll', updateScroll, { passive: true });
+      updateScroll();
+
+      // Lab-only hooks for `tools/smoke/compositor-shot.mjs`.
+      const field = document.getElementById('field');
+      window.__compositorLab = {
+        set(next) {
+          Object.assign(compositor, next);
+          for (const key of Object.keys(next)) {
+            const input = document.getElementById(key);
+            if (input) input.value = String(compositor[key]);
+          }
+          pushCompositor();
+        },
+        layer: () => host.querySelector('[data-hologlyph-compositor]'),
+        setMotionFrozen(value) {
+          engine.setMotionFrozen(value);
+        },
+        /**
+         * Pin the drifting field to an exact phase, or hand it back to the
+         * animation with `null`. Racing a CSS animation is what makes a
+         * liveness measurement unrepeatable.
+         */
+        setFieldPhase(px) {
+          field.classList.toggle('pinned', px !== null);
+          field.style.setProperty('--phase', px === null ? '0px' : `${px}px`);
+        },
+        /** The panel's own box, so a capture can exclude its live readout. */
+        panelRect() {
+          const r = document.getElementById('panel').getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        },
+      };
+
+      pushCompositor();
+    </script>
+  </body>
+</html>

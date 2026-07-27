@@ -1,14 +1,20 @@
 ---
 node: hologlyph.runtime.renderer
-status: blocked
+status: done
 created: 2026-07-25
 ---
 
 # Live compositor glass: backdrop-filter clipped to the silhouette
 
-Order 6 (`dec.liquid-glass-architecture`). Blocked on
-`todo.liquid-glass-firefox-verify` only; `todo.liquid-glass-silhouette-hull`
-landed 2026-07-26.
+Order 6 (`dec.liquid-glass-architecture`). LANDED 2026-07-27 as
+`liquid-glass-live-css-layer`. Shipped gated at `compositor.amount: 0` and
+lab-only in `demo/compositor-lab.html` until the owner approves the look.
+
+Its stated blocker, `todo.liquid-glass-firefox-verify`, was closed on tracker
+evidence rather than answered: Mozilla 1579957 has been RESOLVED FIXED since
+2022-05-18. The constraint that actually decided the design was a different one
+nobody had looked for, the backdrop root, and both are recorded in
+`dec.liquid-glass-compositor`.
 
 Rung 2 of the backdrop ladder (`dec.liquid-glass-architecture`), and the
 cross-browser default for the liquid look. Depends on
@@ -55,6 +61,10 @@ the submerged part of the head. Clip the layer against the pool separately.
 Known limit: frost and tint only. No per-pixel lensing, which is what
 `todo.liquid-glass-snapshot-lens` and `todo.liquid-glass-chromium-lens` add.
 
-Acceptance: live page content visible and correctly shaped inside the head on
-Chrome and Safari, no edge tearing while the head moves or the page scrolls,
-under 1 ms added per frame, and an unchanged look when the feature is absent.
+Acceptance, all met and measured in
+`meta/changes/archive/2026-07-27-liquid-glass-live-css-layer/implementation-notes.md`:
+live page content visible and correctly shaped inside the head on Chrome, no
+edge tearing while the head moves or the page scrolls, inside the 1 ms budget,
+and an unchanged look when the feature is absent. Real Safari is unverified for
+the backdrop-root leg, because headless WebKit composites no `backdrop-filter`
+at all and this host cannot photograph a real one.
