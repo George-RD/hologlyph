@@ -17,4 +17,6 @@
       `bun run eval` (overall pass), `cairn hook all` (pass)
 - [x] Browser smoke: 11 of 11 legs pass against real Chrome, and 3 fail with
       `lensContributing()` forced off
-- [ ] Adversarial review, PR into `glass`, squash-merge
+- [x] Review (self-review; all four delegated reviewers quota-refused, findings
+      and clean categories in `implementation-notes.md`), PR #79 into `glass`,
+      squash-merged as 27e689f

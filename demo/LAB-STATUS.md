@@ -34,14 +34,23 @@ half the programme ever appears on screen. The compositor ruling is the next
 largest, because rung 2 is the only backdrop rung that needs nothing from the
 host page and would therefore be the sensible default if it looks right.
 
-**If the owner is not available, the honest options are, in order:**
+**If the owner is not available, the honest options are, in order.** There is
+no agent-shaped engineering item left in `dec.liquid-glass-architecture`: item
+9 needs a product call and next unit of work 3 landed on 2026-07-27 as
+`liquid-glass-ladder-exclusion` (PR #79, merged and archived). So this list is
+what is left.
 
-1. **The independent review `demo/pool-lab.html`'s change never got**, listed
-   under "Still open from the tier 1 pool change" below.
+1. **The independent review two changes never got.** `demo/pool-lab.html`'s
+   change is listed under "Still open from the tier 1 pool change" below:
    `src/shaders/pool-surface.ts` and the breathe block in
-   `src/shaders/materials.ts` shipped on a self-review. Note that all three
-   delegated reviewer models were quota-exhausted again on 2026-07-27, so this
-   needs either a later session or a different provider.
+   `src/shaders/materials.ts` shipped on a self-review. The ladder exclusion
+   shipped the same way, and its self-review is written up in
+   `meta/changes/archive/2026-07-27-liquid-glass-ladder-exclusion/implementation-notes.md`
+   under "Review", including what was checked and found clean, so a real
+   reviewer has somewhere to start rather than a blank diff. All four
+   delegated reviewers (`reviewer` twice, `gemini-reviewer`, the general
+   worker) refused on quota on 2026-07-27; Gemini's resets 2026-07-28. So this
+   needs a later session or a different provider, not more effort.
 2. **The hull halo**, if a bright backdrop is ever approved. The clip polygon
    is 27 to 41 per cent larger in area than the true silhouette, so the
    compositor frost extends slightly past the head. Invisible on the shipped
@@ -49,8 +58,31 @@ host page and would therefore be the sensible default if it looks right.
    `tools/asset-pipeline/silhouette-hull.ts` tightens it on a known curve and
    needs a decision superseding the point budget in
    `todo.liquid-glass-silhouette-hull`.
-3. Say the programme is owner-blocked and stop, rather than tuning a look
+3. **Merging `glass` into `main`** is the other thing waiting on the owner, not
+   on an agent. Pushing to `main` redeploys the live demo, so `main` only
+   receives `glass` once the owner is happy with the look end to end, which is
+   the same sitting as `todo.liquid-glass-owner-look-session`.
+4. Say the programme is owner-blocked and stop, rather than tuning a look
    nobody has approved.
+
+What the ladder exclusion leaves you, beyond
+`meta/changes/archive/2026-07-27-liquid-glass-ladder-exclusion/implementation-notes.md`:
+
+- **The rungs are now exclusive and nobody has looked at the transition.** On
+  a page with both gates open the frost draws first, the snapshot resolves
+  about 100 ms later, and the frost is removed as the lens takes over. One
+  step, in the direction of more fidelity, and measured but not judged.
+  `demo/ladder-lab.html` is where to judge it.
+- **The compositor clip polygon is NOT the head silhouette.** It is cut at the
+  emergence waterline, so at 1000x800 it bottoms at y 406 while the head still
+  occupies pixels down to y 567. Any capture script that treats "outside the
+  polygon" as "page" counts the shoulders as page and fails a correct engine.
+  `tools/smoke/ladder-shot.mjs` carries a second mask for exactly this.
+- **A host cannot have both.** The only lever for keeping the frost while a
+  subtree is named is `lens.amount: 0`, which keeps paying for captures nobody
+  looks at, so the documented answer is `setLensSource(null)`. If a real
+  integration wants both at once, that is a new decision superseding
+  `dec.liquid-glass-rung-exclusion`, not a bug.
 
 What item 6 leaves you, beyond
 `meta/changes/archive/2026-07-27-liquid-glass-live-css-layer/implementation-notes.md`:
