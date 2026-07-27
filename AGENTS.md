@@ -99,6 +99,12 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
   friction to `meta/cairn-feedback.jsonl` as it happens, run the full gate, set
   the todo `status: done`, tick the change's `tasks.md`, land via squash-merged
   PR into that same base.
+- If `cairn brief` says the backlog is empty, it means every remaining todo is
+  `blocked`, not that the project is finished. The live handover is the "Next
+  unit of work" heading of `demo/LAB-STATUS.md`, backed by the section of the
+  same name in `meta/decisions/liquid-glass-architecture.md`. Read those before
+  concluding there is nothing to do, and before re-attempting anything either
+  one records as already closed.
 - Keep a running `implementation-notes.md` in the active change directory
   logging every deviation from the plan and every discovered edge case.
 

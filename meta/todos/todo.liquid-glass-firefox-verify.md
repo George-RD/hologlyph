@@ -23,13 +23,22 @@ cost in `src.dom-capture-survey-2026-07-25`.
 
 Retried 2026-07-27 with a real Firefox 141.0.3 installed at
 `/Applications/Firefox.app`. The page loads and renders in a headed window, so
-the platform is not the obstacle; reading pixels back is. All four
+the platform is not the obstacle; reading pixels back is. All five
 non-interactive routes are closed on this host, and the table of what was tried
 is in `src.dom-capture-survey-2026-07-25`: Playwright's `channel: 'moz-firefox'`
 BiDi path hangs at launch, macOS Screen Recording permission is denied to the
 agent process so neither the computer tool nor `screencapture` can photograph
-the window, headless still fails with `RenderCompositorSWGL failed mapping
-default framebuffer`, and `--remote-debugging-port` never opens a listener.
+the window, `--headless --screenshot` against the stock build fails with
+`RenderCompositorSWGL failed mapping default framebuffer`,
+`--remote-debugging-port` never opens a listener, and `--marionette` on a
+throwaway profile likewise never accepts a connection on port 2828. The last
+three share one cause: this host denies the browser a listener socket and
+denies headless a GPU framebuffer.
+
+Do not spend another session on those five. Headless would not settle it even
+if it produced a PNG, because macOS headless Firefox composites through SWGL
+rather than the GPU WebRender path bug 1579957 is about, so a verdict read from
+it would not be evidence either way.
 
 **Precise blocker**: either grant Screen Recording permission to the process
 driving the session, or have a human open

@@ -6,11 +6,17 @@ created: 2026-07-25
 
 # Stage participants: the opt-in contract that lets the fluid touch the page
 
-Order 7 (`dec.liquid-glass-architecture`). Unblocked 2026-07-27: both
-prerequisites have landed. `todo.liquid-glass-tier1-pool` gave it a water
-surface (2026-07-26) and `todo.liquid-glass-fluidity-driver` gave it a body
-that can be pushed around (2026-07-27), which is what work item 2 below means
-by "feed them to the simulation as colliders".
+Order 7 (`dec.liquid-glass-architecture`). LANDED 2026-07-27 as
+`liquid-glass-stage-participants` and archived the same day; the record is
+`meta/changes/archive/2026-07-27-liquid-glass-stage-participants/implementation-notes.md`
+and `dec.liquid-glass-participants`. Gated by the markers themselves, so a page
+that marks nothing pays nothing, and the coupling additionally rides on
+`fluid.amount`, which still ships at 0 pending the owner look session.
+
+Both prerequisites had landed when it started: `todo.liquid-glass-tier1-pool`
+gave it a water surface (2026-07-26) and `todo.liquid-glass-fluidity-driver`
+gave it a body that can be pushed around (2026-07-27), which is what work item
+2 below means by "feed them to the simulation as colliders".
 
 One thing changed shape while item 8 was built: the tier 3 solver is a SINGLE
 damped mode (`dec.liquid-glass-fluidity`), and one global mode cannot squeeze

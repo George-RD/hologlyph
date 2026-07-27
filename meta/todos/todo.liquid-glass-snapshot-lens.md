@@ -49,4 +49,4 @@ layout arithmetic exactly, displacement moves 9,327 px inside the head box and
 bit-identical. One consequence is documented rather than fixed: switching the
 lens on moves the head-over-page blend from the compositor's encoded space into
 the scene's linear one, which no formulation inside the scene can avoid. See
-`meta/changes/liquid-glass-snapshot-lens/implementation-notes.md`.
+`meta/changes/archive/2026-07-26-liquid-glass-snapshot-lens/implementation-notes.md`.

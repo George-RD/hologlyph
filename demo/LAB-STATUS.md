@@ -1,15 +1,18 @@
 # Next unit of work
 
-Updated 2026-07-27 after `liquid-glass-stage-participants` landed (item 7 of
-`dec.liquid-glass-architecture`), which was the last item that was both open
-and unblocked.
+Updated 2026-07-27, second pass. Items 7 and 8 landed and both changes are now
+archived under `meta/changes/archive/`, so `meta/changes/` is empty and
+`cairn scan` is down to three deliberate source-unverified infos. Item 7 was
+the last item that was both open and unblocked.
 
 **There is no next todo. `cairn brief` will hand you nothing, and that is
 correct.** Every remaining item in the liquid-glass programme is `blocked`,
 and the two blockers are an owner ruling and a Firefox host.
 
-**Start here: get the owner in front of the five labs.** Five features now
-ship gated off because nobody has judged them:
+**Start here: get the owner in front of the five labs.** Tracked as
+`todo.liquid-glass-owner-look-session`, which carries the walk order and what a
+ruling has to produce. Five features now ship gated off because nobody has
+judged them:
 
 - `demo/pool-lab.html`, `pool.amount` at 0 (item 3).
 - `demo/lens-lab.html`, the snapshot lens with no source named (item 4), plus
@@ -27,25 +30,32 @@ built and measured but both hang off `fluid.amount`, which ships at 0, so a
 judgement there decides whether roughly half the programme ever appears on
 screen. The pool ruling still gates item 3 and the participant dent that rides
 on it. Item 6 additionally needs `todo.liquid-glass-firefox-verify`, which
-needs a host where the Firefox Playwright build actually starts, and this one
-does not.
+needs a host where a Firefox can be photographed, and this one cannot: five
+non-interactive routes are closed and the todo lists all five, so do not
+rediscover them.
 
 What is genuinely left after a ruling is item 6
 (`todo.liquid-glass-live-css-layer`, which also wants Firefox) and item 9,
-tier 4 (`todo.liquid-glass-topology-fluid`).
+tier 4 (`todo.liquid-glass-topology-fluid`), which additionally needs an
+explicit owner decision because it is the one stage that gives up authored
+visemes.
 
 If the owner is not available, the honest options are, in order:
 
-1. `todo.liquid-glass-firefox-verify` on a machine where Firefox starts. It is
-   the only blocker in the programme that is not a taste call.
-2. The three non-liquid follow-ups at the bottom of this file
-   (`todo.lab-control-refinements`, `todo.background-adaptive-look`,
-   `todo.textskin-port-owner-config`).
+1. `todo.liquid-glass-firefox-verify` on a machine where Firefox starts AND can
+   be photographed. It is the only blocker in the programme that is not a taste
+   call. Note that headless does not count: macOS headless Firefox composites
+   through SWGL rather than the GPU WebRender path Firefox bug 1579957 is
+   about, so a verdict read from it would not be evidence.
+2. The independent review `demo/pool-lab.html`'s change never got, listed under
+   "Still open from the tier 1 pool change" below. `src/shaders/pool-surface.ts`
+   and the breathe block in `src/shaders/materials.ts` shipped on a self-review.
 3. Say the programme is owner-blocked and stop, rather than tuning a look
-   nobody has approved.
+   nobody has approved. The three non-liquid follow-ups that used to be offered
+   here are all `status: done` and are no longer an escape hatch.
 
 What item 7 leaves you, beyond what is in
-`meta/changes/liquid-glass-stage-participants/implementation-notes.md`:
+`meta/changes/archive/2026-07-27-liquid-glass-stage-participants/implementation-notes.md`:
 
 - **Nobody has watched a page get shoved.** The reaction is measured (a
   `data-hologlyph-body` element takes exactly the capped 24 px and an
@@ -91,7 +101,7 @@ Three follow-ups the snapshot-lens change deliberately left open:
   page into the scene, which moves one blend out of the browser compositor's
   encoded space into three's linear one. It is unavoidable from inside the
   scene and it is measured, bounded and explained in
-  `meta/changes/liquid-glass-snapshot-lens/implementation-notes.md`. If the
+  `meta/changes/archive/2026-07-26-liquid-glass-snapshot-lens/implementation-notes.md`. If the
   owner dislikes the tone shift, the answer is a lower `lens.amount`, not a
   cleverer shader.
 
@@ -294,10 +304,14 @@ this file tracks their purpose and what remains owner-session-only.
 
 ## Open follow-ups (meta/todos/)
 
-- todo.textskin-port-owner-config - port shading system into src/ properly.
-- todo.lab-control-refinements - caruncle SIZE control, tighter lips band,
-  hard-edge glyph overlap seam.
-- todo.background-adaptive-look - lab background switcher; opaque-core +
-  translucent text shell exploration; day/night theming.
+- todo.liquid-glass-owner-look-session - the ruling gate above. BLOCKED on the
+  owner, and the only reason the backlog looks empty.
+- todo.liquid-glass-firefox-verify - BLOCKED on a photographable Firefox.
+- todo.liquid-glass-live-css-layer - BLOCKED on the above.
+- todo.liquid-glass-topology-fluid - BLOCKED on an explicit owner decision.
+- The feature-shading follow-ups this section used to list
+  (todo.textskin-port-owner-config, todo.lab-control-refinements,
+  todo.background-adaptive-look) are all `status: done`. Their lab artefacts
+  are still described above; the work is not outstanding.
 - Earlier staged items (neck weights, iris patterns, eyelid occlusion
   physics) recorded in meta/research/res.feature-shading-exploration.md.
