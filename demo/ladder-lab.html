@@ -311,16 +311,25 @@
         button is pressed and on no event the page can listen for.
       */
       function verdict(layer) {
+        const asked = sourceOn && lens.amount > 0;
         if (layer) return 'rung 2, frost';
-        if (compositor.amount <= 0) return sourceOn && lens.amount > 0 ? 'rung 3, lens' : 'nothing';
-        if (sourceOn && lens.amount > 0) return 'rung 3, lens (2 stood down)';
-        return 'nothing (rung 2 unavailable here)';
+        if (compositor.amount > 0) {
+          // The layer IS the observable here: the gate is open and there is no
+          // layer, which the engine only does once the lens really binds.
+          return asked ? 'rung 3, lens (2 stood down)' : 'nothing (rung 2 unavailable)';
+        }
+        // Rung 2 is shut, so there is no layer to read and the page cannot see
+        // whether the snapshot has landed yet. Open the compositor gate to
+        // find out: the frost disappearing is the confirmation.
+        return asked ? 'rung 3, lens (unconfirmed)' : 'nothing';
       }
       function readout() {
         const layer = host.querySelector('[data-hologlyph-compositor]');
-        const points = layer ? layer.style.clipPath.split(',').length : 0;
+        const clip = layer ? layer.style.clipPath : '';
+        const points = clip ? clip.split(',').length : 0;
         // Fixed width and fixed line count: a readout that reflows between two
         // captures moves pixels a comparison shot would attribute to the head.
+        // 28 is the longest string `verdict` can return.
         status.textContent =
           `on screen: ${verdict(layer).padEnd(28)}\n` +
           `layer    : ${(layer ? 'live' : 'off').padEnd(28)}\n` +

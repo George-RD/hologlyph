@@ -68,3 +68,46 @@ than the reconciler reacting; the poll interval is 100 ms.
 - `bun run eval` re-run and passing (`overall: pass`, blend-zone ghosting 0.642
   against a 0.768 cutoff), but not recalibrated: nothing about the shipped look
   moved.
+
+## Review
+
+All four delegated reviewers refused on quota: `reviewer` twice
+(`usage_limit_reached`), `gemini-reviewer` and the general worker
+(`RESOURCE_EXHAUSTED`, resets 2026-07-28). Same wall
+`demo/LAB-STATUS.md` recorded on 2026-07-27 for the tier 1 pool change. The
+diff was self-reviewed against the same hostile brief; three findings, all
+fixed in the follow-up commit.
+
+- **Restore test was half vacuous.** `brings the layer back when the source is
+  dropped` asserted the element exists but not that it was configured.
+  Suppression clears `appliedCompositorConfig`, so a rebuild that forgot to
+  push config would return an unstyled transparent rectangle and pass. Now
+  asserts `backdropFilter` and a `polygon(...)` clip.
+- **Lab readout overstated rung 3.** With `compositor.amount` at 0 there is no
+  layer to observe, so the page cannot tell whether the snapshot has landed;
+  it claimed "rung 3, lens" anyway. Now says "unconfirmed" and points at the
+  compositor gate as the way to confirm. Also `'nothing (rung 2 unavailable
+  here)'` was 33 characters against a `padEnd(28)`, which broke the
+  fixed-width claim the comment above it makes; the longest verdict is now 28.
+- **`clip pts` read 01 with no clip.** `''.split(',')` is `['']`, length 1.
+  Reads 0 now. (`demo/compositor-lab.html` has the same line and was left
+  alone: out of scope, and it only ever reads it with a clip present.)
+
+Checked and clean:
+
+- **Thrash.** Neither lens flaps `binding`. `page-lens` sets it once a capture
+  lands and never clears it short of dispose; `element-lens` retains the last
+  binding through a transient failed draw and only nulls it after
+  `MAX_LIVE_LENS_FAILURES`, after which `sync()` returns at the top forever.
+  So the build/teardown cycle, which costs an ancestor walk, cannot run per
+  frame.
+- **NaN.** `clamp01(NaN)` is NaN, so a host passing `lens.amount: NaN` makes
+  `lensContributing()` false and the frost stays. That is the safe direction,
+  and `> 0` matches the coupling gate at `src/shaders/index.ts:522`.
+- **`compositorUnavailable`.** Untouched by suppression, which is right: it
+  records a property of the canvas and its tree, not of the lens.
+- **`hullProjector`.** Stateless with respect to layer identity, so a rebuilt
+  layer clips correctly on its first frame.
+- **Remount with a lens bound.** `mount()` tears both down and rebuilds the
+  lens with a null binding, so the frost returns for the ~100 ms until the new
+  snapshot lands, then goes again. One cycle, correct.

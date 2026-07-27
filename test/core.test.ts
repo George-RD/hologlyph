@@ -1855,7 +1855,13 @@ describe('compositor glass lifecycle (dec.liquid-glass-compositor)', () => {
 
       engine.setLensSource(null);
       rafCb?.(32);
-      expect(layerIn(canvas)).not.toBeNull();
+      // A rebuilt layer, not a bare div: suppression clears
+      // `appliedCompositorConfig`, so the rebuild has to push the config again
+      // or the frost comes back as an unstyled transparent rectangle.
+      const back = layerIn(canvas) as HTMLElement | null;
+      expect(back).not.toBeNull();
+      expect(back?.style.backdropFilter).toMatch(/blur\(/);
+      expect(back?.style.clipPath).toMatch(/^polygon\(/);
 
       engine.dispose();
     });
