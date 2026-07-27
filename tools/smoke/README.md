@@ -48,6 +48,15 @@ python3 -m http.server 8932 --directory .      # repo root (dist consumer fixtur
   the field. `--cost` adds a vsync-free frame cost against a real Chrome at 0,
   240 and 512 glyphs. Exits non-zero on any failed leg and writes
   `out/interior-glyph-shot.json`.
+- `ladder-shot.mjs` (bun): drives `demo/ladder-lab.html` for the backdrop
+  ladder exclusion (`dec.liquid-glass-rung-exclusion`), where both rungs point
+  at the same `#hero`. Measures rung 2 frosting inside the silhouette and not
+  outside it, the layer being REMOVED from the host tree within a bounded wait
+  once a source is named, rung 3 still showing the page inside the head, the
+  two rungs looking visibly different there, and the frost coming back both
+  when `lens.amount` goes to 0 with the source still bound and when the source
+  is dropped, restoring the rung 2 frame to within the noise floor. Exits
+  non-zero on any failed leg and writes `out/ladder-shot.json`.
 - `demo/textskin-variants.html` (served by the vite dev server) renders the real
   bust under grid/colour/emissive variants for owner review; the 2026-07-17 pass
   kept DEFAULT_GRID (variant A) for the best readability/density balance.

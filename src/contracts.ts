@@ -586,6 +586,12 @@ export interface StageCollider {
  * the head, and that pass exists only while `skin.glass.amount` is above 0.
  * Turning the glass off turns the lens off with it.
  *
+ * It also stands rung 2 down. While a source is bound and `amount` is above 0
+ * the engine removes the compositor layer, because the two rungs answer the
+ * same question and a page showing both sees the backdrop twice at two
+ * different offsets (`dec.liquid-glass-rung-exclusion`). A source that never
+ * captures does not count: the test is pixels, not intent.
+ *
  * The staleness and CORS contract is inherent, not a defect to hide: content
  * behind the head is frozen between captures, cross-origin images need CORS
  * headers or they rasterise blank, `position: fixed` subtrees are typically
@@ -646,6 +652,12 @@ export interface LensBinding {
  * with a rounded corner, or a `filter` / `backdrop-filter` / `mask`. Any of
  * those promotes a backdrop root above the layer and the frost samples
  * nothing. The engine warns once naming the element rather than failing.
+ *
+ * `amount` is no longer the only thing that decides whether the layer exists.
+ * The lens closes this gate too, so the rule is "the compositor layer shows
+ * unless the lens is showing" (`dec.liquid-glass-rung-exclusion`). A host that
+ * wants the frost while a subtree is named should drop the source rather than
+ * mix the lens out, which keeps paying for captures nobody looks at.
  */
 export interface HeadCompositorConfig {
   /** Master gate; 0 installs no layer at all. */
@@ -967,6 +979,10 @@ export interface Engine extends Emitter<EngineEvents>, Disposable {
    * (dec.liquid-glass-architecture, rung 3). NEVER pass `document.body`: the
    * fidelity traps (cross-origin images, `position: fixed`, capture cost)
    * scale with what is inside.
+   *
+   * Once the snapshot lands this stands the compositor glass layer down, if
+   * the host had one (`dec.liquid-glass-rung-exclusion`). Passing `null`
+   * brings it back on the next frame.
    */
   setLensSource(element: Element | null, options?: LensSourceOptions): void;
   /**

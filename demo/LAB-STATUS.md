@@ -1,12 +1,13 @@
 # Next unit of work
 
-Updated 2026-07-27, third pass. Item 6 landed
-(`todo.liquid-glass-live-css-layer`), and closing it also closed
-`todo.liquid-glass-firefox-verify` on tracker evidence. The engineering backlog
-of `dec.liquid-glass-architecture` is now finished except for item 9, which is
-a product call.
+Updated 2026-07-27, fourth pass. The last agent-shaped item in
+`dec.liquid-glass-architecture` landed: rungs 2 and 3 in the same page are now
+mutually exclusive (`dec.liquid-glass-rung-exclusion`,
+`todo.liquid-glass-ladder-exclusion`), with `demo/ladder-lab.html` to judge
+them side by side. The engineering backlog is finished except for item 9,
+which is a product call.
 
-**Start here: get the owner in front of the six labs.** Tracked as
+**Start here: get the owner in front of the labs.** Tracked as
 `todo.liquid-glass-owner-look-session`, which carries the walk order and what a
 ruling has to produce. Six features ship gated off because nobody has judged
 them:
@@ -18,11 +19,14 @@ them:
 - `demo/fluid-lab.html`, `fluid.amount` at 0 (item 8).
 - `demo/stage-lab.html`, which needs `fluid.amount` above 0 to show anything at
   all, so it is judged with item 8 rather than after it (item 7).
-- `demo/compositor-lab.html`, `compositor.amount` at 0 (item 6). Judge it
-  beside the lens labs: rungs 2 and 3 answer the same question differently.
+- `demo/compositor-lab.html`, `compositor.amount` at 0 (item 6).
 
-Serve them with `bun run dev` and open the paths directly; none of the six is
-in `demo/vite.config.ts`, so none is deployed.
+Plus one lab that is not a feature: `demo/ladder-lab.html` points both backdrop
+rungs at the same `#hero`, so the compositor frost and the lens can be judged
+as the alternatives they now are rather than on two different pages.
+
+Serve them with `bun run dev` and open the paths directly; none of these is in
+`demo/vite.config.ts`, so none is deployed.
 
 The ruling that pays most is still the FLUID one: items 7 and 8 both hang off
 `fluid.amount`, which ships at 0, so a judgement there decides whether roughly
@@ -32,25 +36,20 @@ host page and would therefore be the sensible default if it looks right.
 
 **If the owner is not available, the honest options are, in order:**
 
-1. **Rung 2 and rung 3 in the same page.** Naming a lens source makes the head
-   opaque, which hides the compositor frost behind it. Nothing stops a host
-   doing both and the result is undefined by anything except the draw order.
-   Small, real, unexplored, and it needs no owner and no Firefox. This is the
-   best remaining agent-shaped item.
-2. **The independent review `demo/pool-lab.html`'s change never got**, listed
+1. **The independent review `demo/pool-lab.html`'s change never got**, listed
    under "Still open from the tier 1 pool change" below.
    `src/shaders/pool-surface.ts` and the breathe block in
    `src/shaders/materials.ts` shipped on a self-review. Note that all three
    delegated reviewer models were quota-exhausted again on 2026-07-27, so this
    needs either a later session or a different provider.
-3. **The hull halo**, if a bright backdrop is ever approved. The clip polygon
+2. **The hull halo**, if a bright backdrop is ever approved. The clip polygon
    is 27 to 41 per cent larger in area than the true silhouette, so the
    compositor frost extends slightly past the head. Invisible on the shipped
    dark page. Raising `DIRECTION_COUNT` in
    `tools/asset-pipeline/silhouette-hull.ts` tightens it on a known curve and
    needs a decision superseding the point budget in
    `todo.liquid-glass-silhouette-hull`.
-4. Say the programme is owner-blocked and stop, rather than tuning a look
+3. Say the programme is owner-blocked and stop, rather than tuning a look
    nobody has approved.
 
 What item 6 leaves you, beyond
