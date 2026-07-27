@@ -160,3 +160,7 @@
 - archive: liquid-glass-interior-glyphs merged; no operations
 - scan: nodes=16, findings=3, errors=0
 - archive: liquid-glass-interior-glyphs merged; no operations
+- scan: nodes=16, findings=5, errors=0
+- scan: nodes=16, findings=4, errors=0
+- scan: nodes=16, findings=5, errors=0
+- scan: nodes=16, findings=5, errors=0

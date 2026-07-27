@@ -345,6 +345,9 @@ describe('owner-approved head configuration', () => {
       fluid: {
         amount: 0, sag: 0.05, wobble: 1, tension: 0.55, crisp: 2, reach: 0.6,
       },
+      stage: {
+        amount: 1, squeeze: 0.5, band: 0.45, push: 0.6, maxPush: 24, displace: 1,
+      },
     });
     // `pool.amount` is the tier 1 gate. It ships at 0 on purpose: the pool is
     // lab-only until the owner approves the look, and at 0 the engine builds
@@ -354,12 +357,17 @@ describe('owner-approved head configuration', () => {
     // reason: the field is lab-only until the owner approves the look, and at
     // 0 the engine samples nothing and adds no draw call.
     expect(DEFAULT_HEAD_CONFIG.interior.count).toBe(0);
+    // `stage.amount` is NOT a gate and ships at 1: the marked participants
+    // are the gate, and a page that marks none has nothing to couple to
+    // (dec.liquid-glass-participants).
+    expect(DEFAULT_HEAD_CONFIG.stage.amount).toBe(1);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.pool)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.interior)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.lens)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.stage)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);

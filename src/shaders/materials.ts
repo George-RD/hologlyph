@@ -79,7 +79,7 @@ import {
   type TextSkinEngine,
 } from '../contracts';
 import { adaptToBackdrop } from './glass';
-import { FLUID_SOFT_EPS } from './fluid';
+import { FLUID_PARTICIPANT_MODES, FLUID_SOFT_EPS } from './fluid';
 import { INTERIOR_GLYPH_MAX } from './interior-glyphs';
 
 /** Default glyph grid shape (mirrors DEFAULT_GRID in text-skin). */
@@ -241,6 +241,19 @@ export interface HeadUniforms {
    * breathe: at 0 the shipped normal chain must be reproduced, not approached.
    */
   fluidNormalGate: { value: number };
+  /**
+   * Height of the band each participant mode acts over, world units
+   * (dec.liquid-glass-participants).
+   */
+  stageBand: { value: number };
+  /**
+   * Flow vector per participant slot, bind space. `FLUID_PARTICIPANT_MODES`
+   * long and fixed: an empty slot holds the zero vector, which contributes
+   * exactly nothing.
+   */
+  stageFlow: readonly { value: THREE.Vector3 }[];
+  /** Bind-space height each slot's band is centred on. */
+  stageBandY: readonly { value: number }[];
   /**
    * Crossfade to the lensed composite on the interior pass, 0 or 1. Derived,
    * not configured: at 0 the material emits `output` unchanged, so a head
@@ -491,6 +504,17 @@ export function normaliseHeadConfig(
       // zero rather than by intent.
       reach: Math.max(1e-3, finiteOr(overrides.fluid?.reach, base.fluid.reach)),
     },
+    stage: {
+      // Same `finiteOr` discipline: a NaN here would reach the participant
+      // modes, and a NaN mode never returns to rest.
+      amount: clamp01(finiteOr(overrides.stage?.amount, base.stage.amount)),
+      squeeze: Math.max(0, finiteOr(overrides.stage?.squeeze, base.stage.squeeze)),
+      // Floored for the reason `fluid.reach` is: the shader divides by it.
+      band: Math.max(1e-3, finiteOr(overrides.stage?.band, base.stage.band)),
+      push: Math.max(0, finiteOr(overrides.stage?.push, base.stage.push)),
+      maxPush: Math.max(0, finiteOr(overrides.stage?.maxPush, base.stage.maxPush)),
+      displace: Math.max(0, finiteOr(overrides.stage?.displace, base.stage.displace)),
+    },
   };
   Object.freeze(config.skin.opacity);
   Object.freeze(config.skin.shading);
@@ -504,6 +528,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.interior);
   Object.freeze(config.lens);
   Object.freeze(config.fluid);
+  Object.freeze(config.stage);
   return Object.freeze(config);
 }
 
@@ -620,14 +645,27 @@ export function buildSkinMaterial(
   const uPoolWaterY = uniform(0);
   const uPoolTime = uniform(0);
 
-  // Tier 3 fluidity (dec.liquid-glass-fluidity). `uFluidFlow` is the modal
-  // solver's displacement vector in bind space, written every frame by the
-  // VFX engine; the shader only evaluates the field it implies.
+  // Tier 3 fluidity (dec.liquid-glass-fluidity). `uFluidFlow` is the global
+  // mode's displacement vector in bind space, written every frame by the VFX
+  // engine; the shader only evaluates the field it implies.
   const uFluidAmount = uniform(config.fluid.amount);
   const uFluidCrisp = uniform(config.fluid.crisp);
   const uFluidReach = uniform(config.fluid.reach);
   const uFluidFlow = uniform(new Vector3(0, 0, 0));
   const uFluidNormalGate = uniform(clamp01(config.fluid.amount));
+
+  // Participant modes (dec.liquid-glass-participants). One localised slot per
+  // marked page element: a flow vector and the bind-space height it acts at.
+  // A slot with nothing in it holds a zero flow vector, and a zero flow
+  // contributes EXACTLY zero to the sum below, so a page that marks nothing
+  // reproduces the tier 3 field bit for bit rather than approximately.
+  const uStageBand = uniform(config.stage.band);
+  const uStageFlow: ReturnType<typeof uniform>[] = [];
+  const uStageBandY: ReturnType<typeof uniform>[] = [];
+  for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+    uStageFlow.push(uniform(new Vector3(0, 0, 0)));
+    uStageBandY.push(uniform(0));
+  }
 
   // Snapshot lens (dec.liquid-glass-architecture, rung 3, item 4). The gate
   // opens only once the engine binds a real texture, so a head with nothing
@@ -688,6 +726,9 @@ export function buildSkinMaterial(
     fluidReach: uFluidReach as unknown as { value: number },
     fluidFlow: uFluidFlow as unknown as { value: THREE.Vector3 },
     fluidNormalGate: uFluidNormalGate as unknown as { value: number },
+    stageBand: uStageBand as unknown as { value: number },
+    stageFlow: uStageFlow as unknown as readonly { value: THREE.Vector3 }[],
+    stageBandY: uStageBandY as unknown as readonly { value: number }[],
     lensGate: uLensGate as unknown as { value: number },
     lensAmount: uLensAmount as unknown as { value: number },
     lensWindow: uLensWindow as unknown as { value: THREE.Vector4 },
@@ -764,24 +805,63 @@ export function buildSkinMaterial(
   const fluidFeature = aLips.max(aJaw).max(aEyelid).max(aBrow).max(aNose).max(aSocket);
   const fluidFace = pow(saturate(float(1).sub(fluidFeature)), uFluidCrisp);
   const fluidMask = fluidWeight.mul(fluidFace);
-  const fluidLength = uFluidFlow.length();
-  const fluidCos = dot(normalLocal, uFluidFlow).div(fluidLength.max(1e-6));
-  const fluidTowards = fluidCos
-    .add(fluidCos.mul(fluidCos).add(FLUID_SOFT_EPS * FLUID_SOFT_EPS).sqrt())
-    .mul(0.5)
-    .mul(fluidLength);
-  const fluidOffset = uFluidAmount.mul(fluidMask).mul(fluidTowards);
+  // One mode's contribution, given its flow vector. The ramp is one-sided in
+  // COSINE space and the length is multiplied back in afterwards, so a slot
+  // holding the zero vector yields `0.5 * eps * 0`, which is exactly 0.
+  const flowTowards = (flow: ReturnType<typeof uniform>) => {
+    const length = flow.length();
+    const cosine = dot(normalLocal, flow).div(length.max(1e-6));
+    return cosine
+      .add(cosine.mul(cosine).add(FLUID_SOFT_EPS * FLUID_SOFT_EPS).sqrt())
+      .mul(0.5)
+      .mul(length);
+  };
 
-  // Gradient of the fluid field, to first order in the height weight only.
+  const fluidTowards = flowTowards(uFluidFlow);
+
+  // Gradient of the fluid field, to first order in the spatial weight only.
   // The exact Jacobian of `N * d(p)` also carries the shape operator `dN/dp`
   // and the gradients of six baked masks; neither is available in the shader,
   // and both are dropped deliberately (dec.liquid-glass-fluidity, Decision).
-  // The surviving term is the one that matters, because the height weight is
+  // The surviving term is the one that matters, because the spatial weight is
   // what varies fastest across the flowing band.
   const fluidWeightSlope = fluidWeight.div(uFluidReach).negate().mul(smoothstep(0, 1e-4, fluidAbove));
+
+  // The modal basis (dec.liquid-glass-participants). Mode 0 keeps the EXACT
+  // expression tier 3 shipped, right down to the association order: float
+  // multiplication is not associative, so folding `amount` into a sum would
+  // shift the shipped look by an ulp rather than reproduce it. The
+  // participant modes are a separate addend, and `x + 0` is exact, so a page
+  // that marks nothing lands on the tier 3 value bit for bit.
+  //
+  // The slots are SUMMED rather than averaged, because two obstacles facing
+  // each other carry opposite flow vectors and one mode holding their mean
+  // would dent neither side.
+  const stageTerms: ReturnType<typeof flowTowards>[] = [];
+  const stageSlopeTerms: ReturnType<typeof flowTowards>[] = [];
+  for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+    const flow = uStageFlow[i];
+    const centre = uStageBandY[i];
+    if (!flow || !centre) continue;
+    const towards = flowTowards(flow);
+    const delta = positionLocal.y.sub(centre).div(uStageBand.max(1e-4));
+    const band = exp(delta.mul(delta).negate());
+    stageTerms.push(uFluidAmount.mul(band.mul(fluidFace)).mul(towards));
+    // d/dy of the Gaussian: `-2 * delta / band * W`.
+    const bandSlope = band.mul(delta).mul(-2).div(uStageBand.max(1e-4));
+    stageSlopeTerms.push(uFluidAmount.mul(fluidFace).mul(towards).mul(bandSlope));
+  }
+  const fold = (terms: ReturnType<typeof flowTowards>[]) =>
+    terms.reduce((total, term) => total.add(term));
+
+  const fluidOffset = uFluidAmount.mul(fluidMask).mul(fluidTowards).add(fold(stageTerms));
   const fluidGradient = vec3(
     0,
-    uFluidAmount.mul(fluidFace).mul(fluidTowards).mul(fluidWeightSlope),
+    uFluidAmount
+      .mul(fluidFace)
+      .mul(fluidTowards)
+      .mul(fluidWeightSlope)
+      .add(fold(stageSlopeTerms)),
     0,
   );
 

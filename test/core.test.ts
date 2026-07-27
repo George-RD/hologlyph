@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { createEngine, visemeTap } from '../src/core';
 import { createPlaceholderAvatar } from '../src/core/placeholder-avatar';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
+import { FLUID_PARTICIPANT_MODES } from '../src/shaders/fluid';
 import type {
   InteriorGlyphFieldOptions,
   InteriorGlyphState,
@@ -31,6 +32,7 @@ import type {
   HeadInteriorConfig,
   HeadPoolConfig,
   LensBinding,
+  StageCollider,
   LoadedAvatar,
   GazeMode,
   MotionEngine,
@@ -90,6 +92,7 @@ interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
     drive: number;
     carrier: readonly [number, number, number];
   }>;
+  stageColliderCalls: StageCollider[][];
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -398,6 +401,7 @@ vi.mock('../src/shaders', async () => ({
           interior: { ...this._headConfig.interior, ...config.interior },
           lens: { ...this._headConfig.lens, ...config.lens },
           fluid: { ...this._headConfig.fluid, ...config.fluid },
+          stage: { ...this._headConfig.stage, ...config.stage },
         };
       },
       setEmergence(p: number) {
@@ -418,6 +422,11 @@ vi.mock('../src/shaders', async () => ({
       ) {
         this.fluidDrives.push({ state, drive, carrier: [carrier[0], carrier[1], carrier[2]] });
       },
+      stageColliderCalls: [],
+      setStageColliders(colliders: readonly StageCollider[]) {
+        this.stageColliderCalls.push(colliders.map((c) => ({ ...c })));
+      },
+      stageFlow: new Float32Array(FLUID_PARTICIPANT_MODES * 3),
       update() {},
       disposeCount: 0,
       dispose() {
@@ -1505,6 +1514,79 @@ describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => 
     engine.dispose();
     expect(pool.disposeCount).toBe(1);
     expect(scene.children).not.toContain(pool.object);
+  });
+
+  // -- Stage participants (dec.liquid-glass-participants) --------------------
+
+  /** Mark an element in the canvas's own document and give it a stub rect. */
+  function markParticipant(
+    doc: Document,
+    attribute: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ): HTMLElement {
+    const el = doc.createElement('div');
+    el.setAttribute(attribute, '');
+    doc.body.append(el);
+    el.getBoundingClientRect = (() =>
+      ({ ...rect, left: rect.x, top: rect.y, toJSON() {} }) as DOMRect) as HTMLElement['getBoundingClientRect'];
+    return el;
+  }
+
+  it('couples nothing on a page that marks nothing', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    for (let i = 0; i < 5; i++) rafCb?.(16 * (i + 1));
+    // The reconciler still runs, but every call carries an empty list: with
+    // no marked element there is no rect to read and no mode to drive.
+    expect(vfx.stageColliderCalls.length).toBeGreaterThan(0);
+    for (const call of vfx.stageColliderCalls) expect(call).toHaveLength(0);
+    engine.dispose();
+  });
+
+  it('resolves a marked element into a collider the solver can use', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.getBoundingClientRect = (() =>
+      ({ x: 0, y: 0, width: 400, height: 400, left: 0, top: 0, toJSON() {} }) as DOMRect) as HTMLElement['getBoundingClientRect'];
+    // Right of centre and level with the chest, so it presses into the widest
+    // part of the bust and the flow is squeezed left.
+    markParticipant(document, 'data-hologlyph-obstacle', {
+      x: 280,
+      y: 120,
+      width: 100,
+      height: 30,
+    });
+
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(canvas, document.createElement('div'));
+    const vfx = h.registry.vfx.at(-1)!;
+    // The fake renderer's camera starts at the origin, which projects to a
+    // zero-sized world. Seat it where the real host does.
+    h.registry.renderer.at(-1)!.camera.position.set(0, 0.05, 2.4);
+    rafCb?.(16);
+
+    const last = vfx.stageColliderCalls.at(-1);
+    expect(last).toHaveLength(1);
+    expect(last?.[0]?.overlap).toBeGreaterThan(0);
+    // Squeezed away from the obstacle: it is to the right, so the liquid
+    // piles to the left.
+    expect(last?.[0]?.direction[0]).toBeLessThan(0);
+
+    engine.dispose();
+    // Disposing releases the stage, and the release is a real empty push.
+    expect(vfx.stageColliderCalls.at(-1)).toHaveLength(0);
+    document.body.innerHTML = '';
   });
 });
 

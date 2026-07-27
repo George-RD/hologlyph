@@ -31,6 +31,7 @@ import type {
   MotionEngine,
   RendererHost,
   SpeechEngine,
+  StageCollider,
   TextSkinEngine,
   TextSkinSource,
   TTSAdapter,
@@ -50,11 +51,14 @@ import { DEFAULT_GRID } from '../text-skin/grid.js';
 import {
   createVFXEngine,
   buildEyeballMaterial,
+  FLUID_PARTICIPANT_MODES,
   fluidDrive,
+  fluidReaction,
   poolRadialProfile,
   poolRippleDrive,
   poolWaterlineRadius,
   type InteriorGlyphField,
+  type PoolObstacle,
   type PoolProfile,
   type PoolSurface,
 } from '../shaders';
@@ -71,6 +75,13 @@ import { documentRect, type LensSource } from './lens.js';
 import { createPageLens } from './page-lens.js';
 import { createPlaceholderAvatar } from './placeholder-avatar.js';
 import { resolveBackdropColor } from './backdrop.js';
+import {
+  createStage,
+  projectRect,
+  stageCollider,
+  stageProjection,
+  type Stage,
+} from './participants.js';
  
 // Materials the engine must not replace with the text skin. The mouth cavity
 // and the eye trim (caruncle-corner blend shell + lacrimal fluid) keep their
@@ -321,6 +332,22 @@ class EngineImpl implements Engine {
   private readonly fluidCarrierVelocity: [number, number, number] = [0, 0, 0];
 
   /**
+   * Stage participants (dec.liquid-glass-participants). Built at mount from
+   * one `querySelectorAll`; a document that marks nothing leaves the arrays
+   * empty, installs no observer and costs one selector match for the life of
+   * the page.
+   */
+  private stage: Stage | null = null;
+  /** This frame's resolved colliders. Reused, never reallocated. */
+  private readonly stageColliders: StageCollider[] = [];
+  /** This frame's pool footprints, in the same slot order. */
+  private readonly stageObstacles: PoolObstacle[] = [];
+  /** Which participant produced slot `i`, so the reaction lands on it. */
+  private readonly stageSlotOwner: number[] = [];
+  /** Reaction offsets in CSS pixels, XY per participant. Grown on demand. */
+  private stageOffsets = new Float64Array(0);
+
+  /**
    * The bound lens (dec.liquid-glass-architecture, rung 3, items 4 and 5).
    * Built only once a host names a subtree, so nothing here loads a
    * rasteriser, allocates a texture or reads layout for a head that refracts
@@ -529,6 +556,147 @@ class EngineImpl implements Engine {
     this.lens?.capture();
   }
 
+  refreshStage(): void {
+    if (this.stage) {
+      this.stage.refresh();
+      return;
+    }
+    this.buildStage();
+  }
+
+  /**
+   * Adopt whatever the host has marked (dec.liquid-glass-participants).
+   *
+   * One `querySelectorAll` over the canvas's own document. A page that marks
+   * nothing ends here: no observer, no rect read, no transform, and every
+   * per-frame branch below short-circuits on an empty participant list.
+   */
+  private buildStage(): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const root = canvas.ownerDocument;
+    if (!root) return;
+    this.stage ??= createStage({ root, canvas });
+    this.stage.refresh();
+  }
+
+  private teardownStage(): void {
+    this.stage?.dispose();
+    this.stage = null;
+    this.stageColliders.length = 0;
+    this.stageObstacles.length = 0;
+    this.stageSlotOwner.length = 0;
+    this.sysVfx.setStageColliders(this.stageColliders);
+  }
+
+  /**
+   * Measure the marked elements, resolve them against the body, and push the
+   * reaction back as CSS transforms (dec.liquid-glass-participants).
+   *
+   * Strictly read-then-write: `stage.measure()` is the only layout read in the
+   * frame and `stage.write()` the only style write, with the whole solve
+   * between them. Interleaving the two is what turns three marked elements
+   * into three forced reflows.
+   *
+   * Returns the pool footprints, which the caller hands to the tier 1 surface.
+   */
+  private applyStage(): readonly PoolObstacle[] {
+    const stage = this.stage;
+    this.stageColliders.length = 0;
+    this.stageObstacles.length = 0;
+    this.stageSlotOwner.length = 0;
+    if (!stage) {
+      this.sysVfx.setStageColliders(this.stageColliders);
+      return this.stageObstacles;
+    }
+
+    // Before the empty check, not after: `measure` is also where a coalesced
+    // `MutationObserver` rescan is drained, so a page whose FIRST marker
+    // arrived since the last frame would otherwise never adopt it. With
+    // nothing marked it reads no layout and returns immediately.
+    stage.measure();
+    if (stage.participants.length === 0) {
+      this.sysVfx.setStageColliders(this.stageColliders);
+      return this.stageObstacles;
+    }
+
+    const profile = this.poolProfile;
+    const camera = this.sysRenderer.camera;
+    const projection = stageProjection(
+      stage.canvasRect,
+      camera.fov,
+      camera.position.x,
+      camera.position.y,
+      camera.position.z,
+    );
+    const config = this.sysVfx.headConfig;
+    const rootOffsetY = this.sysVfx.rootOffsetY;
+
+    if (profile && projection.pixelsPerWorldUnit > 0) {
+      const participants = stage.participants;
+      for (let i = 0; i < participants.length; i++) {
+        if (this.stageColliders.length >= FLUID_PARTICIPANT_MODES) break;
+        const participant = participants[i];
+        // Both markers claim a mode slot. A `data-hologlyph-body` element is
+        // an obstacle that happens to be free to move: it displaces the same
+        // liquid, and the flow it displaces is exactly the flow that pushes
+        // it back. Only `stage.write` distinguishes them.
+        if (!participant?.visible) continue;
+        if (!participant.obstacle && !participant.buoyant) continue;
+        if (!(participant.rect.width > 0) || !(participant.rect.height > 0)) continue;
+        const box = projectRect(projection, participant.rect);
+        const collider = stageCollider(box, { profile, rootOffsetY });
+        if (!collider) continue;
+        this.stageColliders.push(collider);
+        this.stageSlotOwner.push(i);
+        // The dent is expressed in the pool's own field units, where 1 is the
+        // amplitude bound the surface clamps to, so an obstacle can never
+        // punch the water through the global clip plane.
+        const depth = Math.min(
+          1,
+          (collider.submerged / Math.max(1e-4, config.pool.bias)) * config.stage.displace,
+        );
+        if (depth > 0 && collider.poolHalfWidth > 0) {
+          this.stageObstacles.push({
+            x: collider.poolX,
+            radius: collider.poolHalfWidth,
+            depth,
+          });
+        } else {
+          this.stageObstacles.push({ x: 0, radius: 0, depth: 0 });
+        }
+      }
+    }
+
+    this.sysVfx.setStageColliders(this.stageColliders);
+
+    // The reaction reads the flow the VFX engine solved LAST frame, which is
+    // the flow currently on screen. Reading this frame's would push the page
+    // before the glass it is reacting to has been drawn.
+    const count = stage.participants.length;
+    if (this.stageOffsets.length < count * 2) this.stageOffsets = new Float64Array(count * 2);
+    this.stageOffsets.fill(0);
+    const flow = this.sysVfx.stageFlow;
+    for (let slot = 0; slot < this.stageSlotOwner.length; slot++) {
+      const owner = this.stageSlotOwner[slot];
+      if (owner === undefined) continue;
+      const [dx, dy] = fluidReaction(
+        [flow[slot * 3] ?? 0, flow[slot * 3 + 1] ?? 0, flow[slot * 3 + 2] ?? 0],
+        projection.pixelsPerWorldUnit,
+        // `push` alone: the flow this reads was already scaled by
+        // `stage.amount` when the mode was driven, and squaring the master
+        // knob would make it read as a curve rather than a level.
+        config.stage.push,
+        config.stage.maxPush,
+      );
+      this.stageOffsets[owner * 2] = dx;
+      this.stageOffsets[owner * 2 + 1] = dy;
+    }
+    stage.write(this.stageOffsets);
+
+    return this.stageObstacles;
+  }
+
   /**
    * Build the lens if a source and a canvas are both present. Idempotent and
    * safe to call before either exists.
@@ -627,6 +795,7 @@ class EngineImpl implements Engine {
     this.eyeTextSkin.dispose();
     this.disposeOverlayMeshes();
     this.teardownLens();
+    this.teardownStage();
     this.canvas = null;
     if (this.pool) {
       this.sysRenderer.scene.remove(this.pool.object);
@@ -661,9 +830,13 @@ class EngineImpl implements Engine {
       this.sysRenderer.setSize(width, height);
       // A remount onto a different canvas invalidates the sample window, which
       // is measured against the canvas the lens was built with.
-      if (this.canvas !== canvas) this.teardownLens();
+      if (this.canvas !== canvas) {
+        this.teardownLens();
+        this.teardownStage();
+      }
       this.canvas = canvas;
       this.buildLens();
+      this.buildStage();
 
       // Expose the live renderer to the asset loader so KTX2 transcoding
       // support can be detected (dec.asset-rig-schema) before any load.
@@ -1249,6 +1422,11 @@ class EngineImpl implements Engine {
       this.sysVfx.setLens(this.lens.binding);
     }
 
+    // Stage participants (dec.liquid-glass-participants). Immediately after
+    // the lens so both layout reads land in one batch, and before the pool
+    // update that consumes the footprints it produces.
+    const stageObstacles = this.applyStage();
+
     // Pool drive. Both inputs are speeds: how fast the page is moving and how
     // fast the body is crossing the plane. Travel is consumed here so a frame
     // that renders nothing cannot bank scroll into a later splash.
@@ -1263,6 +1441,7 @@ class EngineImpl implements Engine {
           ? poolWaterlineRadius(this.poolProfile, rootOffsetY)
           : 0,
         drive: poolRippleDrive(scrollVelocity, emergenceVelocity, this.reducedMotion),
+        obstacles: stageObstacles,
       });
     }
     this.scrollTravel = 0;

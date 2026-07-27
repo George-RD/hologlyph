@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createVFXEngine } from '../src/shaders';
 import {
+  FLUID_MODES,
+  FLUID_PARTICIPANT_MODES,
   FLUID_CARRIER_CLAMP,
   FLUID_DRIVE_ACCEL,
   FLUID_REDUCED_DRIVE,
@@ -9,6 +11,7 @@ import {
   FLUID_SOFT_EPS,
   FLUID_STATE_GAIN,
   fluidAccel,
+  fluidBandWeight,
   fluidDisplacement,
   fluidDrive,
   fluidFaceWeight,
@@ -16,7 +19,10 @@ import {
   fluidHeightWeight,
   fluidIntegrate,
   fluidOmega,
+  fluidReaction,
   fluidSoftRamp,
+  fluidSqueezeTarget,
+  fluidTargetAccel,
   fluidStateAmount,
   fluidSubsteps,
   type FluidState,
@@ -305,6 +311,141 @@ describe('VFX fluid wiring', () => {
     expect(() => {
       for (let i = 0; i < 30; i++) vfx.update(1 / 60);
     }).not.toThrow();
+    vfx.dispose();
+  });
+});
+
+describe('participant modal basis (pure)', () => {
+  it('reserves a slot per participant beside the global mode', () => {
+    // The basis exists so two obstacles facing each other can dent both
+    // sides. One global mode would hold their mean, which is nothing.
+    expect(FLUID_MODES).toBeGreaterThan(1);
+    expect(FLUID_PARTICIPANT_MODES).toBe(FLUID_MODES - 1);
+  });
+
+  it('band weight peaks where the participant presses and dies away either side', () => {
+    expect(fluidBandWeight(0.8, 0.8, 0.45)).toBe(1);
+    // Symmetric, unlike the global mode's one-sided exponential: a
+    // participant has body above it as well as below.
+    expect(fluidBandWeight(0.8 + 0.3, 0.8, 0.45)).toBeCloseTo(
+      fluidBandWeight(0.8 - 0.3, 0.8, 0.45),
+      12,
+    );
+    expect(fluidBandWeight(2.5, 0.8, 0.45)).toBeLessThan(1e-4);
+    // A zero band would divide by zero rather than mean "infinitely sharp".
+    expect(Number.isFinite(fluidBandWeight(0.5, 0, 0))).toBe(true);
+  });
+
+  it('squeeze target scales the direction by the overlap and refuses negatives', () => {
+    const target = fluidSqueezeTarget(0.2, 0.5, [-1, 0, 0]);
+    expect(target).toEqual([-0.1, 0, 0]);
+    expect(fluidSqueezeTarget(-3, 0.5, [-1, 0, 0])).toEqual([-0, 0, 0]);
+    expect(fluidSqueezeTarget(0.2, -3, [-1, 0, 0])).toEqual([-0, 0, 0]);
+  });
+
+  it('settles a participant mode at exactly its target whatever the tension', () => {
+    // Same contract as `fluidGravity`: the squeeze is a distance the host
+    // asked for, and `tension` governs only how the mode gets there.
+    for (const tension of [0, 0.35, 0.55, 1]) {
+      const target: FluidVec3 = [-0.1, 0.04, 0];
+      const state = settle(fluidTargetAccel(target, tension), tension, 12);
+      expect(state.offset[0]).toBeCloseTo(target[0], 4);
+      expect(state.offset[1]).toBeCloseTo(target[1], 4);
+      expect(state.offset[2]).toBeCloseTo(target[2], 4);
+    }
+  });
+
+  it('opposed participants dent both sides rather than cancelling', () => {
+    // The reason the basis is not one summed mode. Two obstacles facing each
+    // other carry opposite flow vectors; a normal on the left sees the left
+    // mode and a normal on the right sees the right one, and both are
+    // strictly positive because the ramp is one-sided.
+    const left: FluidVec3 = [0.1, 0, 0];
+    const right: FluidVec3 = [-0.1, 0, 0];
+    const summed: FluidVec3 = [left[0] + right[0], 0, 0];
+    expect(fluidDisplacement(1, 1, [1, 0, 0], summed)).toBe(0);
+    const separate =
+      fluidDisplacement(1, 1, [1, 0, 0], left) + fluidDisplacement(1, 1, [1, 0, 0], right);
+    expect(separate).toBeGreaterThan(0.05);
+  });
+
+  it('reaction opposes the flow, flips the vertical axis and honours the cap', () => {
+    // The body bulged left, so the obstacle that squeezed it is pushed right;
+    // world Y is up and CSS Y is down, so the vertical term keeps its sign.
+    const [x, y] = fluidReaction([-0.1, 0.05, 0], 300, 1, 1000);
+    expect(x).toBeCloseTo(30, 6);
+    expect(y).toBeCloseTo(15, 6);
+
+    const capped = fluidReaction([-0.1, 0.05, 0], 300, 1, 10);
+    expect(Math.hypot(capped[0], capped[1])).toBeCloseTo(10, 6);
+    // Capping is a scale, not a clamp per axis: the direction survives.
+    expect(capped[1] / capped[0]).toBeCloseTo(y / x, 6);
+
+    // A zero gain is a hard off, not a small push.
+    const off = fluidReaction([-0.1, 0.05, 0], 300, 0, 1000);
+    expect(off[0]).toBe(0);
+    expect(off[1]).toBe(0);
+  });
+});
+
+describe('VFX participant wiring', () => {
+  it('holds every participant mode at rest while the fluid gate is shut', () => {
+    const vfx = createVFXEngine();
+    vfx.createSkinMaterial(fakeSkin());
+    // The stage is live by default: participants are the gate, not `amount`.
+    expect(vfx.headConfig.stage.amount).toBe(1);
+    vfx.setStageColliders([
+      { bandY: 0.8, direction: [-1, 0, 0], overlap: 0.3, poolX: 0.4, poolHalfWidth: 0.2, submerged: 0 },
+    ]);
+    for (let i = 0; i < 60; i++) vfx.update(1 / 60);
+    // `fluid.amount` ships at 0, and the reaction is Newton's third law on
+    // the same interaction: a rigid head must not shove the page about.
+    expect(Array.from(vfx.stageFlow)).toEqual(new Array(FLUID_PARTICIPANT_MODES * 3).fill(0));
+    vfx.dispose();
+  });
+
+  it('drives one slot per collider and releases a slot the moment it clears', () => {
+    const vfx = createVFXEngine();
+    vfx.createSkinMaterial(fakeSkin());
+    vfx.setHeadConfig({ fluid: { amount: 1, sag: 0, wobble: 0 } });
+    vfx.setStageColliders([
+      { bandY: 0.8, direction: [-1, 0, 0], overlap: 0.2, poolX: 0.4, poolHalfWidth: 0.2, submerged: 0 },
+      { bandY: 0.4, direction: [1, 0, 0], overlap: 0.1, poolX: -0.4, poolHalfWidth: 0.2, submerged: 0 },
+    ]);
+    for (let i = 0; i < 600; i++) vfx.update(1 / 60);
+
+    // Slot 0 settles at `overlap * squeeze` along its own direction, slot 1
+    // at its own, and the third slot is untouched.
+    expect(vfx.stageFlow[0]).toBeCloseTo(-0.2 * 0.5, 3);
+    expect(vfx.stageFlow[3]).toBeCloseTo(0.1 * 0.5, 3);
+    expect(vfx.stageFlow[6]).toBe(0);
+
+    // Clearing is a release, not a decay: a participant that scrolled away
+    // must not leave the body holding a dent with no visible cause.
+    vfx.setStageColliders([]);
+    vfx.update(1 / 60);
+    expect(Array.from(vfx.stageFlow)).toEqual(new Array(FLUID_PARTICIPANT_MODES * 3).fill(0));
+    vfx.dispose();
+  });
+
+  it('drops colliders past the slot count rather than folding them together', () => {
+    const vfx = createVFXEngine();
+    vfx.createSkinMaterial(fakeSkin());
+    vfx.setHeadConfig({ fluid: { amount: 1, sag: 0, wobble: 0 } });
+    const many = new Array(FLUID_PARTICIPANT_MODES + 3).fill(null).map(() => ({
+      bandY: 0.5,
+      direction: [-1, 0, 0] as const,
+      overlap: 0.2,
+      poolX: 0.4,
+      poolHalfWidth: 0.2,
+      submerged: 0,
+    }));
+    vfx.setStageColliders(many);
+    for (let i = 0; i < 600; i++) vfx.update(1 / 60);
+    expect(vfx.stageFlow.length).toBe(FLUID_PARTICIPANT_MODES * 3);
+    for (let i = 0; i < FLUID_PARTICIPANT_MODES; i++) {
+      expect(vfx.stageFlow[i * 3]).toBeCloseTo(-0.1, 3);
+    }
     vfx.dispose();
   });
 });

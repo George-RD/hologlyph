@@ -38,6 +38,7 @@ import {
   RGBAFormat,
   RenderTarget,
   Scene,
+  Vector4,
 } from 'three';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 import {
@@ -45,6 +46,7 @@ import {
   dot,
   exp,
   float,
+  mix,
   positionLocal,
   positionWorld,
   pow,
@@ -69,6 +71,7 @@ import {
   poolImpulseDecay,
   poolSimulationSteps,
 } from './pool.js';
+import { FLUID_PARTICIPANT_MODES } from './fluid.js';
 
 /**
  * Half-width of the injected ring, in world units. One head radius is about
@@ -114,6 +117,33 @@ const BASE_ALPHA = 0.28;
  */
 const SIM_QUAD_Y = 8;
 
+/**
+ * One stage participant poking into the water
+ * (dec.liquid-glass-participants). The footprint is circular and centred on
+ * the page plane, because a participant is a flat rect in the page and the
+ * pool only ever sees where it crosses the surface.
+ */
+export interface PoolObstacle {
+  /** World X of the footprint centre. */
+  readonly x: number;
+  /** Footprint radius, world units. */
+  readonly radius: number;
+  /**
+   * Depth of the dent it holds, in FIELD units: the surface material scales
+   * the field by `bias` and clamps it there, so 1 is as deep as a wave is
+   * ever allowed to go and an obstacle can never punch through the clip
+   * plane.
+   */
+  readonly depth: number;
+}
+
+/**
+ * Obstacle slots the sim carries. Matched to `FLUID_PARTICIPANT_MODES` so the
+ * pool and the body agree on how many participants exist; each slot is one
+ * `vec4` and one unrolled term in the simulation pass.
+ */
+export const POOL_OBSTACLE_SLOTS = FLUID_PARTICIPANT_MODES;
+
 export interface PoolSurfaceState {
   /** Root-group Y translation the emergence ramp is applying (<= 0). */
   readonly rootOffsetY: number;
@@ -121,6 +151,12 @@ export interface PoolSurfaceState {
   readonly waterlineRadius: number;
   /** Ring-impulse drive for this frame, 0..1, already reduced-motion damped. */
   readonly drive: number;
+  /**
+   * Participants crossing the surface this frame, at most
+   * `POOL_OBSTACLE_SLOTS`. Empty is the normal case and leaves the field
+   * exactly as tier 1 simulated it.
+   */
+  readonly obstacles?: readonly PoolObstacle[];
 }
 
 export interface PoolSurface extends Disposable {
@@ -179,6 +215,13 @@ export interface PoolUniforms {
   readonly radius: { value: number };
   /** Live ring-impulse amplitude, decaying between splashes. */
   readonly impulse: { value: number };
+  /**
+   * One slot per stage participant: `x` is the footprint centre, `y` its
+   * radius, `z` the dent depth in field units and `w` the presence gate. At
+   * `w = 0` the slot blends nothing, so an unused slot leaves the simulated
+   * field exactly as tier 1 wrote it (dec.liquid-glass-participants).
+   */
+  readonly obstacles: readonly { value: THREE.Vector4 }[];
 }
 
 export function createPoolSurface(renderer: unknown, config: HeadPoolConfig): PoolSurface {
@@ -192,6 +235,8 @@ export function createPoolSurface(renderer: unknown, config: HeadPoolConfig): Po
   const uTint = uniform(new Color(config.tint));
   const uRadius = uniform(0);
   const uImpulse = uniform(0);
+  const uObstacles: ReturnType<typeof uniform>[] = [];
+  for (let i = 0; i < POOL_OBSTACLE_SLOTS; i++) uObstacles.push(uniform(new Vector4(0, 0, 0, 0)));
 
   const uniforms: PoolUniforms = {
     amount: uAmount as unknown as { value: number },
@@ -201,6 +246,7 @@ export function createPoolSurface(renderer: unknown, config: HeadPoolConfig): Po
     tint: uTint as unknown as { value: THREE.Color },
     radius: uRadius as unknown as { value: number },
     impulse: uImpulse as unknown as { value: number },
+    obstacles: uObstacles as unknown as readonly { value: THREE.Vector4 }[],
   };
 
   /** CPU-side ripple gain. Not a uniform: it scales the injected amplitude. */
@@ -246,13 +292,35 @@ export function createPoolSurface(renderer: unknown, config: HeadPoolConfig): Po
     const offset = distance.sub(uRadius).div(RING_WIDTH);
     const ring = exp(offset.mul(offset).negate()).mul(uImpulse);
 
+    // Stage participants (dec.liquid-glass-participants). A SOFT DIRICHLET
+    // condition, not a source: an obstacle in the water holds a dent that
+    // waves reflect off, whereas a source term would keep pumping energy in
+    // and the pool would boil. The blend gate is the slot's presence, so an
+    // empty slot is `mix(x, ., 0)`, which is exactly `x`.
+    //
+    // BOTH channels are forced, not just the height. `g` is the height one
+    // step ago and `r - g` is the stored velocity: clamping only `r` would
+    // leave a large negative velocity trapped inside the footprint, and the
+    // frame the obstacle scrolls clear the pool would release it as a spike.
+    const dent = (node: ReturnType<typeof float>): ReturnType<typeof float> => {
+      let out = node;
+      for (let i = 0; i < POOL_OBSTACLE_SLOTS; i++) {
+        const o = uObstacles[i];
+        if (!o) continue;
+        const delta = world.sub(vec2(o.x, 0)).length().div(o.y.max(1e-3));
+        const footprint = exp(delta.mul(delta).negate()).mul(o.w);
+        out = mix(out, o.z.negate(), footprint);
+      }
+      return out;
+    };
+
     const edge = float(SPONGE_TEXELS * texel);
     const sponge = smoothstep(0, edge, uvc.x)
       .mul(smoothstep(0, edge, uvc.y))
       .mul(smoothstep(0, edge, float(1).sub(uvc.x)))
       .mul(smoothstep(0, edge, float(1).sub(uvc.y)));
 
-    material.colorNode = vec3(stepped.add(ring).mul(sponge), h.mul(sponge), 0);
+    material.colorNode = vec3(dent(stepped.add(ring)).mul(sponge), dent(h).mul(sponge), 0);
     return material;
   }
 
@@ -406,6 +474,30 @@ export function createPoolSurface(renderer: unknown, config: HeadPoolConfig): Po
       if (driven > impulse) impulse = driven;
       impulse = poolImpulseDecay(impulse, dt);
       uniforms.impulse.value = impulse;
+
+      // Stage participants. Written every frame including the empty case, so
+      // a participant that scrolls out of the viewport releases its dent
+      // rather than leaving a hole in the water behind it. Non-finite values
+      // are dropped here for the same reason the drive is: one NaN texel is
+      // terminal and silent.
+      const obstacles = state.obstacles;
+      for (let i = 0; i < POOL_OBSTACLE_SLOTS; i++) {
+        const slot = uniforms.obstacles[i];
+        if (!slot) continue;
+        const o = obstacles?.[i];
+        if (
+          !o ||
+          !Number.isFinite(o.x) ||
+          !Number.isFinite(o.radius) ||
+          !Number.isFinite(o.depth) ||
+          !(o.radius > 0) ||
+          !(o.depth > 0)
+        ) {
+          slot.value.set(0, 0, 0, 0);
+          continue;
+        }
+        slot.value.set(o.x, o.radius, Math.min(1, o.depth), 1);
+      }
 
       // The step count is capped, so an uncapped accumulator would keep the
       // debt from a backgrounded tab forever and run the maximum number of
