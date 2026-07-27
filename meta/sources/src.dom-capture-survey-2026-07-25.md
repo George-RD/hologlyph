@@ -27,6 +27,20 @@ platform sources, and measurements taken on this machine.
   https://bugs.webkit.org/show_bug.cgi?id=142662 (resolved fixed)
 - Firefox bug 1579957, backdrop-filter does not respect clip-path:
   https://bugzilla.mozilla.org/show_bug.cgi?id=1579957
+  Re-read 2026-07-27 through the Bugzilla REST API: RESOLVED FIXED, last
+  changed 2022-05-18. Its dependency, bug 1765525, is VERIFIED FIXED as of
+  2022-06-06. Both landed before Firefox 103 shipped `backdrop-filter`
+  unflagged in July 2022, so no release Firefox has ever carried the defect.
+  This entry was the whole basis of `todo.liquid-glass-firefox-verify`, which
+  is closed on the strength of re-reading it (`dec.liquid-glass-compositor`).
+- Firefox bug 1782876, backdrop-filter fails when a PARENT has
+  transform/opacity/clip-path/mask-image:
+  https://bugzilla.mozilla.org/show_bug.cgi?id=1782876
+  UNCONFIRMED and still open, last changed 2025-01-16. Comment 3 (2025-01-04)
+  reports the original cases fixed in Firefox 133 but a surviving one where a
+  parent has `border-radius`, `position` and `overflow: hidden`. This is an
+  ANCESTOR problem rather than a self-clip problem, and it is the live
+  constraint on rung 2, not 1579957.
 - csswg-drafts issue 10568, exposing view-transition snapshots to script:
   https://github.com/w3c/csswg-drafts/issues/10568
 - MDN `backdrop-filter`:
@@ -112,3 +126,31 @@ six-argument form in the Chrome blog throws
 `HTMLCanvasElement` exposes `onpaint`, `requestPaint`, `captureElementImage`,
 `getElementTransform`. Drawing an element with no paint record throws
 `InvalidStateError: No cached paint record for element`.
+
+## Backdrop root spike, 2026-07-27
+
+`tools/smoke/backdrop-root-spike.mjs`. Mounts a `backdrop-filter` layer inside
+a shadow root exactly as `<hologlyph-head>` builds it, under seven ancestor
+shapes, and probes screenshot pixels with the filter on and off. Chromium 141
+against the installed Google Chrome, DPR 1, no dev server.
+
+| ancestor shape | centre delta | corner delta | verdict |
+| --- | --- | --- | --- |
+| none | 13 | 0 | live backdrop, confined |
+| host `contain: layout paint` | 13 | 0 | live backdrop, confined |
+| host `contain: layout` | 17 | 0 | live backdrop, confined |
+| host `contain: strict` | 13 | 0 | live backdrop, confined |
+| ancestor `transform: translateZ(0)` | 13 | 0 | live backdrop, confined |
+| ancestor `overflow: hidden` + `border-radius` | 0 | 0 | DEAD, empty backdrop |
+| ancestor `opacity: 0.99` | 0 | 0 | DEAD, empty backdrop |
+
+Containment on the shadow host is safe, so the shipped element needs no style
+change. The two dead rows are host page structures the library does not own.
+The `overflow: hidden` plus `border-radius` row independently reproduces
+Mozilla bug 1782876 comment 3, in a different engine, which is corroboration
+that the probe measures what it claims to.
+
+Headless WebKit reported every row dead, including the unwrapped control, so it
+composites no `backdrop-filter` at all and is not evidence either way. It joins
+headless Firefox in the table of routes that cannot answer a compositing
+question on this host.

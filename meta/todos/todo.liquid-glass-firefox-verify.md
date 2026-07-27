@@ -1,20 +1,34 @@
 ---
 node: hologlyph.runtime.renderer
-status: blocked
+status: done
 created: 2026-07-25
 ---
 
 # Verify the compositor glass path in Firefox
 
-Blocker on calling rung 2 of the backdrop ladder cross-browser
-(`dec.liquid-glass-architecture`).
+CLOSED 2026-07-27 on primary evidence, not by a photograph
+(`dec.liquid-glass-compositor`).
+
+Mozilla bug 1579957, "backdrop-filter does not respect clip-path", is RESOLVED
+FIXED and was last changed 2022-05-18. The bug it depends on, 1765525, is
+VERIFIED FIXED as of 2022-06-06. Both landed before Firefox 103 shipped
+`backdrop-filter` unflagged in July 2022, so no Firefox that has ever shipped
+the property in a release build carries the defect. This repository had been
+treating a four-year-closed bug as an open risk, and a screenshot of one
+Firefox window on one host would have been weaker evidence than the tracker
+entry that says it was fixed and verified.
+
+Firefox is therefore a supported engine for rung 2, and
+`todo.liquid-glass-live-css-layer` landed the same day. `CSS.supports` is the
+only gate: an engine without `backdrop-filter` installs no layer.
+
+What follows is the record of the two sessions that tried to photograph it,
+kept so nobody repeats them.
 
 `backdrop-filter` confined by `clip-path` is verified in Chrome and in real
-Safari 26. Firefox is unverified: the Playwright Firefox 151 build will not
-start on this host, failing headed with a GPU helper error and headless with
-`RenderCompositorSWGL failed mapping default framebuffer`. Firefox bug 1579957
-records `backdrop-filter` not respecting `clip-path`, which is exactly the
-combination the design depends on, so this cannot be assumed.
+Safari 26. Firefox is unverified BY CAPTURE: the Playwright Firefox 151 build
+will not start on this host, failing headed with a GPU helper error and
+headless with `RenderCompositorSWGL failed mapping default framebuffer`.
 
 Work: open `demo/backdrop-clip-spike.html` in a real Firefox and press "run
 benchmark", or run `node tools/smoke/backdrop-clip-spike.mjs <url> firefox` on a
@@ -40,14 +54,18 @@ if it produced a PNG, because macOS headless Firefox composites through SWGL
 rather than the GPU WebRender path bug 1579957 is about, so a verdict read from
 it would not be evidence either way.
 
-**Precise blocker**: either grant Screen Recording permission to the process
-driving the session, or have a human open
-`http://localhost:5173/hologlyph/backdrop-clip-spike.html` in Firefox, press
-"run benchmark", and report two things: whether the frost is blob-shaped or
-rectangular, and the `filterAnimatedClip` mean from the HUD.
+**What a real Firefox would still add**: a confirmation that the closed bug
+does not reproduce, and the `filterAnimatedClip` mean from the HUD on Gecko.
+Neither blocks anything now. If a real Firefox ever does leak the frost outside
+the clip, the fallback is a static rounded-blob clip or dropping to rung 1
+there, and that is now a one-line change to the clip source rather than an
+architecture question.
 
-If Firefox leaks the filter outside the clip shape, the fallback is a static
-rounded-blob clip or dropping to rung 1 there. Decide that before the CSS layer
-lands in `src/`, not after.
+A second, still-open Gecko bug was found while checking the first and matters
+more: 1782876, `backdrop-filter` failing when a PARENT has
+transform/opacity/clip-path/mask, last confirmed in Firefox 133. It is an
+ancestor problem, not a self-clip problem, and the library answers it by
+authoring no wrapper and by warning when a host page supplies one
+(`dec.liquid-glass-compositor`).
 
-Unblocks: `todo.liquid-glass-live-css-layer`.
+Unblocked: `todo.liquid-glass-live-css-layer`, which has since landed.

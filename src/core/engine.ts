@@ -25,6 +25,7 @@ import type {
   EngineOptions,
   Expression,
   LoadedAvatar,
+  HeadCompositorConfig,
   HeadInteriorConfig,
   HeadPoolConfig,
   LensSourceOptions,
@@ -40,6 +41,7 @@ import type {
 } from '../contracts.js';
 import { createAssetLoader } from '../asset';
 import { bakeThickness, createThicknessBudget } from '../asset/rig.js';
+import { SilhouetteProjector } from '../asset/hull.js';
 import { createAudioEngine } from '../audio';
 import { createBehaviorMachine } from '../behavior';
 import { createMotionEngine } from '../motion';
@@ -64,6 +66,7 @@ import {
 } from '../shaders';
 import { createInteriorGlyphField } from '../shaders/interior-glyph-field.js';
 import { createPoolSurface } from '../shaders/pool-surface.js';
+import { createCompositorGlass, type CompositorGlass } from './compositor-glass.js';
 import { createEmitter } from './emitter.js';
 import {
   countInteractiveDescendants,
@@ -190,6 +193,9 @@ function readInteriorGeometry(mesh: THREE.Mesh): {
 
 const DEFAULT_TEXT =
   'hologlyph: a web-native, text-skinned talking head. Scroll to emerge, speak to converse.';
+
+/** Handed to the compositor layer when there is no outline to show. */
+const EMPTY_OUTLINE = new Float32Array(0);
 
 /**
  * Wrap a TTSAdapter so its utterance `viseme` / `energy` events flow into a
@@ -359,6 +365,25 @@ class EngineImpl implements Engine {
   private lensOptions: LensSourceOptions | undefined;
   /** The mounted canvas: the lens needs it to know which part of the page shows. */
   private canvas: HTMLCanvasElement | null = null;
+
+  /**
+   * Compositor glass (dec.liquid-glass-compositor), rung 2 of the backdrop
+   * ladder. A gate like the pool's: at `compositor.amount: 0` neither the
+   * layer nor the projector exists, so no DOM node is authored, no ancestor is
+   * walked and no outline is ever computed.
+   *
+   * The projector is rebuilt with the avatar because it resolves and holds the
+   * rig's bones; the hull class contract says a replaced avatar invalidates it.
+   */
+  private compositor: CompositorGlass | null = null;
+  private appliedCompositorConfig: HeadCompositorConfig | null = null;
+  private hullProjector: SilhouetteProjector | null = null;
+  /**
+   * Set once the layer has been asked for and refused, which means this engine
+   * has no `backdrop-filter` or the canvas is not in a tree. Without it an open
+   * gate re-enters the constructor on every frame for the life of the page.
+   */
+  private compositorUnavailable = false;
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -780,6 +805,21 @@ class EngineImpl implements Engine {
     this.lens = null;
   }
 
+  /**
+   * Tear the compositor layer and its projector down. Idempotent.
+   *
+   * Also clears `compositorUnavailable`, because the reasons the layer was
+   * refused are properties of the canvas and its tree, and a teardown is
+   * always followed either by the end of the engine or by a new canvas.
+   */
+  private teardownCompositorGlass(): void {
+    this.compositor?.dispose();
+    this.compositor = null;
+    this.appliedCompositorConfig = null;
+    this.compositorUnavailable = false;
+    this.hullProjector = null;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -796,6 +836,7 @@ class EngineImpl implements Engine {
     this.disposeOverlayMeshes();
     this.teardownLens();
     this.teardownStage();
+    this.teardownCompositorGlass();
     this.canvas = null;
     if (this.pool) {
       this.sysRenderer.scene.remove(this.pool.object);
@@ -829,10 +870,14 @@ class EngineImpl implements Engine {
       const height = canvas.clientHeight || canvas.height || 480;
       this.sysRenderer.setSize(width, height);
       // A remount onto a different canvas invalidates the sample window, which
-      // is measured against the canvas the lens was built with.
+      // is measured against the canvas the lens was built with. It equally
+      // invalidates the compositor layer, which is a DOM node parented next to
+      // the OLD canvas: without this it would be left behind in the host page,
+      // frosting a canvas that is no longer the head.
       if (this.canvas !== canvas) {
         this.teardownLens();
         this.teardownStage();
+        this.teardownCompositorGlass();
       }
       this.canvas = canvas;
       this.buildLens();
@@ -924,6 +969,18 @@ class EngineImpl implements Engine {
 
     this.sysRenderer.scene.add(this.avatar.root);
     this.sysMotion.attach(this.avatar);
+
+    // The projector resolves and holds this rig's bones, so it dies with the
+    // avatar it was built against (dec.liquid-glass-compositor). An asset with
+    // no baked hull, or one whose joints do not resolve, leaves it null and
+    // the compositor layer simply never becomes visible.
+    const hull = this.avatar.silhouetteHull;
+    if (hull) {
+      const projector = new SilhouetteProjector(hull, this.avatar);
+      this.hullProjector = projector.usable ? projector : null;
+    } else {
+      this.hullProjector = null;
+    }
 
     let eyeFrame = { cx: 0.688, cy: 0.003, cz: 0 };
     this.avatar.root.traverse((o) => {
@@ -1146,6 +1203,88 @@ class EngineImpl implements Engine {
     if (config === this.appliedPoolConfig) return;
     this.appliedPoolConfig = config;
     this.pool.setConfig(config);
+  }
+
+  /**
+   * Build or tear down the compositor glass layer to match `compositor.amount`
+   * (dec.liquid-glass-compositor).
+   *
+   * A number gate, like the pool's: the layer is one `div` and a CSS string,
+   * with no resource whose absence could be the gate instead. At 0 nothing
+   * exists, so a page that never touches this config is byte-identical to the
+   * build before the feature.
+   *
+   * Returns null when there is nothing to sync this frame. An engine with no
+   * `backdrop-filter` lands there permanently, and `compositorUnavailable`
+   * is what stops it retrying the build sixty times a second: without it the
+   * gate being open is enough to re-enter the constructor every frame, which
+   * is a `CSS.supports` call and an ancestor walk per frame forever. The flag
+   * is cleared by anything that could change the answer, which is a new canvas
+   * or a teardown.
+   */
+  private applyCompositorGlass(): CompositorGlass | null {
+    const config = this.sysVfx.headConfig.compositor;
+    if (config.amount <= 0 || !this.canvas) {
+      if (this.compositor) {
+        this.compositor.dispose();
+        this.compositor = null;
+        this.appliedCompositorConfig = null;
+      }
+      return null;
+    }
+    if (!this.compositor) {
+      if (this.compositorUnavailable) return null;
+      const built = createCompositorGlass({ canvas: this.canvas });
+      if (!built) {
+        this.compositorUnavailable = true;
+        return null;
+      }
+      this.compositor = built;
+      this.appliedCompositorConfig = config;
+      built.setConfig(config);
+      return built;
+    }
+    if (config !== this.appliedCompositorConfig) {
+      this.appliedCompositorConfig = config;
+      this.compositor.setConfig(config);
+    }
+    return this.compositor;
+  }
+
+  /**
+   * Push this frame's silhouette to the layer.
+   *
+   * Called AFTER `render()`, on purpose and not as an afterthought. The
+   * projector needs current bone world matrices and three refreshes the whole
+   * graph at the top of its render; projecting first would either read last
+   * frame's pose or duplicate that walk. Both the canvas backing store and a
+   * style written here are committed by the same compositing step at the end
+   * of the rAF callback, so the outline and the pixels it clips cannot
+   * disagree by a frame, which is the edge tearing work item 3 warns about.
+   *
+   * The floor is the emergence clipping plane. `Plane` holds `normal . p +
+   * constant = 0` with a `+Y` normal here, so the drawn half-space is
+   * `y > -constant` and the waterline is `-constant`. Without it the layer
+   * would frost the submerged part of the head, which is not drawn at all.
+   */
+  private syncCompositorGlass(glass: CompositorGlass): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    if (!this.hullProjector) {
+      glass.sync(EMPTY_OUTLINE, 0);
+      return;
+    }
+    // CSS pixels, not drawing-buffer pixels: `clip-path` is resolved against
+    // the layer's border box, which is the canvas's CSS box.
+    const width = canvas.clientWidth || canvas.width;
+    const height = canvas.clientHeight || canvas.height;
+    const ok = this.hullProjector.update(
+      this.sysRenderer.camera,
+      width,
+      height,
+      -this.sysVfx.clippingPlane.constant,
+    );
+    glass.sync(this.hullProjector.xy, ok ? this.hullProjector.count : 0);
   }
 
   /**
@@ -1411,6 +1550,7 @@ class EngineImpl implements Engine {
     this.applyGlassLayering();
     this.applyPoolLayer();
     this.applyInteriorGlyphs();
+    const compositorGlass = this.applyCompositorGlass();
     this.sysRenderer.setClippingPlane(this.sysVfx.clippingPlane);
     if (this.avatar) this.avatar.root.position.y = this.sysVfx.rootOffsetY;
 
@@ -1513,6 +1653,8 @@ class EngineImpl implements Engine {
       );
     }
     this.sysRenderer.render();
+    // After the render, so the projector reads the pose three just drew from.
+    if (compositorGlass) this.syncCompositorGlass(compositorGlass);
 
     if (this.running) this.rafHandle = requestAnimationFrame(this.frame);
   };

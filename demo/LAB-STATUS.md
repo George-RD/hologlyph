@@ -1,18 +1,15 @@
 # Next unit of work
 
-Updated 2026-07-27, second pass. Items 7 and 8 landed and both changes are now
-archived under `meta/changes/archive/`, so `meta/changes/` is empty and
-`cairn scan` is down to three deliberate source-unverified infos. Item 7 was
-the last item that was both open and unblocked.
+Updated 2026-07-27, third pass. Item 6 landed
+(`todo.liquid-glass-live-css-layer`), and closing it also closed
+`todo.liquid-glass-firefox-verify` on tracker evidence. The engineering backlog
+of `dec.liquid-glass-architecture` is now finished except for item 9, which is
+a product call.
 
-**There is no next todo. `cairn brief` will hand you nothing, and that is
-correct.** Every remaining item in the liquid-glass programme is `blocked`,
-and the two blockers are an owner ruling and a Firefox host.
-
-**Start here: get the owner in front of the five labs.** Tracked as
+**Start here: get the owner in front of the six labs.** Tracked as
 `todo.liquid-glass-owner-look-session`, which carries the walk order and what a
-ruling has to produce. Five features now ship gated off because nobody has
-judged them:
+ruling has to produce. Six features ship gated off because nobody has judged
+them:
 
 - `demo/pool-lab.html`, `pool.amount` at 0 (item 3).
 - `demo/lens-lab.html`, the snapshot lens with no source named (item 4), plus
@@ -21,38 +18,64 @@ judged them:
 - `demo/fluid-lab.html`, `fluid.amount` at 0 (item 8).
 - `demo/stage-lab.html`, which needs `fluid.amount` above 0 to show anything at
   all, so it is judged with item 8 rather than after it (item 7).
+- `demo/compositor-lab.html`, `compositor.amount` at 0 (item 6). Judge it
+  beside the lens labs: rungs 2 and 3 answer the same question differently.
 
-Serve them with `bun run dev` and open the paths directly; none of the five is
+Serve them with `bun run dev` and open the paths directly; none of the six is
 in `demo/vite.config.ts`, so none is deployed.
 
-The ruling that pays is now the FLUID one, not the pool one. Items 7 and 8 are
-built and measured but both hang off `fluid.amount`, which ships at 0, so a
-judgement there decides whether roughly half the programme ever appears on
-screen. The pool ruling still gates item 3 and the participant dent that rides
-on it. Item 6 additionally needs `todo.liquid-glass-firefox-verify`, which
-needs a host where a Firefox can be photographed, and this one cannot: five
-non-interactive routes are closed and the todo lists all five, so do not
-rediscover them.
+The ruling that pays most is still the FLUID one: items 7 and 8 both hang off
+`fluid.amount`, which ships at 0, so a judgement there decides whether roughly
+half the programme ever appears on screen. The compositor ruling is the next
+largest, because rung 2 is the only backdrop rung that needs nothing from the
+host page and would therefore be the sensible default if it looks right.
 
-What is genuinely left after a ruling is item 6
-(`todo.liquid-glass-live-css-layer`, which also wants Firefox) and item 9,
-tier 4 (`todo.liquid-glass-topology-fluid`), which additionally needs an
-explicit owner decision because it is the one stage that gives up authored
-visemes.
+**If the owner is not available, the honest options are, in order:**
 
-If the owner is not available, the honest options are, in order:
+1. **Rung 2 and rung 3 in the same page.** Naming a lens source makes the head
+   opaque, which hides the compositor frost behind it. Nothing stops a host
+   doing both and the result is undefined by anything except the draw order.
+   Small, real, unexplored, and it needs no owner and no Firefox. This is the
+   best remaining agent-shaped item.
+2. **The independent review `demo/pool-lab.html`'s change never got**, listed
+   under "Still open from the tier 1 pool change" below.
+   `src/shaders/pool-surface.ts` and the breathe block in
+   `src/shaders/materials.ts` shipped on a self-review. Note that all three
+   delegated reviewer models were quota-exhausted again on 2026-07-27, so this
+   needs either a later session or a different provider.
+3. **The hull halo**, if a bright backdrop is ever approved. The clip polygon
+   is 27 to 41 per cent larger in area than the true silhouette, so the
+   compositor frost extends slightly past the head. Invisible on the shipped
+   dark page. Raising `DIRECTION_COUNT` in
+   `tools/asset-pipeline/silhouette-hull.ts` tightens it on a known curve and
+   needs a decision superseding the point budget in
+   `todo.liquid-glass-silhouette-hull`.
+4. Say the programme is owner-blocked and stop, rather than tuning a look
+   nobody has approved.
 
-1. `todo.liquid-glass-firefox-verify` on a machine where Firefox starts AND can
-   be photographed. It is the only blocker in the programme that is not a taste
-   call. Note that headless does not count: macOS headless Firefox composites
-   through SWGL rather than the GPU WebRender path Firefox bug 1579957 is
-   about, so a verdict read from it would not be evidence.
-2. The independent review `demo/pool-lab.html`'s change never got, listed under
-   "Still open from the tier 1 pool change" below. `src/shaders/pool-surface.ts`
-   and the breathe block in `src/shaders/materials.ts` shipped on a self-review.
-3. Say the programme is owner-blocked and stop, rather than tuning a look
-   nobody has approved. The three non-liquid follow-ups that used to be offered
-   here are all `status: done` and are no longer an escape hatch.
+What item 6 leaves you, beyond
+`meta/changes/archive/2026-07-27-liquid-glass-live-css-layer/implementation-notes.md`:
+
+- **Nobody has judged the frost.** Every number is a measurement: 24.00 mean
+  delta inside the silhouette against 0.04 outside, on a zero noise floor.
+  Whether a frosted head over a live page reads as glass or as a smudge is a
+  taste call.
+- **Two ancestor shapes are fatal and the library cannot fix them.** An
+  ancestor of the canvas carrying `opacity` below 1, or `overflow: hidden` with
+  a rounded corner, promotes a backdrop root and the frost samples nothing. The
+  engine warns naming the element. `demo/compositor-lab.html` has buttons that
+  reproduce both.
+- **Real Safari and real Firefox are unverified for the backdrop-root leg.**
+  Headless WebKit composites no `backdrop-filter` at all, so it is not evidence.
+- **Any new capture script must read `img.channels`.** `decodePng` returns
+  three bytes per pixel for a colour-type-2 PNG. Hard-coding four does not
+  crash: it reads a neighbouring pixel's bytes and produces plausible numbers
+  attributed to the wrong coordinates.
+- **A visual check on a head page needs reduced motion, not frozen motion.**
+  `setMotionFrozen` stops the skeleton but not the text skin, whose glyph rows
+  scroll on their own clock and put a mean delta of 25 between two captures of
+  an unchanged page. Playwright's `reducedMotion: 'reduce'` takes that floor to
+  exactly 0.
 
 What item 7 leaves you, beyond what is in
 `meta/changes/archive/2026-07-27-liquid-glass-stage-participants/implementation-notes.md`:
@@ -295,6 +318,30 @@ this file tracks their purpose and what remains owner-session-only.
   match. `fluid.amount` ships at 0, so on the shipped build a page
   may mark whatever it likes and nothing couples: the look is not
   owner-approved yet.
+- `demo/compositor-lab.html` plus `tools/smoke/compositor-shot.mjs` - item 6,
+  rung 2: compositor glass, the only backdrop rung that shows live page content
+  without a rasteriser and without the host naming a subtree. Live controls for
+  every field of `HeadCompositorConfig` (`amount`, `blur`, `saturate`,
+  `tintOpacity`), the `skin.glass` pair the frost has to sit under, jaw and
+  freeze buttons, and two "host trap" buttons that wrap the head in the
+  ancestor shapes measured as fatal so the warning can be seen firing. The
+  backdrop is a FIXED aperiodic field behind everything rather than a section
+  background, because content the head never covers cannot demonstrate live
+  content inside the head; `--phase` drives it so a capture can step it to an
+  exact value instead of racing a CSS animation. `window.__compositorLab`
+  exposes `set`, `layer`, `setMotionFrozen`, `setFieldPhase` and `panelRect`.
+  Dev-only, deliberately absent from `demo/vite.config.ts`.
+  Measured at a 1000x800 viewport under emulated reduced motion, against a
+  zero-pixel noise floor: the frost is 24.00 mean delta inside the silhouette
+  and 0.04 outside it, stepping the backdrop phase moves 29.22 inside while the
+  pose is held, and half the amount gives 12.10. `compositor.amount` ships at
+  0, so on the shipped build no element is authored at all: the look is not
+  owner-approved yet.
+- `tools/smoke/backdrop-root-spike.mjs` - the evidence behind
+  `dec.liquid-glass-compositor`. Mounts the layer inside a shadow root under
+  seven ancestor shapes and probes screenshot pixels with the filter on and
+  off. No dev server: the page is built inline. Run it before assuming any
+  layout is safe for a `backdrop-filter`.
 
 ## Where the approved look lives
 

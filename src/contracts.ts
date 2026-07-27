@@ -628,6 +628,38 @@ export interface LensBinding {
   readonly displacement: readonly [number, number];
 }
 
+/**
+ * Compositor glass (`dec.liquid-glass-compositor`, `dec.liquid-glass-architecture`
+ * item 6): rung 2 of the backdrop ladder. A `backdrop-filter` layer behind the
+ * transparent canvas, confined to the projected silhouette by `clip-path`, so
+ * genuinely live page content shows inside the head. Unlike either lens rung
+ * this needs no rasteriser and no texture upload, so it carries video,
+ * animation and cross-origin images for free, and unlike either lens rung it
+ * can only frost and tint: there is no per-pixel refraction in CSS.
+ *
+ * `amount` is the gate. At 0 no element is created, no ancestor is inspected
+ * and no `clip-path` string is ever built, so a page that leaves it alone is
+ * byte-identical to the build before this feature existed.
+ *
+ * The host contract, measured in `tools/smoke/backdrop-root-spike.mjs`: no
+ * ancestor of the canvas may carry `opacity` below 1, a clipping `overflow`
+ * with a rounded corner, or a `filter` / `backdrop-filter` / `mask`. Any of
+ * those promotes a backdrop root above the layer and the frost samples
+ * nothing. The engine warns once naming the element rather than failing.
+ */
+export interface HeadCompositorConfig {
+  /** Master gate; 0 installs no layer at all. */
+  readonly amount: number;
+  /** Backdrop blur radius, CSS pixels. */
+  readonly blur: number;
+  /** Backdrop saturation, 1 leaves the page's own colours alone. */
+  readonly saturate: number;
+  /** Body tint painted over the frost, `#rrggbb`. */
+  readonly tint: string;
+  /** Opacity of that tint at `amount` 1. */
+  readonly tintOpacity: number;
+}
+
 export interface HeadSkinConfig {
   readonly opacity: SkinOpacityConfig;
   readonly shading: SkinShadingConfig;
@@ -657,6 +689,7 @@ export interface HeadConfig {
   readonly lens: HeadLensConfig;
   readonly fluid: HeadFluidConfig;
   readonly stage: HeadStageConfig;
+  readonly compositor: HeadCompositorConfig;
 }
 
 export type HeadConfigOverrides = {
@@ -674,6 +707,7 @@ export type HeadConfigOverrides = {
   lens?: Partial<HeadLensConfig>;
   fluid?: Partial<HeadFluidConfig>;
   stage?: Partial<HeadStageConfig>;
+  compositor?: Partial<HeadCompositorConfig>;
 };
 
 export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
@@ -789,6 +823,17 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     push: 0.6,
     maxPush: 24,
     displace: 1,
+  }),
+  // Rung 2 of the backdrop ladder (dec.liquid-glass-compositor). `amount: 0`
+  // is what ships: the layer is real page content and the look has not been
+  // judged, so the same owner gate the pool and the fluid wait behind applies
+  // here. Every other value is a lab starting point.
+  compositor: Object.freeze({
+    amount: 0,
+    blur: 18,
+    saturate: 1.6,
+    tint: '#bfe6ff',
+    tintOpacity: 0.12,
   }),
 });
 

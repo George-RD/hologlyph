@@ -156,31 +156,63 @@ export class SilhouetteProjector {
    * Recompute the polygon for the current pose. Bone world matrices must
    * already be current for the frame (three updates them during render).
    *
+   * `floorY` is an optional world-space waterline. The engine clips the body
+   * at a horizontal plane during emergence, so the submerged part is not drawn
+   * and must not be bounded either; passing the plane's height clamps each
+   * hull point up onto it before projecting. That keeps the hull's one
+   * load-bearing property intact by construction: a point moved up onto the
+   * floor at the same x and z still OUTER-bounds the clipped body there, which
+   * intersecting the projected polygon against the plane's vanishing line
+   * would only achieve if the line construction were exactly right at every
+   * camera tilt. Omitting it is byte-identical to not having the parameter.
+   *
    * Returns false and leaves `count` at 0 when the outline is undefined for
    * this view: any hull point at or behind the eye plane means the camera sits
    * inside the head, where a clip polygon has no meaning.
    */
-  update(camera: THREE.Camera, width: number, height: number): boolean {
+  update(camera: THREE.Camera, width: number, height: number, floorY?: number): boolean {
     this.count = 0;
     if (!this.usable || width <= 0 || height <= 0) return false;
 
     this._vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const halfW = width * 0.5;
     const halfH = height * 0.5;
+    // Only finite floors clamp. `undefined` and NaN both take the untouched
+    // path rather than turning every point into NaN.
+    const clamped = floorY !== undefined && Number.isFinite(floorY);
     let n = 0;
     for (const group of this._groups) {
       this._m.multiplyMatrices(group.bone.matrixWorld, group.inverseBind);
-      this._m.premultiply(this._vp);
+      if (!clamped) this._m.premultiply(this._vp);
       const e = this._m.elements;
+      const v = this._vp.elements;
       const pts = group.points;
       for (let i = 0; i < pts.length; i += 3) {
         const x = pts[i] as number;
         const y = pts[i + 1] as number;
         const z = pts[i + 2] as number;
-        const w = (e[3] as number) * x + (e[7] as number) * y + (e[11] as number) * z + (e[15] as number);
-        if (!(w > 1e-6)) return false;
-        const cx = (e[0] as number) * x + (e[4] as number) * y + (e[8] as number) * z + (e[12] as number);
-        const cy = (e[1] as number) * x + (e[5] as number) * y + (e[9] as number) * z + (e[13] as number);
+        let cx: number;
+        let cy: number;
+        let w: number;
+        if (clamped) {
+          // World first, so the floor can be applied in the space it is
+          // expressed in, then the view-projection by hand: composing a
+          // second Matrix4 per group would allocate nothing but would also
+          // have to be undone to reach world y.
+          const wx = (e[0] as number) * x + (e[4] as number) * y + (e[8] as number) * z + (e[12] as number);
+          let wy = (e[1] as number) * x + (e[5] as number) * y + (e[9] as number) * z + (e[13] as number);
+          const wz = (e[2] as number) * x + (e[6] as number) * y + (e[10] as number) * z + (e[14] as number);
+          if (wy < (floorY as number)) wy = floorY as number;
+          w = (v[3] as number) * wx + (v[7] as number) * wy + (v[11] as number) * wz + (v[15] as number);
+          if (!(w > 1e-6)) return false;
+          cx = (v[0] as number) * wx + (v[4] as number) * wy + (v[8] as number) * wz + (v[12] as number);
+          cy = (v[1] as number) * wx + (v[5] as number) * wy + (v[9] as number) * wz + (v[13] as number);
+        } else {
+          w = (e[3] as number) * x + (e[7] as number) * y + (e[11] as number) * z + (e[15] as number);
+          if (!(w > 1e-6)) return false;
+          cx = (e[0] as number) * x + (e[4] as number) * y + (e[8] as number) * z + (e[12] as number);
+          cy = (e[1] as number) * x + (e[5] as number) * y + (e[9] as number) * z + (e[13] as number);
+        }
         this._sx[n] = (cx / w) * halfW + halfW;
         this._sy[n] = halfH - (cy / w) * halfH;
         this._order[n] = n;

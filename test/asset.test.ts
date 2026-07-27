@@ -666,4 +666,70 @@ describe('SilhouetteProjector', () => {
       expect(projector.xy).toBe(buffer);
     }
   });
+
+  // The compositor glass layer clips to this outline, and the engine clips the
+  // body itself at a horizontal plane during emergence. Without the floor the
+  // layer would frost the submerged half of the head, which is not drawn at
+  // all (dec.liquid-glass-compositor).
+  it('clamps hull points up onto the waterline floor', () => {
+    const { avatar } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = orthoCamera();
+
+    expect(projector.update(camera, 400, 400)).toBe(true);
+    const full = polygonArea(projector.xy, projector.count);
+
+    // The cube spans world Y -1..1; a floor at 0 halves what the outline may
+    // bound, and screen Y counts downward so the low edge is the larger value.
+    expect(projector.update(camera, 400, 400, 0)).toBe(true);
+    expect(polygonArea(projector.xy, projector.count)).toBeCloseTo(full / 2, 6);
+    const ys = [...projector.xy.slice(0, projector.count * 2)].filter((_, i) => i % 2 === 1);
+    expect(Math.max(...ys)).toBeCloseTo(200, 6);
+    expect(Math.min(...ys)).toBeCloseTo(100, 6);
+  });
+
+  it('is byte-identical with no floor, a floor below the body, or a NaN floor', () => {
+    const { avatar } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = orthoCamera();
+
+    projector.update(camera, 400, 400);
+    const baseline = Float32Array.from(projector.xy.slice(0, projector.count * 2));
+
+    // A floor under everything must not perturb the arithmetic, and a NaN must
+    // take the untouched path rather than turning every point into NaN.
+    for (const floor of [-10, Number.NaN]) {
+      expect(projector.update(camera, 400, 400, floor)).toBe(true);
+      expect(Float32Array.from(projector.xy.slice(0, projector.count * 2))).toEqual(baseline);
+    }
+  });
+
+  it('still follows the bone pose while clamping', () => {
+    const { avatar, bone } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = orthoCamera();
+
+    // Lifting the body clear of the floor must restore the whole outline: the
+    // clamp is a function of the pose, not a one-off applied at construction.
+    projector.update(camera, 400, 400, 0);
+    const halved = polygonArea(projector.xy, projector.count);
+    bone.position.y = 2;
+    avatar.root.updateMatrixWorld(true);
+    projector.update(camera, 400, 400, 0);
+    expect(polygonArea(projector.xy, projector.count)).toBeCloseTo(halved * 2, 6);
+  });
+
+  it('allocates no buffers per clamped update either', () => {
+    const { avatar, bone } = hullAvatar('head');
+    const projector = new SilhouetteProjector(cubeHull(), avatar);
+    const camera = orthoCamera();
+    projector.update(camera, 400, 400, 0);
+    const buffer = projector.xy;
+    for (let i = 0; i < 8; i++) {
+      bone.rotation.y = i * 0.1;
+      avatar.root.updateMatrixWorld(true);
+      projector.update(camera, 400, 400, 0);
+      expect(projector.xy).toBe(buffer);
+    }
+  });
 });

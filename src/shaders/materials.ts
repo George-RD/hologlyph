@@ -515,6 +515,17 @@ export function normaliseHeadConfig(
       maxPush: Math.max(0, finiteOr(overrides.stage?.maxPush, base.stage.maxPush)),
       displace: Math.max(0, finiteOr(overrides.stage?.displace, base.stage.displace)),
     },
+    compositor: {
+      // `finiteOr` like every other block added since the interior field: a
+      // NaN here would reach `style.backdropFilter` as the string "blur(NaNpx)",
+      // which the CSS parser drops silently, leaving a layer that is installed
+      // and invisible with nothing anywhere saying why.
+      amount: clamp01(finiteOr(overrides.compositor?.amount, base.compositor.amount)),
+      blur: Math.max(0, finiteOr(overrides.compositor?.blur, base.compositor.blur)),
+      saturate: Math.max(0, finiteOr(overrides.compositor?.saturate, base.compositor.saturate)),
+      tint: parseColor(overrides.compositor?.tint, base.compositor.tint),
+      tintOpacity: clamp01(finiteOr(overrides.compositor?.tintOpacity, base.compositor.tintOpacity)),
+    },
   };
   Object.freeze(config.skin.opacity);
   Object.freeze(config.skin.shading);
@@ -529,6 +540,7 @@ export function normaliseHeadConfig(
   Object.freeze(config.lens);
   Object.freeze(config.fluid);
   Object.freeze(config.stage);
+  Object.freeze(config.compositor);
   return Object.freeze(config);
 }
 

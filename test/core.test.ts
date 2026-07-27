@@ -402,6 +402,7 @@ vi.mock('../src/shaders', async () => ({
           lens: { ...this._headConfig.lens, ...config.lens },
           fluid: { ...this._headConfig.fluid, ...config.fluid },
           stage: { ...this._headConfig.stage, ...config.stage },
+          compositor: { ...this._headConfig.compositor, ...config.compositor },
         };
       },
       setEmergence(p: number) {
@@ -514,6 +515,13 @@ vi.mock('../src/renderer', () => ({
       renderCount: 0,
       render() {
         this.renderCount++;
+        // Both real backends refresh the scene graph and the camera's inverse
+        // world matrix at the top of `render`. Anything the engine does after
+        // the render reads those, so a fake that skips it would let an
+        // ordering bug pass.
+        this.scene.updateMatrixWorld(true);
+        this.camera.updateMatrixWorld(true);
+        this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert();
       },
       disposeCount: 0,
       dispose() {
@@ -1587,6 +1595,227 @@ describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => 
     // Disposing releases the stage, and the release is a real empty push.
     expect(vfx.stageColliderCalls.at(-1)).toHaveLength(0);
     document.body.innerHTML = '';
+  });
+});
+
+describe('compositor glass lifecycle (dec.liquid-glass-compositor)', () => {
+  /** A cube hull bound to one bone, which is all the projector reads. */
+  function cubeHull() {
+    const points: number[] = [];
+    for (const x of [-0.3, 0.3]) {
+      for (const y of [0, 1.6]) {
+        for (const z of [-0.3, 0.3]) points.push(x, y, z);
+      }
+    }
+    return {
+      version: 1,
+      groups: [{ joint: 'head', inverseBind: new Float32Array(new THREE.Matrix4().elements), points: new Float32Array(points) }],
+    };
+  }
+
+  /** A canvas inside a positioned parent, as `<hologlyph-head>` builds one. */
+  function mountedCanvas(): HTMLCanvasElement {
+    const parent = document.createElement('div');
+    parent.setAttribute('style', 'position:relative');
+    const canvas = document.createElement('canvas');
+    canvas.width = 400;
+    canvas.height = 400;
+    parent.appendChild(canvas);
+    document.body.appendChild(parent);
+    return canvas;
+  }
+
+  async function mountHead(withHull = true): Promise<{
+    engine: ReturnType<typeof createEngine>;
+    canvas: HTMLCanvasElement;
+  }> {
+    const group = new THREE.Group();
+    const bone = new THREE.Bone();
+    bone.name = 'head';
+    group.add(bone);
+    const body = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    group.add(body);
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      ...(withHull ? { silhouetteHull: cubeHull() } : {}),
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    } as LoadedAvatar;
+    const canvas = mountedCanvas();
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(canvas, document.createElement('div'));
+    h.registry.renderer.at(-1)!.camera.position.set(0, 0.8, 2.4);
+    return { engine, canvas };
+  }
+
+  const layerIn = (canvas: HTMLCanvasElement): Element | null =>
+    canvas.parentElement?.querySelector('[data-hologlyph-compositor]') ?? null;
+
+  beforeEach(() => {
+    vi.stubGlobal('CSS', { supports: (p: string) => p.endsWith('backdrop-filter') });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+  });
+
+  it('authors no DOM at amount 0, and tears the layer back down when it returns', async () => {
+    const { engine, canvas } = await mountHead();
+
+    // The shipped configuration. A page that never touches this config must
+    // not gain an element in its tree.
+    rafCb?.(16);
+    rafCb?.(32);
+    expect(layerIn(canvas)).toBeNull();
+
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(48);
+    const layer = layerIn(canvas);
+    expect(layer).not.toBeNull();
+    expect(canvas.previousElementSibling).toBe(layer);
+
+    engine.vfx.setHeadConfig({ compositor: { amount: 0 } });
+    rafCb?.(64);
+    // Removed, not hidden: an invisible layer would still cost the compositor a
+    // backdrop capture on every scroll.
+    expect(layerIn(canvas)).toBeNull();
+
+    engine.dispose();
+  });
+
+  /** Screen-space Y of every vertex in a `polygon(...)` value. */
+  function clipRows(layer: HTMLElement): number[] {
+    return [...layer.style.clipPath.matchAll(/(-?[\d.]+)px (-?[\d.]+)px/g)].map((m) => Number(m[2]));
+  }
+
+  it('clips to the projected silhouette', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+
+    const layer = layerIn(canvas) as HTMLElement;
+    expect(layer.style.clipPath).toMatch(/^polygon\(/);
+    // A convex outline, not a degenerate sliver: three vertices is the minimum
+    // the projector will emit at all.
+    expect(clipRows(layer).length).toBeGreaterThanOrEqual(3);
+    expect(layer.style.visibility).toBe('visible');
+
+    engine.dispose();
+  });
+
+  it('cuts the outline at the emergence waterline', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    const layer = layerIn(canvas) as HTMLElement;
+    const submerged = Math.max(...clipRows(layer));
+
+    // The engine clips the body at `y > -constant`, so raising the waterline
+    // must raise the bottom of the frost with it. Without the floor the layer
+    // would keep frosting a submerged head that is not drawn at all. Screen Y
+    // counts downward, so "higher" is a smaller number.
+    const vfx = h.registry.vfx.at(-1)!;
+    vfx.clippingPlane.constant = -0.8;
+    rafCb?.(32);
+    expect(Math.max(...clipRows(layer))).toBeLessThan(submerged);
+
+    engine.dispose();
+  });
+
+  it('installs the layer but never shows it when the asset carries no hull', async () => {
+    const { engine, canvas } = await mountHead(false);
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+
+    // The hull is an enhancement and its absence must change nothing visible:
+    // an unclipped layer would frost the whole canvas box instead.
+    const layer = layerIn(canvas) as HTMLElement;
+    expect(layer).not.toBeNull();
+    expect(layer.style.visibility).toBe('hidden');
+    expect(layer.style.clipPath).toBe('');
+
+    engine.dispose();
+  });
+
+  it('syncs after the render, so the outline matches the pose just drawn', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    const layer = layerIn(canvas) as HTMLElement;
+    const first = layer.style.clipPath;
+
+    // Move the camera WITHOUT refreshing its matrices, exactly as a host does
+    // by assigning a position. Only `render()` turns that into a new
+    // `matrixWorldInverse`, so a projection that ran before the render would
+    // still be reading the previous pose and this would equal `first`.
+    const camera = h.registry.renderer.at(-1)!.camera;
+    camera.position.set(0.4, 0.8, 2.4);
+    expect(camera.matrixWorldInverse.elements[12]).toBe(0);
+    rafCb?.(32);
+    expect(layer.style.clipPath).not.toBe(first);
+
+    engine.dispose();
+  });
+
+  it('asks for the layer once on an engine that cannot composite one', async () => {
+    // Regression: the gate being open was enough to re-enter the constructor
+    // every frame, so an engine with no `backdrop-filter` paid a `CSS.supports`
+    // call and an ancestor walk sixty times a second, forever.
+    let supportsCalls = 0;
+    vi.stubGlobal('CSS', {
+      supports: () => {
+        supportsCalls++;
+        return false;
+      },
+    });
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    for (let i = 0; i < 20; i++) rafCb?.(16 * (i + 1));
+
+    expect(layerIn(canvas)).toBeNull();
+    // Two spellings are probed per attempt, and there must be exactly one
+    // attempt however many frames ran.
+    expect(supportsCalls).toBeLessThanOrEqual(2);
+
+    engine.dispose();
+  });
+
+  it('does not strand the layer beside a canvas it has been remounted off', async () => {
+    // Regression: the layer is parented next to the canvas, so a remount onto
+    // a different one left a frosted div behind in the host page forever.
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    expect(layerIn(canvas)).not.toBeNull();
+
+    const second = mountedCanvas();
+    await engine.mount(second, document.createElement('div'));
+    h.registry.renderer.at(-1)!.camera.position.set(0, 0.8, 2.4);
+    rafCb?.(32);
+
+    expect(layerIn(canvas)).toBeNull();
+    expect(layerIn(second)).not.toBeNull();
+
+    engine.dispose();
+  });
+
+  it('removes the layer from the host page on dispose', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    expect(layerIn(canvas)).not.toBeNull();
+
+    engine.dispose();
+    // The one thing this feature does that no other does: write into the
+    // host's own tree. Leaving that behind would be a leak the host can see.
+    expect(layerIn(canvas)).toBeNull();
   });
 });
 
