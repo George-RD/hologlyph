@@ -112,8 +112,9 @@ contributing pixels. That layer (`compositor`, off by default) frosts the
 live page behind the silhouette, and it answers the same question the lens
 does, so a page running both would show the backdrop twice at two different
 offsets. The higher rung wins, because you had to name a subtree to get it. A
-source that never captures, or one whose rasteriser will not load, does not
-count: the frost stays exactly where it was.
+source that never captures, one whose rasteriser will not load, or one behind
+`skin.glass.amount: 0`, does not count: the lens is painting nothing in each
+case, so the frost stays exactly where it was.
 
 `@zumer/snapdom` is an optional peer dependency, loaded through a dynamic
 import the first time a subtree is named, so it costs nothing when the

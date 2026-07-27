@@ -586,11 +586,13 @@ export interface StageCollider {
  * the head, and that pass exists only while `skin.glass.amount` is above 0.
  * Turning the glass off turns the lens off with it.
  *
- * It also stands rung 2 down. While a source is bound and `amount` is above 0
- * the engine removes the compositor layer, because the two rungs answer the
- * same question and a page showing both sees the backdrop twice at two
- * different offsets (`dec.liquid-glass-rung-exclusion`). A source that never
- * captures does not count: the test is pixels, not intent.
+ * It also stands rung 2 down, but only while it is actually painting: the
+ * glass on, a source bound, and `amount` above 0. Then the engine removes the
+ * compositor layer, because the two rungs answer the same question and a page
+ * showing both sees the backdrop twice at two different offsets
+ * (`dec.liquid-glass-rung-exclusion`). A source that never captures does not
+ * count, and neither does one behind `skin.glass.amount: 0` by the paragraph
+ * above: the test is pixels, not intent.
  *
  * The staleness and CORS contract is inherent, not a defect to hide: content
  * behind the head is frozen between captures, cross-origin images need CORS

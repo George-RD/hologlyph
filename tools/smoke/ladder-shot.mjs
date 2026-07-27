@@ -12,6 +12,11 @@
  * part of the backdrop where one sample says almost nothing.
  *
  * 1. Rung 2 alone frosts inside the silhouette and leaves the page outside it.
+ *    Note the limit of this leg: the mask comes from the layer's OWN
+ *    `clip-path`, so it proves the frost is confined to whatever the layer
+ *    claims, not that the claim matches the head. A hull projected to the
+ *    wrong place would pass. Silhouette geometry is `compositor-shot.mjs`'s
+ *    subject; this script's is the exclusion.
  * 2. Naming a source removes the layer from the host tree within a bounded
  *    wait. Removed, not hidden: an invisible `backdrop-filter` element still
  *    costs the compositor a backdrop capture on every scroll.
@@ -215,6 +220,17 @@ await setSource(false);
 await setCompositor({ amount: 0 });
 await page.waitForTimeout(600);
 const bare = await shot('ladder-bare');
+// Every mask below indexes `y * VIEWPORT.width + x`. A capture at any other
+// size makes that arithmetic address the wrong pixels, which does not crash
+// and does not look wrong: the inside/outside split silently becomes an
+// arbitrary partition of the frame and every number stays plausible.
+if (bare.width !== VIEWPORT.width || bare.height !== VIEWPORT.height) {
+  await browser.close();
+  throw new Error(
+    `capture is ${bare.width}x${bare.height}, expected ${VIEWPORT.width}x${VIEWPORT.height}; ` +
+      'the device scale factor was not honoured and every mask below would be misaligned',
+  );
+}
 await page.waitForTimeout(600);
 const bareAgain = await shot('ladder-bare-again');
 
@@ -226,6 +242,19 @@ const rung2State = await layerState();
 const rung2 = await shot('ladder-rung2');
 
 const panel = await page.evaluate(() => window.__ladderLab.panelRect());
+// Fail loudly rather than measuring nothing. With no polygon, `polygonMask`
+// yields an empty inside region whose mean is NaN, and `pageMask` collapses
+// to an empty head box so the leak legs and their own coverage control both
+// pass over the whole frame. The run would report three green leak checks
+// next to one red frost check, which reads as a threshold problem rather than
+// as the harness having measured nothing at all.
+if (!rung2State || clipPoints(rung2State.clipPath).length < 3) {
+  await browser.close();
+  throw new Error(
+    'rung 2 never produced a clip polygon, so there is no silhouette to measure against; ' +
+      'check that the avatar carries a baked hull and that this engine composites backdrop-filter',
+  );
+}
 const { mask, points } = polygonMask(
   rung2State?.clipPath ?? '',
   VIEWPORT.width,

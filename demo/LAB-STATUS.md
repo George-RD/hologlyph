@@ -37,20 +37,31 @@ host page and would therefore be the sensible default if it looks right.
 **If the owner is not available, the honest options are, in order.** There is
 no agent-shaped engineering item left in `dec.liquid-glass-architecture`: item
 9 needs a product call and next unit of work 3 landed on 2026-07-27 as
-`liquid-glass-ladder-exclusion` (PR #79, merged and archived). So this list is
-what is left.
+`liquid-glass-ladder-exclusion` (PR #79, plus the review fixes in #81). So
+this list is what is left.
 
-1. **The independent review two changes never got.** `demo/pool-lab.html`'s
-   change is listed under "Still open from the tier 1 pool change" below:
+1. **The independent review `demo/pool-lab.html`'s change never got.** Listed
+   under "Still open from the tier 1 pool change" below:
    `src/shaders/pool-surface.ts` and the breathe block in
-   `src/shaders/materials.ts` shipped on a self-review. The ladder exclusion
-   shipped the same way, and its self-review is written up in
-   `meta/changes/archive/2026-07-27-liquid-glass-ladder-exclusion/implementation-notes.md`
-   under "Review", including what was checked and found clean, so a real
-   reviewer has somewhere to start rather than a blank diff. All four
-   delegated reviewers (`reviewer` twice, `gemini-reviewer`, the general
-   worker) refused on quota on 2026-07-27; Gemini's resets 2026-07-28. So this
-   needs a later session or a different provider, not more effort.
+   `src/shaders/materials.ts` shipped on a self-review and have never been
+   read by anything but their author.
+
+   Worth knowing what that costs, because the ladder exclusion nearly shipped
+   the same way and did not. Every delegated route was quota-refused
+   (`reviewer`, `scout`, `sonic` and the general worker all tunnel through
+   Codex; `gemini-reviewer` is Cloud Code Assist, resets 2026-07-28), so it
+   went out on a self-review. A later pass through
+   `completion(model="default")`, which still had capacity, raised nineteen
+   findings. Five were real and one of those was a **shipped bug**: the
+   exclusion predicate ignored `skin.glass.amount`, so a bound lens with the
+   glass off stood rung 2 down while painting nothing, leaving the head with
+   neither rung. The self-review had explicitly judged that area clean. Fixed
+   in #81. The full triage, confirmed and rejected, is in
+   `meta/changes/archive/2026-07-27-liquid-glass-ladder-exclusion/implementation-notes.md`.
+
+   The lesson for the pool change: a self-review is not a review, and
+   `completion(model="default")` is a usable fallback when every subagent
+   backend is refusing.
 2. **The hull halo**, if a bright backdrop is ever approved. The clip polygon
    is 27 to 41 per cent larger in area than the true silhouette, so the
    compositor frost extends slightly past the head. Invisible on the shipped

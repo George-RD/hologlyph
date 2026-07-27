@@ -69,14 +69,17 @@ than the reconciler reacting; the poll interval is 100 ms.
   against a 0.768 cutoff), but not recalibrated: nothing about the shipped look
   moved.
 
-## Review
+## Review, first pass: self-review only
 
-All four delegated reviewers refused on quota: `reviewer` twice
-(`usage_limit_reached`), `gemini-reviewer` and the general worker
-(`RESOURCE_EXHAUSTED`, resets 2026-07-28). Same wall
-`demo/LAB-STATUS.md` recorded on 2026-07-27 for the tier 1 pool change. The
-diff was self-reviewed against the same hostile brief; three findings, all
-fixed in the follow-up commit.
+Every delegated route refused on quota. `reviewer`, `scout`, `sonic` and the
+general worker all tunnel through Codex (`usage_limit_reached`);
+`gemini-reviewer` and `completion(model="smol")` are Cloud Code Assist
+(`RESOURCE_EXHAUSTED`, resets 2026-07-28). The session model itself is also
+Codex and reported a five-day window. Same wall `demo/LAB-STATUS.md` recorded
+on 2026-07-27 for the tier 1 pool change.
+
+The diff was therefore self-reviewed against a hostile brief. Three findings,
+all fixed before the merge.
 
 - **Restore test was half vacuous.** `brings the layer back when the source is
   dropped` asserted the element exists but not that it was configured.
@@ -93,7 +96,8 @@ fixed in the follow-up commit.
   Reads 0 now. (`demo/compositor-lab.html` has the same line and was left
   alone: out of scope, and it only ever reads it with a clip present.)
 
-Checked and clean:
+Judged clean at the time, and one of those judgements was WRONG. See the
+second pass below.
 
 - **Thrash.** Neither lens flaps `binding`. `page-lens` sets it once a capture
   lands and never clears it short of dispose; `element-lens` retains the last
@@ -111,3 +115,87 @@ Checked and clean:
 - **Remount with a lens bound.** `mount()` tears both down and rebuilds the
   lens with a null binding, so the frost returns for the ~100 ms until the new
   snapshot lands, then goes again. One cycle, correct.
+
+## Review, second pass: an independent model, and a shipped bug
+
+`completion(model="default")` still had capacity, so the diff plus the
+supporting code went to it under the same hostile brief. That is not a
+subagent and it could not read the repo, only what it was handed, so several
+findings are about code it never saw. Nineteen raised, each checked against
+the source. Five confirmed and fixed, the rest rejected with reasons.
+
+### Confirmed
+
+- **MAJOR, and it had shipped: the predicate ignored the glass.** The lens
+  substitutes on the interior wall, and `applyGlassLayering` sets
+  `interiorMesh.visible = false` at `skin.glass.amount: 0`, or on a rig with no
+  body mesh to clone. So a bound texture with the glass off paints nothing, and
+  `lensContributing()` was still standing rung 2 down for it: both rungs off,
+  the head showing neither. `HeadLensConfig` had documented "turning the glass
+  off turns the lens off with it" in the same file, four paragraphs up from the
+  note this change added. Fixed by reading `glassLayeringActive`, the flag
+  `applyGlassLayering` set earlier in the same frame, rather than re-deriving
+  the condition. Regression test: `brings the layer back when the glass the
+  lens rides is turned off`.
+- **MAJOR: two restore tests were vacuous.** `brings the layer back when the
+  source is dropped` and `... when the lens is mixed out` named the source
+  before any frame ran, so their opening `toBeNull()` passed because the layer
+  had never been BUILT, not because it was stood down. Both would have
+  survived deleting the exclusion. They now run a frame first and assert the
+  layer exists.
+- **MAJOR: the smoke script passed its leak legs on a degenerate polygon.**
+  With `clipPath` empty, `pageMask` collapses to an empty head box, so the away
+  mask covers the whole frame and both the leak check and its own coverage
+  control report PASS while the frost check fails on NaN. It now throws before
+  measuring anything.
+- **MAJOR: capture dimensions were never validated.** Every mask indexes
+  `y * VIEWPORT.width + x`. A capture at any other size misaddresses every
+  pixel without crashing, and the inside/outside split silently becomes an
+  arbitrary partition with plausible-looking numbers. Now asserted.
+- **MAJOR: the lab could not tell "stood down" from "never buildable".** On a
+  browser with no `backdrop-filter`, or with a promoting ancestor, there is no
+  layer and there never was, and `verdict()` credited rung 3 anyway. The panel
+  now remembers whether it has ever seen a layer on this canvas. It also
+  folds `skin.glass.amount` into `asked`, per the first finding, and pads to
+  the true longest verdict.
+
+### Rejected, with reasons
+
+- **`hullProjector` retained or projected while suppressed.** No.
+  `syncCompositorGlass` runs only under `if (compositorGlass)`, so nothing is
+  projected while the layer is down, and retention is per-avatar exactly as it
+  is at `compositor.amount: 0`. The model had not been given `engine.ts`
+  beyond the diff.
+- **`leakCeiling` uses the wrong noise floor.** No. `noise.outside` and
+  `frost.outside` are the same population by construction, which is the point
+  of computing them over the same mask. `awayCeiling` exists precisely because
+  the away mask is a DIFFERENT population.
+- **A throw between the old and new call sites strands the layer.** No
+  reachable path. `documentRect` is `getBoundingClientRect`, which does not
+  throw on a detached element; `lensWindow` and `lensDisplacement` are pure
+  arithmetic; `element-lens.draw` wraps `drawElementImage` in try/catch;
+  `setLens` only writes uniforms. A lens that did throw would kill the frame
+  before `render()` anyway.
+- **Per-frame thrash when a host cross-fades `lens.amount`.** A monotonic ramp
+  crosses zero once, so it is one transition, not one per frame. Pathological
+  jitter around zero would thrash, but identically to the pre-existing
+  `compositor.amount` gate, whose branch this deliberately reuses.
+- **The warn-once ancestor message repeats on rebuild.** True, and identical
+  to toggling `compositor.amount`. Not introduced here.
+- **`element-lens` holds rung 2 down with a stale binding when the source is
+  hidden.** True that the binding survives a zero-size draw, but the lens is
+  still painting, just painting something stale. "Contributing" is the right
+  answer; the staleness is the documented lens contract.
+- **NaN reaches the shader.** `> 0` already excludes NaN, so rung 2 survives,
+  which is the safe direction. The unguarded `clamp01(NaN)` is systemic across
+  every amount field in `resolveHeadConfig` and predates this change; fixing it
+  belongs in its own change with its own sweep.
+- **`rafCb?.()` could be undefined.** The harness assigns it at mount and the
+  whole file uses this form. The substance underneath, the vacuous
+  assertions, was real and is fixed above.
+- **The frost leg's mask is derived from the layer's own clip.** True, and now
+  stated as a limit in the script header: it proves confinement, not that the
+  hull matches the head. Silhouette geometry is `compositor-shot.mjs`'s claim.
+- **Claim 2 is DOM, not pixels.** The DOM absence is the mechanism under test,
+  and the pixel legs carry the appearance claim (`between.inside.mean` 31.54).
+- **The lab never disposes.** Consistent with all six sibling labs.
