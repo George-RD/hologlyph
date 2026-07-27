@@ -309,32 +309,43 @@
         stood rung 2 down. Polled on rAF because the thing that removes it is a
         snapshot resolving, which happens a hundred milliseconds after the
         button is pressed and on no event the page can listen for.
+
+        Absence alone is not enough, though, and getting that wrong here would
+        be the same intent-versus-contribution error the feature is about. A
+        browser with no `backdrop-filter`, or an ancestor that promotes a
+        backdrop root, means there was never a layer to stand down. So the
+        panel remembers whether it has EVER seen one on this canvas and refuses
+        to credit rung 3 with an absence rung 2 was never responsible for.
       */
+      let everBuilt = false;
       function verdict(layer) {
-        const asked = sourceOn && lens.amount > 0;
+        // The lens substitutes on the interior glass pass, so with the glass
+        // off it paints nothing however well bound it is.
+        const asked = sourceOn && lens.amount > 0 && skin.glassAmount > 0;
         if (layer) return 'rung 2, frost';
-        if (compositor.amount > 0) {
-          // The layer IS the observable here: the gate is open and there is no
-          // layer, which the engine only does once the lens really binds.
-          return asked ? 'rung 3, lens (2 stood down)' : 'nothing (rung 2 unavailable)';
+        if (compositor.amount <= 0) {
+          // Rung 2 is shut, so there is no layer to read and the page cannot
+          // see whether the snapshot has landed. Open the gate to find out:
+          // the frost disappearing IS the confirmation.
+          return asked ? 'rung 3, lens (unconfirmed)' : 'nothing';
         }
-        // Rung 2 is shut, so there is no layer to read and the page cannot see
-        // whether the snapshot has landed yet. Open the compositor gate to
-        // find out: the frost disappearing is the confirmation.
-        return asked ? 'rung 3, lens (unconfirmed)' : 'nothing';
+        if (!everBuilt) return 'nothing (rung 2 never built here)';
+        return asked ? 'rung 3, lens (2 stood down)' : 'nothing (rung 2 gone, unexplained)';
       }
       function readout() {
         const layer = host.querySelector('[data-hologlyph-compositor]');
+        if (layer) everBuilt = true;
         const clip = layer ? layer.style.clipPath : '';
         const points = clip ? clip.split(',').length : 0;
         // Fixed width and fixed line count: a readout that reflows between two
         // captures moves pixels a comparison shot would attribute to the head.
-        // 28 is the longest string `verdict` can return.
+        // 34 is the longest string `verdict` can return, and the point count
+        // gets three digits so a denser hull cannot widen the line either.
         status.textContent =
-          `on screen: ${verdict(layer).padEnd(28)}\n` +
-          `layer    : ${(layer ? 'live' : 'off').padEnd(28)}\n` +
-          `clip pts : ${String(points).padStart(2, '0')}\n` +
-          `source   : ${(sourceOn ? '#hero' : 'none').padEnd(28)}`;
+          `on screen: ${verdict(layer).padEnd(34)}\n` +
+          `layer    : ${(layer ? 'live' : 'off').padEnd(34)}\n` +
+          `clip pts : ${String(points).padStart(3, '0')}\n` +
+          `source   : ${(sourceOn ? '#hero' : 'none').padEnd(34)}`;
         requestAnimationFrame(readout);
       }
       readout();

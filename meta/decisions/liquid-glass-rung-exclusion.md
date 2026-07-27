@@ -54,11 +54,22 @@ The rungs are mutually exclusive at any one head, the higher one wins, and the
 test is contribution rather than intent.
 
 The engine suppresses the compositor layer exactly while the lens is
-contributing pixels: a non-null `LensSource.binding` and `lens.amount` above
-zero. Suppression is the same path as `compositor.amount: 0`, so the layer is
+contributing pixels. Three terms, all of which must hold: the glass layering
+is active, `LensSource.binding` is non-null, and `lens.amount` is above zero.
+Suppression is the same path as `compositor.amount: 0`, so the layer is
 removed from the DOM rather than hidden, no `clip-path` string is built, and
 the hull is not projected. When the lens stops contributing, for any reason,
 the layer is rebuilt on the next frame.
+
+The glass term is the one that is easy to miss, and it was missed on the first
+pass. The lens substitutes on the INTERIOR wall, the only pass deep enough to
+replace what is behind the head, and `applyGlassLayering` sets
+`interiorMesh.visible = false` outright at `skin.glass.amount: 0`, or on a rig
+with no body mesh to clone. So a bound texture with the glass off paints
+nothing at all, exactly as `HeadLensConfig` already documented, and standing
+rung 2 down for it leaves the head showing neither rung. The engine reads
+`glassLayeringActive`, the flag `applyGlassLayering` set earlier in the same
+frame, rather than re-deriving the condition, so the two cannot drift.
 
 `applyCompositorGlass` therefore moves after the lens sync in the frame loop.
 Both `createPageLens` and `createElementLens` publish `binding` from inside

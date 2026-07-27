@@ -1212,8 +1212,19 @@ class EngineImpl implements Engine {
    * host named whose snapshot has not resolved, or whose rasteriser would not
    * load at all, binds nothing and shows nothing, and must not be allowed to
    * stand a working rung down on the strength of an intention.
+   *
+   * `glassLayeringActive` is the third term and the least obvious. The lens
+   * substitutes on the INTERIOR wall, which is the only pass deep enough to
+   * replace what is behind the head, and `applyGlassLayering` hides that mesh
+   * outright at `skin.glass.amount: 0` or on a rig with no body to clone. So a
+   * bound texture with the glass off paints nothing, exactly as
+   * `HeadLensConfig` documents, and suppressing rung 2 for it would leave the
+   * head showing neither rung. Read rather than recomputed: it is the same
+   * flag `applyGlassLayering` set earlier in this frame, so the two cannot
+   * drift.
    */
   private lensContributing(): boolean {
+    if (this.glassLayeringActive !== true) return false;
     return this.lens?.binding != null && this.sysVfx.headConfig.lens.amount > 0;
   }
 

@@ -1848,13 +1848,18 @@ describe('compositor glass lifecycle (dec.liquid-glass-compositor)', () => {
     it('brings the layer back when the source is dropped', async () => {
       const { engine, canvas } = await mountHead();
       engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      // Build it BEFORE naming the source, so the `toBeNull` below means
+      // "stood down" rather than "never built".
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
       engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
       await settle();
-      rafCb?.(16);
+      rafCb?.(32);
       expect(layerIn(canvas)).toBeNull();
 
       engine.setLensSource(null);
-      rafCb?.(32);
+      rafCb?.(48);
       // A rebuilt layer, not a bare div: suppression clears
       // `appliedCompositorConfig`, so the rebuild has to push the config again
       // or the frost comes back as an unstyled transparent rectangle.
@@ -1869,15 +1874,43 @@ describe('compositor glass lifecycle (dec.liquid-glass-compositor)', () => {
     it('brings the layer back when the lens is mixed out', async () => {
       const { engine, canvas } = await mountHead();
       engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      // Build it BEFORE naming the source. Without this the later `toBeNull`
+      // passes because the layer was never built, not because it was stood
+      // down, and the test would survive the exclusion being deleted.
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
       engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
       await settle();
-      rafCb?.(16);
+      rafCb?.(32);
       expect(layerIn(canvas)).toBeNull();
 
       // A bound texture that contributes nothing is not the lens showing. The
       // head is translucent again, so the frost is what is behind it.
       engine.vfx.setHeadConfig({ lens: { amount: 0 } });
+      rafCb?.(48);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('brings the layer back when the glass the lens rides is turned off', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
       rafCb?.(32);
+      expect(layerIn(canvas)).toBeNull();
+
+      // The lens substitutes on the interior wall, and `applyGlassLayering`
+      // hides that mesh entirely at `glass.amount: 0`. So a bound texture with
+      // the glass off paints nothing at all, and standing rung 2 down for it
+      // would leave the head showing neither rung.
+      engine.vfx.setHeadConfig({ skin: { glass: { amount: 0 } } });
+      rafCb?.(48);
       expect(layerIn(canvas)).not.toBeNull();
 
       engine.dispose();
