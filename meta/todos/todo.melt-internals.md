@@ -10,6 +10,23 @@ Found in `demo/melt-lab.html` on 2026-07-27, the day the melt landed
 (`dec.liquid-glass-melt`). Recorded in full in
 `meta/changes/archive/*-liquid-head-melt/implementation-notes.md`.
 
+**Seen and accepted by the owner, 2026-07-28**
+(`src.owner-consolidation-2026-07-28`):
+
+> "i was aware of the eyeballs/internals thing, i could see, which is why i just
+> approved the directio here!"
+
+So this does not block the direction, it does not block exposing the melt, and it
+was never mistaken for evidence against mesh displacement. The owner explicitly
+wants the melt reachable in the studio's developer tier precisely so this class
+of thing can be found and worked on together, which is why the defect is stated
+inline on the page rather than hidden behind a threshold.
+
+What it does block is calling the sweep finished. A presentation pass that shows
+the melt as a polished thing (`todo.studio-showcase-overhaul`) wants this fixed
+first. The melt is now active development rather than an experimental spike,
+which makes this the first real piece of work on it.
+
 ## The defect
 
 At `melt.amount: 0.7` the two eyeballs and the mouth cavity hang in mid-air

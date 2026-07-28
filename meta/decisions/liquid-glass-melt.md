@@ -7,6 +7,7 @@ date: 2026-07-27
 informed_by:
   - src.owner-look-2026-07-27
   - src.owner-vision-2026-07-25
+  - src.owner-consolidation-2026-07-28
 ---
 # The liquid direction is a vertex melt on the real bust
 
@@ -128,3 +129,32 @@ particle field never approximates a mouth.
   full melt. An unguarded divide puts an infinity into the fresnel, which
   reaches the alpha, and the silhouette collapses. That exact failure is already
   recorded in `src/shaders/materials.ts`.
+
+## Confirmed by the owner, 2026-07-28
+
+> "the head liquid/melting is the right direction!"
+
+And, unprompted, on the floating internals:
+
+> "i was aware of the eyeballs/internals thing, i could see, which is why i just
+> approved the directio here!"
+
+So the approval was given with the known defects in view, not because they were
+hidden. Recorded as `src.owner-consolidation-2026-07-28`.
+
+**Status change.** The melt is promoted from experimental spike to the active
+liquid direction. It is active development and NOT ready: `melt.amount` still
+ships at 0, the map is still an exact identity there, and the controls live in
+the studio's developer tier rather than beside the personalisation knobs.
+
+The escalation criterion is settled rather than pending. It did not fire, the
+owner has confirmed the direction by eye, and
+`todo.liquid-glass-topology-fluid` stays unwarranted.
+
+Two consequences for how the work is presented, from the same session:
+
+- The glass is the default rather than one option shown beside others, since
+  every alternative shown beside it was ruled against on 2026-07-27.
+- There is one environment. The studio is the site root, the melt is a developer
+  tier inside it, and the pages that used to hold these features separately are
+  out of the deployed set.

@@ -81,7 +81,10 @@
       <div><b>new</b> library engine <small>demo/engine.html</small></div>
     </div>
     <div id="frames">
-      <iframe id="left" src="./index.html" title="hand-rolled approved look"></iframe>
+      <!-- `handrolled.html`, not `index.html`: the studio took the root, and
+           pointing this at the root would silently compare the library against
+           itself. -->
+      <iframe id="left" src="./handrolled.html" title="hand-rolled approved look"></iframe>
       <iframe id="right" src="./engine.html" title="library engine"></iframe>
     </div>
     <p id="note">

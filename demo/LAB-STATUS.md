@@ -1,5 +1,37 @@
 # Next unit of work
 
+Updated 2026-07-28, sixth pass. **There is one page now.**
+
+The owner approved the melt direction, having already seen the floating
+internals before approving, and asked for the environments to be consolidated:
+
+So: **the site root is the studio.** One URL. The glass is its default rather
+than a lab option, the melt is a developer tier inside it, and the 2026-07-27
+rulings are a notes tier inside it. `src.owner-consolidation-2026-07-28` has all
+three rulings verbatim.
+
+What moved:
+
+- `demo/index.html` IS the studio. What used to be at the root, a second
+  renderer hand-rolled in TSL rather than built on the library engine, is now
+  `demo/handrolled.html` and is no longer deployed. It stays in the repo as the
+  owner-approved-look reference and as the left half of `compare-lab.html`.
+- `demo/outcomes.html` is gone. Its content is the studio's notes tier.
+- The deployed set is three files: the root, `feature-shading-lab.html` (a
+  redirect stub) and `engine.html`, which is linked from nowhere but is the
+  target of `tools/evals/capture.mjs` and so must keep existing.
+- Everything else under `demo/`, including all nine feature labs and
+  `compare-lab.html`, stays in the repo and out of the deployed set. Each lab is
+  superseded by a tier in the studio, and several reach into `EngineImpl`
+  privates, which is why they never shipped.
+
+The next unit of work is the owner's: `todo.studio-showcase-overhaul`, a
+presentation pass on the studio with the design skill loaded. It wants
+`todo.public-camera-pose` first, because a page whose job is to show the head off
+cannot currently frame it.
+
+Everything below this line is the fifth pass, kept for the reasoning.
+
 Updated 2026-07-27, fifth pass. **The owner look session happened.** Most of
 the liquid-glass programme was ruled against. The verbatim rulings are in
 `meta/sources/src.owner-look-2026-07-27.md` and every affected todo carries an
@@ -249,8 +281,10 @@ this file tracks their purpose and what remains owner-session-only.
 
 ## Committed lab artefacts
 
-- `demo/index.html` - the LAB is now the landing page (was
-  feature-shading-lab.html; a redirect stub remains at the old URL). Live
+- `demo/handrolled.html` - WAS the landing page until 2026-07-28, and before
+  that was feature-shading-lab.html (a redirect stub remains at that old URL).
+  A second renderer, hand-rolled in TSL rather than built on the library engine,
+  now out of the deployed set and kept as the owner-approved-look reference. Live
   TSL uniforms on the real bust: motion (incl. blink hold), zone opacities,
   feature shading, text fit, tone, eyes, expressions, speech, presets,
   config-JSON export. Controls hidden behind the "tune" button (or ?tune).
@@ -262,7 +296,9 @@ this file tracks their purpose and what remains owner-session-only.
   (owner request, 2026-07-21).
   Boot defaults + the 'Owner 07-21' preset are the owner-approved config
   (meta/sources/src.owner-approved-look-2026-07-21.md).
-  Serve with `bun run dev`, open /hologlyph/ - deployed to GitHub Pages.
+  Serve with `bun run dev`, open /hologlyph/handrolled.html. NOT deployed since
+  2026-07-28: the root is the studio and this is the second implementation the
+  consolidation moved out of the way.
 - `demo/engine.html` - the scroll-emergence engine demo (previous landing
   page); no longer linked from the landing but MUST stay: the visual eval
   and demo-smoke capture THIS page.
