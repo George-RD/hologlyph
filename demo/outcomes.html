@@ -135,8 +135,8 @@
       </button>
 
       <h2>see it move</h2>
-      <button class="tab" type="button" data-target="melt" data-src="./melt-lab.html">
-        Melt lab <small>press cycle, watch the sweep</small>
+      <button class="tab" type="button" data-target="studio" data-src="./studio.html">
+        Studio <small>the head, with the controls organised</small>
       </button>
       <button class="tab" type="button" data-target="compare" data-src="./compare-lab.html">
         Compare lab <small>hand-rolled beside the library</small>
@@ -342,7 +342,7 @@
       </section>
 
       <!-- ---------------------------------------------------------------- -->
-      <section class="frame" id="melt" hidden></section>
+      <section class="frame" id="studio" hidden></section>
       <section class="frame" id="compare" hidden></section>
       <div class="hint" id="hint" hidden></div>
     </main>
@@ -352,7 +352,7 @@
       const hint = document.getElementById('hint');
 
       const HINTS = {
-        melt: 'Press "cycle" in the panel. Watch the whole sweep, not just the endpoint.',
+        studio: 'Open "Developer, work in progress" in the rail, then press cycle. Press F for focus.',
         compare: 'Left: hand-rolled. Right: library. Cameras are not synchronised, by design.',
       };
 
