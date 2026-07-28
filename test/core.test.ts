@@ -14,6 +14,11 @@ import * as THREE from 'three';
 import { createEngine, visemeTap } from '../src/core';
 import { createPlaceholderAvatar } from '../src/core/placeholder-avatar';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
+import { FLUID_PARTICIPANT_MODES } from '../src/shaders/fluid';
+import type {
+  InteriorGlyphFieldOptions,
+  InteriorGlyphState,
+} from '../src/shaders/interior-glyph-field';
 import type {
   AssetLoader,
   AudioEngine,
@@ -24,6 +29,10 @@ import type {
   Expression,
   HeadConfig,
   HeadConfigOverrides,
+  HeadInteriorConfig,
+  HeadPoolConfig,
+  LensBinding,
+  StageCollider,
   LoadedAvatar,
   GazeMode,
   MotionEngine,
@@ -69,12 +78,27 @@ interface FakeTextSkin extends TextSkinEngine {
   updateCalls: number;
   reduced: boolean | undefined;
 }
-interface FakeVfx extends VFXEngine {
+interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
   disposeCount: number;
   emergenceValue: number;
   reduced: boolean;
+  /** Writable here so a test can place the waterline anywhere on the rig. */
+  rootOffsetY: number;
   _headConfig: HeadConfig;
   headConfigCalls: HeadConfigOverrides[];
+  lensBindings: Array<LensBinding | null>;
+  fluidDrives: Array<{
+    state: BehaviorState;
+    drive: number;
+    carrier: readonly [number, number, number];
+  }>;
+  stageColliderCalls: StageCollider[][];
+  bodyExtents: Array<readonly [number, number]>;
+  /** One entry per `createSkinMaterial` call: the three passes and their dispose counts. */
+  skinPassSets: Array<{
+    passes: { front: THREE.Material; interior: THREE.Material; mask: THREE.Material };
+    disposals: { front: number; interior: number; mask: number };
+  }>;
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -91,6 +115,25 @@ interface FakeAsset extends AssetLoader {
   attachRendererCalls: unknown[];
 }
 
+interface FakePool {
+  object: THREE.Object3D;
+  configs: HeadPoolConfig[];
+  updates: { dt: number; rootOffsetY: number; waterlineRadius: number; drive: number }[];
+  disposeCount: number;
+  setConfig(config: HeadPoolConfig): void;
+  update(dt: number, state: { rootOffsetY: number; waterlineRadius: number; drive: number }): void;
+  dispose(): void;
+}
+interface FakeInteriorField {
+  object: THREE.Object3D;
+  options: InteriorGlyphFieldOptions[];
+  configs: HeadInteriorConfig[];
+  updates: { dt: number; frame: THREE.Matrix4; reduced: boolean; camera: THREE.Camera }[];
+  disposeCount: number;
+  setConfig(config: HeadInteriorConfig): void;
+  update(dt: number, state: InteriorGlyphState): void;
+  dispose(): void;
+}
 interface Registry {
   behavior: FakeBehavior[];
   motion: FakeMotion[];
@@ -100,6 +143,8 @@ interface Registry {
   vfx: FakeVfx[];
   renderer: FakeRenderer[];
   asset: FakeAsset[];
+  pool: FakePool[];
+  interior: FakeInteriorField[];
 }
 
 // --- Shared helpers + per-subsystem instance registry ----------------------
@@ -149,6 +194,8 @@ const h = vi.hoisted(() => {
     vfx: [],
     renderer: [],
     asset: [],
+    pool: [],
+    interior: [],
   };
 
    return { makeEmitter, buildAdapter, registry, demoAdapter: undefined as TTSAdapter | undefined, avatarOverride: undefined as LoadedAvatar | undefined, skinMaterialOverride: null as THREE.Material | null };
@@ -314,7 +361,14 @@ vi.mock('../src/text-skin', () => ({
   },
 }));
 
-vi.mock('../src/shaders', () => ({
+vi.mock('../src/shaders', async () => ({
+  // The pool and fluid maths are pure and import nothing GPU-shaped, so the
+  // fake uses the real functions: a stubbed profile or a stubbed drive would
+  // let the engine's waterline and fluidity wiring pass while being wrong. The
+  // imports are dynamic because `vi.mock` factories are hoisted above every
+  // top-level import in the file, so a static binding is not in scope here.
+  ...(await import('../src/shaders/pool')),
+  ...(await import('../src/shaders/fluid')),
   createVFXEngine() {
     const vfx: FakeVfx = {
       emergenceValue: 0,
@@ -329,8 +383,43 @@ vi.mock('../src/shaders', () => ({
       },
       rootOffsetY: 0,
       clippingPlane: new THREE.Plane(),
+      skinPassSets: [],
       createSkinMaterial() {
-        return h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
+        // Disposal is the point of this fake, not just the shape: the mask
+        // moved out of the core into `buildSkinMaterial`, so the engine must
+        // now dispose all three passes exactly once and detach them first.
+        const disposals = { front: 0, interior: 0, mask: 0 };
+        const override = h.skinMaterialOverride;
+        const front = (override ??
+          ({ isSkin: true } as unknown as THREE.Material)) as THREE.Material & {
+          dispose(): void;
+        };
+        front.dispose = () => {
+          disposals.front++;
+        };
+        const passes = {
+          front,
+          interior: {
+            isInterior: true,
+            dispose() {
+              disposals.interior++;
+            },
+          } as unknown as THREE.Material,
+          // Mirrors what `buildSkinMaterial` actually configures, since the
+          // engine now takes the mask from there rather than building one.
+          // `test/shaders.test.ts` pins the real material's flags.
+          mask: {
+            isMask: true,
+            colorWrite: false,
+            depthWrite: true,
+            depthTest: true,
+            dispose() {
+              disposals.mask++;
+            },
+          } as unknown as THREE.Material,
+        };
+        this.skinPassSets.push({ passes, disposals });
+        return passes;
       },
       createEyeballMaterial() {
         return { isEyeball: true, dispose() {} } as unknown as THREE.Material;
@@ -343,8 +432,17 @@ vi.mock('../src/shaders', () => ({
             shading: { ...this._headConfig.skin.shading, ...config.skin?.shading },
             glyph: { ...this._headConfig.skin.glyph, ...config.skin?.glyph },
             tone: { ...this._headConfig.skin.tone, ...config.skin?.tone },
+            glass: { ...this._headConfig.skin.glass, ...config.skin?.glass },
+            backdrop: { ...this._headConfig.skin.backdrop, ...config.skin?.backdrop },
           },
           eyes: { ...this._headConfig.eyes, ...config.eyes },
+          pool: { ...this._headConfig.pool, ...config.pool },
+          interior: { ...this._headConfig.interior, ...config.interior },
+          lens: { ...this._headConfig.lens, ...config.lens },
+          fluid: { ...this._headConfig.fluid, ...config.fluid },
+          melt: { ...this._headConfig.melt, ...config.melt },
+          stage: { ...this._headConfig.stage, ...config.stage },
+          compositor: { ...this._headConfig.compositor, ...config.compositor },
         };
       },
       setEmergence(p: number) {
@@ -353,6 +451,27 @@ vi.mock('../src/shaders', () => ({
       setReducedMotion(reduce: boolean) {
         this.reduced = reduce;
       },
+      lensBindings: [],
+      setLens(binding: LensBinding | null) {
+        this.lensBindings.push(binding);
+      },
+      fluidDrives: [],
+      setFluidDrive(
+        state: BehaviorState,
+        drive: number,
+        carrier: readonly [number, number, number],
+      ) {
+        this.fluidDrives.push({ state, drive, carrier: [carrier[0], carrier[1], carrier[2]] });
+      },
+      stageColliderCalls: [],
+      setStageColliders(colliders: readonly StageCollider[]) {
+        this.stageColliderCalls.push(colliders.map((c) => ({ ...c })));
+      },
+      bodyExtents: [],
+      setBodyExtent(minY: number, maxY: number) {
+        this.bodyExtents.push([minY, maxY]);
+      },
+      stageFlow: new Float32Array(FLUID_PARTICIPANT_MODES * 3),
       update() {},
       disposeCount: 0,
       dispose() {
@@ -364,6 +483,61 @@ vi.mock('../src/shaders', () => ({
   },
   buildEyeballMaterial() {
     return { material: { isEyeball: true, dispose() {} } as unknown as THREE.Material };
+  },
+}));
+
+// The engine loads the pool's GPU half as its own chunk, so the mock has to
+// sit on that specifier, not on the `../src/shaders` barrel.
+vi.mock('../src/shaders/pool-surface', () => ({
+  createPoolSurface(_renderer: unknown, config: HeadPoolConfig) {
+    const pool: FakePool = {
+      object: new THREE.Group(),
+      configs: [config],
+      updates: [],
+      disposeCount: 0,
+      setConfig(next: HeadPoolConfig) {
+        this.configs.push(next);
+      },
+      update(dt, state) {
+        this.updates.push({ dt, ...state });
+      },
+      dispose() {
+        this.disposeCount++;
+      },
+    };
+    h.registry.pool.push(pool);
+    return pool;
+  },
+}));
+
+// Same reasoning as the pool: only the field's GPU half is faked, and it sits
+// on its own specifier rather than on the `../src/shaders` barrel. The pure
+// half stays real, so a wrong gate cannot pass by stubbing the maths out.
+vi.mock('../src/shaders/interior-glyph-field', () => ({
+  createInteriorGlyphField(options: InteriorGlyphFieldOptions) {
+    const field: FakeInteriorField = {
+      object: new THREE.Group(),
+      options: [options],
+      configs: [options.config],
+      updates: [],
+      disposeCount: 0,
+      setConfig(next: HeadInteriorConfig) {
+        this.configs.push(next);
+      },
+      update(dt, state) {
+        this.updates.push({
+          dt,
+          frame: state.frameMatrix.clone(),
+          reduced: state.reduced,
+          camera: state.camera,
+        });
+      },
+      dispose() {
+        this.disposeCount++;
+      },
+    };
+    h.registry.interior.push(field);
+    return field;
   },
 }));
 
@@ -385,6 +559,13 @@ vi.mock('../src/renderer', () => ({
       renderCount: 0,
       render() {
         this.renderCount++;
+        // Both real backends refresh the scene graph and the camera's inverse
+        // world matrix at the top of `render`. Anything the engine does after
+        // the render reads those, so a fake that skips it would let an
+        // ordering bug pass.
+        this.scene.updateMatrixWorld(true);
+        this.camera.updateMatrixWorld(true);
+        this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert();
       },
       disposeCount: 0,
       dispose() {
@@ -1020,16 +1201,41 @@ describe('displaced materials', () => {
     expect(texture.dispose).toHaveBeenCalledTimes(1);
   });
 });
-describe('occlusion depth mask', () => {
-  it('creates an occlusion depth mask at renderOrder = 0 on avatar replace', async () => {
-    const primaryMesh = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
-    const eyeMesh = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'eye_sclera' } as THREE.Material);
+describe('glass body draw order', () => {
+  /** A bust-shaped rig: skin plus the two authored internals and the eyes. */
+  function makeLayeredAvatar(): {
+    group: THREE.Group;
+    skin: THREE.Mesh;
+    eye: THREE.Mesh;
+    mouth: THREE.Mesh;
+    trim: THREE.Mesh;
+  } {
+    const skin = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    skin.morphTargetDictionary = { jaw_open: 0, exp_blink: 1 };
+    skin.morphTargetInfluences = [0, 0];
+    const eye = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'eye_sclera' } as THREE.Material);
+    const mouth = new THREE.Mesh(new THREE.BufferGeometry(), {
+      name: 'mouth_interior',
+      transparent: false,
+      blending: THREE.NormalBlending,
+    } as THREE.Material);
+    mouth.morphTargetDictionary = { jaw_open: 0 };
+    mouth.morphTargetInfluences = [0];
+    const trim = new THREE.Mesh(new THREE.BufferGeometry(), {
+      name: 'eye_trim',
+      transparent: false,
+      blending: THREE.NormalBlending,
+    } as THREE.Material);
     const group = new THREE.Group();
-    group.add(primaryMesh, eyeMesh);
+    group.add(skin, eye, mouth, trim);
+    return { group, skin, eye, mouth, trim };
+  }
 
+  it('layers interior, mask, internals and skin in one transparent pass', async () => {
+    const { group, skin, eye, mouth, trim } = makeLayeredAvatar();
     h.avatarOverride = {
       root: group,
-      morphMeshes: [primaryMesh],
+      morphMeshes: [skin, mouth],
       bones: {},
       animations: [],
       setMorph() {},
@@ -1042,18 +1248,1468 @@ describe('occlusion depth mask', () => {
     const engine = createEngine({ avatarUrl: 'fake.glb' });
     await engine.mount(document.createElement('canvas'), document.createElement('div'));
 
-    const mask = group.children.find((child) => child !== primaryMesh && child !== eyeMesh) as THREE.Mesh;
-    expect(mask).toBeDefined();
-    expect(mask.renderOrder).toBe(0);
+    const authored = new Set<THREE.Object3D>([skin, eye, mouth, trim]);
+    const overlays = group.children.filter((child) => !authored.has(child)) as THREE.Mesh[];
+    expect(overlays).toHaveLength(2);
 
-    const maskMat = mask.material as THREE.MeshBasicMaterial;
+    const mask = overlays.find((mesh) => mesh.renderOrder === 0);
+    const interior = overlays.find((mesh) => mesh.renderOrder === -1);
+    expect(mask, 'occlusion depth mask at renderOrder 0').toBeDefined();
+    expect(interior, 'interior wall at renderOrder -1').toBeDefined();
+
+    const maskMat = mask?.material as THREE.MeshBasicMaterial;
     expect(maskMat.colorWrite).toBe(false);
     expect(maskMat.depthWrite).toBe(true);
     expect(maskMat.depthTest).toBe(true);
+    // Three renders the whole opaque list before the transparent one, so the
+    // mask has to be transparent for renderOrder to place it after the
+    // interior wall.
+    expect(maskMat.transparent).toBe(true);
 
-    expect(eyeMesh.renderOrder).toBe(1);
-    expect(primaryMesh.renderOrder).toBe(2);
+    // Same reason for the authored internals. They were opaque, so they keep
+    // NoBlending and still draw as a straight write: only the layer moves.
+    for (const internal of [mouth, trim]) {
+      const mat = internal.material as THREE.Material;
+      expect(mat.transparent, `${mat.name} transparent`).toBe(true);
+      expect(mat.blending, `${mat.name} blending`).toBe(THREE.NoBlending);
+      expect(mat.depthWrite, `${mat.name} depthWrite`).toBe(true);
+      expect(internal.renderOrder, `${mat.name} renderOrder`).toBe(1);
+    }
+    expect(eye.renderOrder).toBe(1);
+    expect(skin.renderOrder).toBe(2);
+
+    // Both overlays ride the skin mesh's morph influences, so the far wall and
+    // the depth mask open with the jaw and close with a blink.
+    expect(interior?.morphTargetInfluences).toBe(skin.morphTargetInfluences);
+    expect(mask?.morphTargetInfluences).toBe(skin.morphTargetInfluences);
+    expect(interior?.morphTargetInfluences).not.toBe(mouth.morphTargetInfluences);
 
     engine.dispose();
+    expect(group.children).not.toContain(mask);
+    expect(group.children).not.toContain(interior);
+  });
+
+  it('clones the overlays off a glass-dressed mesh, not just the first morph mesh', async () => {
+    // `morphMeshes[0]` is the mouth cavity here. It keeps its authored
+    // material, so cloning the interior wall from it would show the inside of
+    // the mouth instead of the far side of the head.
+    const { group, skin, eye, mouth, trim } = makeLayeredAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [mouth, skin],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const authored = new Set<THREE.Object3D>([skin, eye, mouth, trim]);
+    const overlays = group.children.filter((child) => !authored.has(child)) as THREE.Mesh[];
+    const interior = overlays.find((mesh) => mesh.renderOrder === -1);
+    expect(interior).toBeDefined();
+    expect(interior?.geometry).toBe(skin.geometry);
+    expect(interior?.geometry).not.toBe(mouth.geometry);
+
+    engine.dispose();
+  });
+
+  it('leaves the pre-glass draw order intact at glass.amount 0', async () => {
+    const { group, skin, eye, mouth, trim } = makeLayeredAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [skin, mouth],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const authored = new Set<THREE.Object3D>([skin, eye, mouth, trim]);
+    const overlays = group.children.filter((child) => !authored.has(child)) as THREE.Mesh[];
+    const mask = overlays.find((mesh) => mesh.renderOrder === 0);
+    const interior = overlays.find((mesh) => mesh.renderOrder === -1);
+    const maskMat = mask?.material as THREE.Material;
+    const mouthMat = mouth.material as THREE.Material;
+
+    // Moving the mask and the internals into the transparent list is itself
+    // visible: with the jaw open it shifts the mouth cavity by about 15 luma.
+    // So it must unwind when the glass has nothing to show.
+    engine.vfx.setHeadConfig({ skin: { glass: { amount: 0 } } });
+    rafCb?.(16);
+    expect(interior?.visible).toBe(false);
+    expect(maskMat.transparent).toBe(false);
+    expect(mouthMat.transparent).toBe(false);
+    // Depth behaviour is unchanged either way; only the render list moves.
+    expect(maskMat.depthWrite).toBe(true);
+    expect(mouthMat.depthWrite).toBe(true);
+
+    engine.vfx.setHeadConfig({ skin: { glass: { amount: 1 } } });
+    rafCb?.(32);
+    expect(interior?.visible).toBe(true);
+    expect(maskMat.transparent).toBe(true);
+    expect(mouthMat.transparent).toBe(true);
+
+    engine.dispose();
+  });
+});
+
+describe('tier 1 pool lifecycle (dec.liquid-glass-architecture, item 3)', () => {
+  // The shared registry is never cleared between suites, so a stale entry
+  // from a neighbouring test would satisfy `at(-1)` before this engine has
+  // built anything.
+  beforeEach(() => {
+    h.registry.pool.length = 0;
+  });
+
+  /** A bust-shaped body whose radius pinches at the neck. */
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const positions: number[] = [];
+    const ring = (radius: number, y: number) => {
+      for (let s = 0; s < 16; s++) {
+        const a = (s / 16) * Math.PI * 2;
+        positions.push(Math.cos(a) * radius, y, Math.sin(a) * radius);
+      }
+    };
+    for (let i = 0; i <= 8; i++) ring(0.6, (i / 8) * 0.6);
+    for (let i = 0; i <= 4; i++) ring(0.15, 0.6 + (i / 4) * 0.4);
+    for (let i = 0; i <= 8; i++) ring(0.5, 1.0 + (i / 8) * 0.8);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  async function mountBust(): Promise<{ engine: ReturnType<typeof createEngine> }> {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    return { engine };
+  }
+
+  /** Turn the pool on and run the frame that reconciles it into the scene. */
+  function enablePool(engine: ReturnType<typeof createEngine>, time = 16): FakePool {
+    engine.vfx.setHeadConfig({ pool: { amount: 1 } });
+    rafCb?.(time);
+    const pool = h.registry.pool.at(-1);
+    if (!pool) throw new Error('pool was not built');
+    return pool;
+  }
+
+  it('builds nothing at amount 0 and tears the pool back down when it returns', async () => {
+    const { engine } = await mountBust();
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    rafCb?.(16);
+    rafCb?.(32);
+    expect(h.registry.pool).toHaveLength(0);
+
+    const pool = enablePool(engine, 48);
+    expect(scene.children).toContain(pool.object);
+
+    engine.vfx.setHeadConfig({ pool: { amount: 0 } });
+    rafCb?.(64);
+    expect(pool.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(pool.object);
+    // Torn down, not hidden: the shipped configuration must not hold a pair of
+    // render targets alive for a surface nobody can see.
+    expect(h.registry.pool).toHaveLength(1);
+
+    engine.dispose();
+  });
+
+  it('builds the pool once and pushes config only when it changes', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+    const pushes = pool.configs.length;
+    for (let i = 0; i < 20; i++) rafCb?.(2000 + 16 * i);
+    expect(h.registry.pool).toHaveLength(1);
+    // The reconciler runs every frame; re-pushing an unchanged config would
+    // reparse the tint hex sixty times a second for nothing.
+    expect(pool.configs.length).toBe(pushes);
+
+    engine.vfx.setHeadConfig({ pool: { tint: '#123456' } });
+    rafCb?.(3000);
+    expect(pool.configs.length).toBe(pushes + 1);
+    expect(pool.configs.at(-1)?.tint).toBe('#123456');
+
+    engine.dispose();
+  });
+
+  it('feeds the waterline radius from the rig, not from a constant', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    const pool = enablePool(engine);
+
+    // Settled: the base sits on the plane, so the widest part is in the water.
+    vfx.rootOffsetY = 0;
+    rafCb?.(4000);
+    expect(pool.updates.at(-1)!.waterlineRadius).toBeGreaterThan(0.5);
+
+    // Mid-emergence: the neck is on the plane, so the hole pinches.
+    vfx.rootOffsetY = -0.8;
+    rafCb?.(4016);
+    expect(pool.updates.at(-1)!.waterlineRadius).toBeLessThan(0.3);
+
+    engine.dispose();
+  });
+
+  it('drives ripples from scroll travel and consumes it once', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+
+    // Several calls between frames accumulate as distance covered, not as the
+    // last hop, so a host that streams scroll events is not under-reported.
+    engine.setScrollProgress(0.2);
+    engine.setScrollProgress(0.5);
+    rafCb?.(4000);
+    expect(pool.updates.at(-1)!.drive).toBeGreaterThan(0);
+
+    // Travel is consumed by the frame that used it.
+    rafCb?.(4016);
+    expect(pool.updates.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('drops a non-finite scroll progress instead of poisoning the field', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+
+    // `clamp01(NaN)` is NaN, and one NaN texel spreads across the whole height
+    // field within a second and never decays.
+    engine.setScrollProgress(Number.NaN);
+    engine.setScrollProgress(Number.POSITIVE_INFINITY);
+    rafCb?.(4000);
+    expect(Number.isFinite(pool.updates.at(-1)!.drive)).toBe(true);
+    expect(pool.updates.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('feeds the fluid solver only once the gate is open', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+
+    // Shipped configuration: no matrix recomposed, no bone read, no call.
+    rafCb?.(4000);
+    rafCb?.(4016);
+    expect(vfx.fluidDrives).toHaveLength(0);
+
+    vfx.setHeadConfig({ fluid: { amount: 1 } });
+    engine.setScrollProgress(0.6);
+    rafCb?.(4032);
+    const first = vfx.fluidDrives.at(-1);
+    expect(first).toBeDefined();
+    expect(first!.drive).toBeGreaterThan(0);
+    // The behaviour state picks the melt gain, so it has to be the live one.
+    expect(first!.state).toBe(engine.behavior.state);
+    // First carrier sample has no previous pose to difference against.
+    expect(first!.carrier).toEqual([0, 0, 0]);
+
+    // Travel is consumed by the frame that used it, exactly as the pool's is.
+    rafCb?.(4048);
+    expect(vfx.fluidDrives.at(-1)!.drive).toBe(0);
+
+    engine.dispose();
+  });
+
+  it('keeps the carrier velocity finite once the head is moving', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    vfx.setHeadConfig({ fluid: { amount: 1 } });
+
+    // The solver reads its own last offset, so one non-finite carrier reading
+    // would poison the flow vector permanently rather than for a frame.
+    for (let i = 0; i < 6; i++) rafCb?.(4000 + i * 16);
+    expect(vfx.fluidDrives.length).toBeGreaterThan(1);
+    for (const sample of vfx.fluidDrives) {
+      expect(Number.isFinite(sample.drive)).toBe(true);
+      for (const v of sample.carrier) expect(Number.isFinite(v)).toBe(true);
+    }
+
+    engine.dispose();
+  });
+
+  it('disposes the pool with the engine', async () => {
+    const { engine } = await mountBust();
+    const pool = enablePool(engine);
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    engine.dispose();
+    expect(pool.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(pool.object);
+  });
+
+  // -- Stage participants (dec.liquid-glass-participants) --------------------
+
+  /** Mark an element in the canvas's own document and give it a stub rect. */
+  function markParticipant(
+    doc: Document,
+    attribute: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ): HTMLElement {
+    const el = doc.createElement('div');
+    el.setAttribute(attribute, '');
+    doc.body.append(el);
+    el.getBoundingClientRect = (() =>
+      ({ ...rect, left: rect.x, top: rect.y, toJSON() {} }) as DOMRect) as HTMLElement['getBoundingClientRect'];
+    return el;
+  }
+
+  it('couples nothing on a page that marks nothing', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    for (let i = 0; i < 5; i++) rafCb?.(16 * (i + 1));
+    // The reconciler still runs, but every call carries an empty list: with
+    // no marked element there is no rect to read and no mode to drive.
+    expect(vfx.stageColliderCalls.length).toBeGreaterThan(0);
+    for (const call of vfx.stageColliderCalls) expect(call).toHaveLength(0);
+    engine.dispose();
+  });
+
+  it('resolves a marked element into a collider the solver can use', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.getBoundingClientRect = (() =>
+      ({ x: 0, y: 0, width: 400, height: 400, left: 0, top: 0, toJSON() {} }) as DOMRect) as HTMLElement['getBoundingClientRect'];
+    // Right of centre and level with the chest, so it presses into the widest
+    // part of the bust and the flow is squeezed left.
+    markParticipant(document, 'data-hologlyph-obstacle', {
+      x: 280,
+      y: 120,
+      width: 100,
+      height: 30,
+    });
+
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(canvas, document.createElement('div'));
+    const vfx = h.registry.vfx.at(-1)!;
+    // The fake renderer's camera starts at the origin, which projects to a
+    // zero-sized world. Seat it where the real host does.
+    h.registry.renderer.at(-1)!.camera.position.set(0, 0.05, 2.4);
+    rafCb?.(16);
+
+    const last = vfx.stageColliderCalls.at(-1);
+    expect(last).toHaveLength(1);
+    expect(last?.[0]?.overlap).toBeGreaterThan(0);
+    // Squeezed away from the obstacle: it is to the right, so the liquid
+    // piles to the left.
+    expect(last?.[0]?.direction[0]).toBeLessThan(0);
+
+    engine.dispose();
+    // Disposing releases the stage, and the release is a real empty push.
+    expect(vfx.stageColliderCalls.at(-1)).toHaveLength(0);
+    document.body.innerHTML = '';
+  });
+});
+
+describe('compositor glass lifecycle (dec.liquid-glass-compositor)', () => {
+  /** A cube hull bound to one bone, which is all the projector reads. */
+  function cubeHull() {
+    const points: number[] = [];
+    for (const x of [-0.3, 0.3]) {
+      for (const y of [0, 1.6]) {
+        for (const z of [-0.3, 0.3]) points.push(x, y, z);
+      }
+    }
+    return {
+      version: 1,
+      groups: [{ joint: 'head', inverseBind: new Float32Array(new THREE.Matrix4().elements), points: new Float32Array(points) }],
+    };
+  }
+
+  /** A canvas inside a positioned parent, as `<hologlyph-head>` builds one. */
+  function mountedCanvas(): HTMLCanvasElement {
+    const parent = document.createElement('div');
+    parent.setAttribute('style', 'position:relative');
+    const canvas = document.createElement('canvas');
+    canvas.width = 400;
+    canvas.height = 400;
+    parent.appendChild(canvas);
+    document.body.appendChild(parent);
+    return canvas;
+  }
+
+  async function mountHead(withHull = true): Promise<{
+    engine: ReturnType<typeof createEngine>;
+    canvas: HTMLCanvasElement;
+  }> {
+    const group = new THREE.Group();
+    const bone = new THREE.Bone();
+    bone.name = 'head';
+    group.add(bone);
+    const body = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    group.add(body);
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      ...(withHull ? { silhouetteHull: cubeHull() } : {}),
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    } as LoadedAvatar;
+    const canvas = mountedCanvas();
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(canvas, document.createElement('div'));
+    h.registry.renderer.at(-1)!.camera.position.set(0, 0.8, 2.4);
+    return { engine, canvas };
+  }
+
+  const layerIn = (canvas: HTMLCanvasElement): Element | null =>
+    canvas.parentElement?.querySelector('[data-hologlyph-compositor]') ?? null;
+
+  beforeEach(() => {
+    vi.stubGlobal('CSS', { supports: (p: string) => p.endsWith('backdrop-filter') });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+  });
+
+  it('authors no DOM at amount 0, and tears the layer back down when it returns', async () => {
+    const { engine, canvas } = await mountHead();
+
+    // The shipped configuration. A page that never touches this config must
+    // not gain an element in its tree.
+    rafCb?.(16);
+    rafCb?.(32);
+    expect(layerIn(canvas)).toBeNull();
+
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(48);
+    const layer = layerIn(canvas);
+    expect(layer).not.toBeNull();
+    expect(canvas.previousElementSibling).toBe(layer);
+
+    engine.vfx.setHeadConfig({ compositor: { amount: 0 } });
+    rafCb?.(64);
+    // Removed, not hidden: an invisible layer would still cost the compositor a
+    // backdrop capture on every scroll.
+    expect(layerIn(canvas)).toBeNull();
+
+    engine.dispose();
+  });
+
+  /** Screen-space Y of every vertex in a `polygon(...)` value. */
+  function clipRows(layer: HTMLElement): number[] {
+    return [...layer.style.clipPath.matchAll(/(-?[\d.]+)px (-?[\d.]+)px/g)].map((m) => Number(m[2]));
+  }
+
+  it('clips to the projected silhouette', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+
+    const layer = layerIn(canvas) as HTMLElement;
+    expect(layer.style.clipPath).toMatch(/^polygon\(/);
+    // A convex outline, not a degenerate sliver: three vertices is the minimum
+    // the projector will emit at all.
+    expect(clipRows(layer).length).toBeGreaterThanOrEqual(3);
+    expect(layer.style.visibility).toBe('visible');
+
+    engine.dispose();
+  });
+
+  it('cuts the outline at the emergence waterline', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    const layer = layerIn(canvas) as HTMLElement;
+    const submerged = Math.max(...clipRows(layer));
+
+    // The engine clips the body at `y > -constant`, so raising the waterline
+    // must raise the bottom of the frost with it. Without the floor the layer
+    // would keep frosting a submerged head that is not drawn at all. Screen Y
+    // counts downward, so "higher" is a smaller number.
+    const vfx = h.registry.vfx.at(-1)!;
+    vfx.clippingPlane.constant = -0.8;
+    rafCb?.(32);
+    expect(Math.max(...clipRows(layer))).toBeLessThan(submerged);
+
+    engine.dispose();
+  });
+
+  it('installs the layer but never shows it when the asset carries no hull', async () => {
+    const { engine, canvas } = await mountHead(false);
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+
+    // The hull is an enhancement and its absence must change nothing visible:
+    // an unclipped layer would frost the whole canvas box instead.
+    const layer = layerIn(canvas) as HTMLElement;
+    expect(layer).not.toBeNull();
+    expect(layer.style.visibility).toBe('hidden');
+    expect(layer.style.clipPath).toBe('');
+
+    engine.dispose();
+  });
+
+  it('syncs after the render, so the outline matches the pose just drawn', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    const layer = layerIn(canvas) as HTMLElement;
+    const first = layer.style.clipPath;
+
+    // Move the camera WITHOUT refreshing its matrices, exactly as a host does
+    // by assigning a position. Only `render()` turns that into a new
+    // `matrixWorldInverse`, so a projection that ran before the render would
+    // still be reading the previous pose and this would equal `first`.
+    const camera = h.registry.renderer.at(-1)!.camera;
+    camera.position.set(0.4, 0.8, 2.4);
+    expect(camera.matrixWorldInverse.elements[12]).toBe(0);
+    rafCb?.(32);
+    expect(layer.style.clipPath).not.toBe(first);
+
+    engine.dispose();
+  });
+
+  it('asks for the layer once on an engine that cannot composite one', async () => {
+    // Regression: the gate being open was enough to re-enter the constructor
+    // every frame, so an engine with no `backdrop-filter` paid a `CSS.supports`
+    // call and an ancestor walk sixty times a second, forever.
+    let supportsCalls = 0;
+    vi.stubGlobal('CSS', {
+      supports: () => {
+        supportsCalls++;
+        return false;
+      },
+    });
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    for (let i = 0; i < 20; i++) rafCb?.(16 * (i + 1));
+
+    expect(layerIn(canvas)).toBeNull();
+    // Two spellings are probed per attempt, and there must be exactly one
+    // attempt however many frames ran.
+    expect(supportsCalls).toBeLessThanOrEqual(2);
+
+    engine.dispose();
+  });
+
+  it('does not strand the layer beside a canvas it has been remounted off', async () => {
+    // Regression: the layer is parented next to the canvas, so a remount onto
+    // a different one left a frosted div behind in the host page forever.
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    expect(layerIn(canvas)).not.toBeNull();
+
+    const second = mountedCanvas();
+    await engine.mount(second, document.createElement('div'));
+    h.registry.renderer.at(-1)!.camera.position.set(0, 0.8, 2.4);
+    rafCb?.(32);
+
+    expect(layerIn(canvas)).toBeNull();
+    expect(layerIn(second)).not.toBeNull();
+
+    engine.dispose();
+  });
+
+  it('removes the layer from the host page on dispose', async () => {
+    const { engine, canvas } = await mountHead();
+    engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+    rafCb?.(16);
+    expect(layerIn(canvas)).not.toBeNull();
+
+    engine.dispose();
+    // The one thing this feature does that no other does: write into the
+    // host's own tree. Leaving that behind would be a leak the host can see.
+    expect(layerIn(canvas)).toBeNull();
+  });
+
+  /**
+   * Rung 2 against rung 3 (`dec.liquid-glass-rung-exclusion`). The two answer
+   * the same question, so a page that opens both gates must see exactly one of
+   * them, and it must be the one the host had to ask for.
+   */
+  describe('exclusion against the lens (dec.liquid-glass-rung-exclusion)', () => {
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+    const stubRasteriser = () => (): Promise<CanvasImageSource> =>
+      Promise.resolve({ width: 4, height: 4 } as unknown as CanvasImageSource);
+
+    it('stands the layer down on the first frame a bound lens contributes', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      // ONE frame. Both lens sources publish `binding` from inside `sync()`,
+      // so a reconciler that ran before the lens would still be reading last
+      // frame's null here and would leave the frost up for a frame.
+      rafCb?.(32);
+      expect(layerIn(canvas)).toBeNull();
+
+      engine.dispose();
+    });
+
+    it('brings the layer back when the source is dropped', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      // Build it BEFORE naming the source, so the `toBeNull` below means
+      // "stood down" rather than "never built".
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      rafCb?.(32);
+      expect(layerIn(canvas)).toBeNull();
+
+      engine.setLensSource(null);
+      rafCb?.(48);
+      // A rebuilt layer, not a bare div: suppression clears
+      // `appliedCompositorConfig`, so the rebuild has to push the config again
+      // or the frost comes back as an unstyled transparent rectangle.
+      const back = layerIn(canvas) as HTMLElement | null;
+      expect(back).not.toBeNull();
+      expect(back?.style.backdropFilter).toMatch(/blur\(/);
+      expect(back?.style.clipPath).toMatch(/^polygon\(/);
+
+      engine.dispose();
+    });
+
+    it('brings the layer back when the lens is mixed out', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      // Build it BEFORE naming the source. Without this the later `toBeNull`
+      // passes because the layer was never built, not because it was stood
+      // down, and the test would survive the exclusion being deleted.
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      rafCb?.(32);
+      expect(layerIn(canvas)).toBeNull();
+
+      // A bound texture that contributes nothing is not the lens showing. The
+      // head is translucent again, so the frost is what is behind it.
+      engine.vfx.setHeadConfig({ lens: { amount: 0 } });
+      rafCb?.(48);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('brings the layer back when the glass the lens rides is turned off', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      rafCb?.(16);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+      await settle();
+      rafCb?.(32);
+      expect(layerIn(canvas)).toBeNull();
+
+      // The lens substitutes on the interior wall, and `applyGlassLayering`
+      // hides that mesh entirely at `glass.amount: 0`. So a bound texture with
+      // the glass off paints nothing at all, and standing rung 2 down for it
+      // would leave the head showing neither rung.
+      engine.vfx.setHeadConfig({ skin: { glass: { amount: 0 } } });
+      rafCb?.(48);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('keeps the layer while a named capture has not resolved', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      // Intent is not contribution. Naming a subtree whose rasteriser never
+      // answers must not take away the rung that does work.
+      engine.setLensSource(document.createElement('section'), {
+        rasterise: () => new Promise<CanvasImageSource>(() => {}),
+      });
+      await settle();
+      rafCb?.(16);
+      rafCb?.(32);
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+
+    it('keeps the layer when the rasteriser fails outright', async () => {
+      const { engine, canvas } = await mountHead();
+      engine.vfx.setHeadConfig({ compositor: { amount: 1 } });
+      engine.on('error', () => {});
+      engine.setLensSource(document.createElement('section'), {
+        rasterise: () => Promise.reject(new Error('no rasteriser')),
+      });
+      await settle();
+      rafCb?.(16);
+      // The ladder degrading downward: rung 3 was asked for, could not be
+      // built, and rung 2 carries on exactly as it did.
+      expect(layerIn(canvas)).not.toBeNull();
+
+      engine.dispose();
+    });
+  });
+});
+
+describe('interior glyph field lifecycle (dec.liquid-glass-architecture, item 10)', () => {
+  beforeEach(() => {
+    h.registry.interior.length = 0;
+  });
+
+  /** A body with a baked thickness attribute and a head bone that carries it. */
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.SkinnedMesh; head: THREE.Bone } {
+    const positions: number[] = [];
+    for (let i = 0; i <= 6; i++) {
+      for (let s = 0; s < 12; s++) {
+        const a = (s / 12) * Math.PI * 2;
+        positions.push(Math.cos(a) * 0.4, (i / 6) * 1.2, Math.sin(a) * 0.4);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const vertices = positions.length / 3;
+    geometry.setAttribute(
+      'aThickness',
+      new THREE.Float32BufferAttribute(new Float32Array(vertices).fill(0.5), 1),
+    );
+
+    const root = new THREE.Bone();
+    root.name = 'root';
+    const head = new THREE.Bone();
+    head.name = 'head';
+    root.add(head);
+    const skeleton = new THREE.Skeleton([root, head]);
+
+    const body = new THREE.SkinnedMesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(root);
+    group.add(body);
+    body.bind(skeleton);
+    return { group, body, head };
+  }
+
+  async function mountBust(): Promise<{
+    engine: ReturnType<typeof createEngine>;
+    head: THREE.Bone;
+    group: THREE.Group;
+  }> {
+    const { group, body, head } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: { head },
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    return { engine, head, group };
+  }
+
+  function enableField(engine: ReturnType<typeof createEngine>, time = 16): FakeInteriorField {
+    engine.vfx.setHeadConfig({ interior: { count: 120 } });
+    rafCb?.(time);
+    const field = h.registry.interior.at(-1);
+    if (!field) throw new Error('the interior field was not built');
+    return field;
+  }
+
+  it('builds nothing at count 0 and tears the field back down when it returns', async () => {
+    const { engine } = await mountBust();
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    rafCb?.(16);
+    rafCb?.(32);
+    expect(h.registry.interior).toHaveLength(0);
+
+    const field = enableField(engine, 48);
+    expect(scene.children).toContain(field.object);
+
+    engine.vfx.setHeadConfig({ interior: { count: 0 } });
+    rafCb?.(64);
+    expect(field.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(field.object);
+    // Torn down, not hidden: the shipped configuration must not hold a
+    // vertex buffer alive for a field nobody can see.
+    expect(h.registry.interior).toHaveLength(1);
+
+    engine.dispose();
+  });
+
+  it('builds the field once and pushes config only when it changes', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const pushes = field.configs.length;
+    for (let i = 0; i < 20; i++) rafCb?.(2000 + 16 * i);
+    expect(h.registry.interior).toHaveLength(1);
+    expect(field.configs.length).toBe(pushes);
+
+    // A count change rides `setConfig`, so the sites are never resampled and
+    // a glyph keeps its identity across the whole travel of the slider.
+    engine.vfx.setHeadConfig({ interior: { count: 200 } });
+    rafCb?.(3000);
+    expect(h.registry.interior).toHaveLength(1);
+    expect(field.configs.length).toBe(pushes + 1);
+    expect(field.configs.at(-1)?.count).toBe(200);
+
+    engine.dispose();
+  });
+
+  it('samples the rig it was given, thickness and all', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const options = field.options[0]!;
+    expect(options.positions.length).toBe(7 * 12 * 3);
+    expect(options.thickness).not.toBeNull();
+    expect(options.thickness?.length).toBe(7 * 12);
+    // The canvas the SURFACE samples, not a second texture upload. The engine
+    // builds the body skin first and the eye skin last, so the body's is the
+    // second-newest entry in the registry.
+    expect(options.texture).toBe(h.registry.textSkin.at(-2)?.texture);
+
+    engine.dispose();
+  });
+
+  it('carries the field on the head bone, so a head turn moves the targets', async () => {
+    const { engine, head } = await mountBust();
+    const field = enableField(engine);
+    rafCb?.(2000);
+    const still = field.updates.at(-1)!.frame.clone();
+
+    head.rotation.y = 0.9;
+    rafCb?.(2016);
+    const turned = field.updates.at(-1)!.frame;
+    expect(turned.equals(still)).toBe(false);
+
+    engine.dispose();
+  });
+
+  it('does not apply the emergence travel twice while the root translates', async () => {
+    const { engine } = await mountBust();
+    const vfx = h.registry.vfx.at(-1)!;
+    const field = enableField(engine);
+
+    // At rest the frame is the identity: the bind pose IS the current pose.
+    vfx.rootOffsetY = 0;
+    rafCb?.(2000);
+    const settled = field.updates.at(-1)!.frame;
+    expect(settled.elements[13]).toBeCloseTo(0, 6);
+
+    // Mid-emergence the whole avatar translates. `SkinnedMesh` refreshes
+    // `bindMatrixInverse` inside `updateMatrixWorld` and NOT inside
+    // `updateWorldMatrix`, so pairing a fresh `matrixWorld` with a stale
+    // inverse applies the root's travel a second time: -0.6 would read as
+    // -1.2 here and the field would sit half a body below the head.
+    vfx.rootOffsetY = -0.6;
+    rafCb?.(2016);
+    const rising = field.updates.at(-1)!.frame;
+    expect(rising.elements[13]).toBeCloseTo(-0.6, 6);
+
+    engine.dispose();
+  });
+
+  it('passes reduced motion through, because the lag is the shake response', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    rafCb?.(2000);
+    expect(field.updates.at(-1)!.reduced).toBe(false);
+
+    mqlListeners.forEach((fn) => fn({ matches: true } as MediaQueryListEvent));
+    rafCb?.(2016);
+    expect(field.updates.at(-1)!.reduced).toBe(true);
+
+    engine.dispose();
+  });
+
+  it('updates once per frame with the live camera', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const before = field.updates.length;
+    rafCb?.(2000);
+    rafCb?.(2016);
+    expect(field.updates.length).toBe(before + 2);
+    expect(field.updates.at(-1)!.camera).toBe(h.registry.renderer.at(-1)!.camera);
+
+    engine.dispose();
+  });
+
+  it('drops the field when the avatar is replaced, because its sites are stale', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    engine.setTextSkinSource({ getText: () => 'x', onChange: () => () => {} });
+    // A remount is what replaces the avatar; the field must not survive it
+    // holding rest positions sampled from a body that is gone.
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    expect(field.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(field.object);
+
+    engine.dispose();
+  });
+
+  it('disposes the field with the engine', async () => {
+    const { engine } = await mountBust();
+    const field = enableField(engine);
+    const scene = h.registry.renderer.at(-1)!.scene;
+
+    engine.dispose();
+    expect(field.disposeCount).toBe(1);
+    expect(scene.children).not.toContain(field.object);
+  });
+});
+
+describe('snapshot lens lifecycle (dec.liquid-glass-architecture, item 4)', () => {
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 0.1, 0.5, 0, -0.1, 1, 0], 3),
+    );
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  async function mountHead(): Promise<ReturnType<typeof createEngine>> {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    return engine;
+  }
+
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function stubRasteriser(): () => Promise<CanvasImageSource> {
+    return () => Promise.resolve({ width: 4, height: 4 } as unknown as CanvasImageSource);
+  }
+
+  it('never touches the lens uniforms for a head with no source named', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    rafCb?.(16);
+    rafCb?.(32);
+    // Not "bound null": never called at all. No layout read, no rasteriser
+    // load, no texture, so the shipped head costs exactly what it did.
+    expect(vfx.lensBindings).toEqual([]);
+    engine.dispose();
+  });
+
+  it('binds a snapshot once a source is named, and clears it when it is dropped', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    await settle();
+    rafCb?.(16);
+
+    const bound = vfx.lensBindings.at(-1);
+    expect(bound).not.toBeNull();
+    expect(bound?.texture).toBeDefined();
+
+    engine.setLensSource(null);
+    expect(vfx.lensBindings.at(-1)).toBeNull();
+    engine.dispose();
+  });
+
+  it('is idempotent on the same source, so a re-rendering host cannot storm captures', async () => {
+    const engine = await mountHead();
+    const rasterise = vi.fn(stubRasteriser());
+    const section = document.createElement('section');
+
+    for (let render = 0; render < 25; render++) {
+      engine.setLensSource(section, { rasterise });
+    }
+    await settle();
+    // One capture, not twenty-five. A capture is 10 to 150 ms of main thread,
+    // and this is the exact shape of a framework effect with no dependencies.
+    expect(rasterise).toHaveBeenCalledTimes(1);
+
+    engine.setLensSource(document.createElement('section'), { rasterise });
+    await settle();
+    expect(rasterise).toHaveBeenCalledTimes(2);
+    engine.dispose();
+  });
+
+  it('unbinds the snapshot before disposing it, so no dead texture stays in the sampler', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    await settle();
+    rafCb?.(16);
+
+    const texture = vfx.lensBindings.at(-1)?.texture;
+    expect(texture).toBeDefined();
+    let disposedAt = -1;
+    texture?.addEventListener('dispose', () => {
+      disposedAt = vfx.lensBindings.length;
+    });
+
+    engine.setLensSource(null);
+    // The clearing call must already have been made when the texture died.
+    expect(vfx.lensBindings.at(-1)).toBeNull();
+    expect(disposedAt).toBe(vfx.lensBindings.length);
+    engine.dispose();
+  });
+
+  it('accepts a source named before mount and builds it when the canvas arrives', async () => {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    const vfx = h.registry.vfx.at(-1)!;
+    expect(vfx.lensBindings).toEqual([]);
+
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    await settle();
+    rafCb?.(16);
+    expect(vfx.lensBindings.at(-1)).not.toBeNull();
+    engine.dispose();
+  });
+
+  it('reports a capture failure as an engine error and keeps rendering', async () => {
+    const engine = await mountHead();
+    const errors: Error[] = [];
+    engine.on('error', (err) => errors.push(err));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    engine.setLensSource(document.createElement('section'), {
+      rasterise: () => Promise.reject(new Error('rasteriser missing')),
+    });
+    await settle();
+
+    expect(errors.map((e) => e.message)).toEqual(['rasteriser missing']);
+    rafCb?.(16);
+    expect(h.registry.renderer.at(-1)!.renderCount).toBeGreaterThan(0);
+    warn.mockRestore();
+    engine.dispose();
+  });
+
+  it('clears the binding when the engine is disposed', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    engine.setLensSource(document.createElement('section'), { rasterise: stubRasteriser() });
+    await settle();
+    rafCb?.(16);
+    expect(vfx.lensBindings.at(-1)).not.toBeNull();
+
+    engine.dispose();
+    expect(vfx.lensBindings.at(-1)).toBeNull();
+  });
+});
+
+/**
+ * The Chromium HTML-in-Canvas enhancement, seen from the engine
+ * (dec.liquid-glass-architecture, item 5). What matters here is only which
+ * lens gets built: the upload path itself is covered in
+ * `test/core-element-lens.test.ts`.
+ */
+describe('live lens selection (dec.liquid-glass-architecture, item 5)', () => {
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function makeBustAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 0.1, 0.5, 0, -0.1, 1, 0], 3),
+    );
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  async function mountHead(canvas = document.createElement('canvas')) {
+    const { group, body } = makeBustAvatar();
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(canvas, document.createElement('div'));
+    return engine;
+  }
+
+  /** A subtree shaped for the enhancement: an immediate child of a drawable canvas. */
+  function liveSubtree(options: { control?: boolean } = {}): HTMLElement {
+    const holder = document.createElement('canvas');
+    holder.setAttribute('layoutsubtree', '');
+    holder.width = 512;
+    holder.height = 512;
+    holder.getContext = (() => ({
+      clearRect() {},
+      setTransform() {},
+      drawElementImage() {},
+    })) as unknown as HTMLCanvasElement['getContext'];
+    const child = document.createElement('div');
+    child.getBoundingClientRect = () => ({ left: 0, top: 0, width: 512, height: 512 }) as DOMRect;
+    if (options.control) child.appendChild(document.createElement('input'));
+    holder.appendChild(child);
+    return child;
+  }
+
+  /**
+   * Turn the flag on. Torn down in `afterEach` rather than at the end of a
+   * test body, or a failed assertion would leak the fake capability into every
+   * later suite in this file and silently reroute the snapshot lens.
+   */
+  const scope = globalThis as unknown as {
+    CanvasRenderingContext2D?: unknown;
+    WebGL2RenderingContext?: unknown;
+  };
+  function withCapability(): void {
+    scope.CanvasRenderingContext2D = { prototype: { drawElementImage(): void {} } };
+    scope.WebGL2RenderingContext = { prototype: { texElementImage2D(): void {} } };
+  }
+  afterEach(() => {
+    delete scope.CanvasRenderingContext2D;
+    delete scope.WebGL2RenderingContext;
+  });
+
+  const stubRasteriser = () =>
+    vi.fn(async () => ({ width: 4, height: 4 }) as unknown as CanvasImageSource);
+
+  it('takes the snapshot path for the same subtree when the capability is absent', async () => {
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+    const rasterise = stubRasteriser();
+    engine.setLensSource(liveSubtree(), { rasterise });
+    await settle();
+    rafCb?.(16);
+
+    expect(rasterise).toHaveBeenCalledTimes(1);
+    expect(vfx.lensBindings.at(-1)).not.toBeNull();
+    engine.dispose();
+  });
+
+  it('uploads live DOM instead, with no rasteriser at all, where it is detected', async () => {
+    withCapability();
+    const engine = await mountHead();
+    const vfx = h.registry.vfx.at(-1)!;
+
+    engine.setLensSource(liveSubtree());
+    await settle();
+    rafCb?.(16);
+
+    const bound = vfx.lensBindings.at(-1);
+    expect(bound).not.toBeNull();
+    expect(bound?.texture).toBeDefined();
+    engine.dispose();
+  });
+
+  it('honours an explicit rasteriser over the enhancement', async () => {
+    withCapability();
+    const engine = await mountHead();
+    const rasterise = stubRasteriser();
+
+    engine.setLensSource(liveSubtree(), { rasterise });
+    await settle();
+
+    // Naming a rasteriser is an explicit choice of the snapshot path.
+    expect(rasterise).toHaveBeenCalledTimes(1);
+    engine.dispose();
+  });
+
+  it('warns when the head covers a control inside the subtree it refracts', async () => {
+    withCapability();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const canvas = document.createElement('canvas');
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 }) as DOMRect;
+    const engine = await mountHead(canvas);
+
+    // Hit-testing follows the undistorted layout box, so a head over the live
+    // subtree makes a control inside it unreachable, and no transform can
+    // reconcile that: a lens is not affine.
+    engine.setLensSource(liveSubtree({ control: true }));
+    expect(warn.mock.calls.flat().join(' ')).toContain('interactive control(s)');
+
+    warn.mockRestore();
+    engine.dispose();
+  });
+
+  it('says nothing about decorative live content under the head', async () => {
+    withCapability();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const canvas = document.createElement('canvas');
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300 }) as DOMRect;
+    const engine = await mountHead(canvas);
+
+    // Overlap is the normal, intended arrangement: the head refracts what is
+    // behind it. Only a trapped CONTROL is worth a word.
+    engine.setLensSource(liveSubtree());
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+    engine.dispose();
+  });
+});
+
+describe('melt (dec.liquid-glass-melt)', () => {
+  /** A body with real bind-space positions, so the profile has an extent. */
+  function makeMeasurableAvatar(ys: readonly number[]): {
+    group: THREE.Group;
+    body: THREE.Mesh;
+  } {
+    const positions = new Float32Array(ys.length * 3);
+    for (let i = 0; i < ys.length; i++) {
+      positions[i * 3] = 0.1;
+      positions[i * 3 + 1] = ys[i] ?? 0;
+      positions[i * 3 + 2] = -0.05;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  function overrideAvatar(group: THREE.Group, body: THREE.Mesh): void {
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+  }
+
+  it('measures the loaded body once and hands the VFX engine its own extent', async () => {
+    const ys = [-0.35, 0, 0.8, 1.72];
+    const { group, body } = makeMeasurableAvatar(ys);
+    overrideAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const vfx = h.registry.vfx.at(-1);
+    expect(vfx?.bodyExtents).toHaveLength(1);
+    // The rig's own numbers, not the shipped bust's: a replacement body must
+    // not silently inherit another one's extent. Compared at float32
+    // precision, because the profile is read back through a Float32Array.
+    const extent = vfx?.bodyExtents[0];
+    expect(extent?.[0]).toBeCloseTo(Math.min(...ys), 6);
+    expect(extent?.[1]).toBeCloseTo(Math.max(...ys), 6);
+
+    engine.dispose();
+  });
+
+  it('reports a zero extent for a body with no positions, which leaves the melt inert', async () => {
+    const body = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    overrideAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    expect(h.registry.vfx.at(-1)?.bodyExtents).toEqual([[0, 0]]);
+
+    engine.dispose();
+  });
+
+  it('keeps the shipped passes in place at full melt', async () => {
+    const { group, body } = makeMeasurableAvatar([-0.35, 0.4, 1.72]);
+    overrideAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const authored = new Set<THREE.Object3D>([body]);
+    const before = group.children.filter((child) => !authored.has(child)).length;
+
+    // The melt is a uniform write, not a rebuild: nothing is torn down or
+    // reconstructed when it opens, unlike the pool and the interior field.
+    expect(() => engine.vfx.setHeadConfig({ melt: { amount: 1 } })).not.toThrow();
+    expect(engine.vfx.headConfig.melt.amount).toBe(1);
+    expect(group.children.filter((child) => !authored.has(child))).toHaveLength(before);
+
+    engine.dispose();
+  });
+});
+
+describe('skin pass ownership (dec.liquid-glass-melt)', () => {
+  /**
+   * The occlusion mask moved out of the core and into `buildSkinMaterial`,
+   * because it has to carry the same displacement the visible passes do. Its
+   * dispose moved with it. These are the two ways the move can go wrong: a
+   * pass never disposed, or a pass disposed twice while its uniform set is
+   * still live.
+   */
+  function bodyAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const body = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  function useAvatar(group: THREE.Group, body: THREE.Mesh): void {
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+  }
+
+  it('disposes all three passes exactly once when the engine is torn down', async () => {
+    const { group, body } = bodyAvatar();
+    useAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const set = h.registry.vfx.at(-1)?.skinPassSets.at(-1);
+    expect(set, 'a skin pass set was built').toBeDefined();
+    expect(set?.disposals).toEqual({ front: 0, interior: 0, mask: 0 });
+
+    engine.dispose();
+    expect(set?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+
+    // Repeated teardown must not dispose a second time.
+    engine.dispose();
+    expect(set?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+  });
+
+  it('detaches the overlay meshes before disposing the passes they draw with', async () => {
+    const { group, body } = bodyAvatar();
+    useAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const overlays = group.children.filter((child) => child !== body);
+    expect(overlays.length, 'mask and interior overlays are in the tree').toBe(2);
+
+    engine.dispose();
+    // Detach is the overlay teardown's only job now; the materials are the
+    // skin lifecycle's. A mesh left parented would keep its geometry reachable.
+    for (const overlay of overlays) expect(overlay.parent).toBeNull();
+  });
+
+  it('retires the outgoing passes when the avatar is replaced, and only those', async () => {
+    const first = bodyAvatar();
+    useAvatar(first.group, first.body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    const host = document.createElement('div');
+    await engine.mount(document.createElement('canvas'), host);
+
+    const vfx = h.registry.vfx.at(-1);
+    const outgoing = vfx?.skinPassSets.at(-1);
+    expect(outgoing?.disposals).toEqual({ front: 0, interior: 0, mask: 0 });
+
+    // A second mount runs `replaceAvatar`, which is the only path to it.
+    const second = bodyAvatar();
+    useAvatar(second.group, second.body);
+    await engine.mount(document.createElement('canvas'), host);
+
+    const incoming = vfx?.skinPassSets.at(-1);
+    expect(incoming, 'a fresh pass set was built for the new body').not.toBe(outgoing);
+    // All three of the old set go, together, once. The new set is untouched:
+    // retiring it here would leave the live head without scroll or config.
+    expect(outgoing?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+    expect(incoming?.disposals).toEqual({ front: 0, interior: 0, mask: 0 });
+
+    engine.dispose();
+    expect(incoming?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+    expect(outgoing?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
   });
 });

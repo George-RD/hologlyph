@@ -49,6 +49,11 @@ import {
   KHRTextureBasisu,
 } from '@gltf-transform/extensions';
 import { MeshoptEncoder, MeshoptDecoder, MeshoptSimplifier } from 'meshoptimizer';
+import {
+  buildSilhouetteHull,
+  SilhouetteHullUnsupported,
+  SILHOUETTE_HULL_KEY,
+} from './silhouette-hull';
 
 /** GLB delivery budget from dec.performance-budget (< 1.5 MB). */
 const DELIVERY_BUDGET_BYTES = 1.5 * 1024 * 1024;
@@ -214,6 +219,38 @@ async function main(): Promise<void> {
   }
 
   await compressTexturesKTX2(doc, logger);
+
+  // Silhouette hull last: it must bound the geometry that actually ships, so
+  // it is baked after simplify, quantise and every other geometry transform
+  // (todo.liquid-glass-silhouette-hull, dec.liquid-glass-architecture).
+  //
+  // This tool optimises arbitrary GLBs, most of which are not rigs, so a
+  // document the bake cannot bound soundly is a note, not a failure. The
+  // shipped bust is held to a hull by `test/asset-bust.test.ts` instead.
+  //
+  // Any hull already on the input describes pre-transform geometry, so it is
+  // dropped first: a stale outer bound is worse than none, and the runtime
+  // cannot tell the difference.
+  const scene = doc.getRoot().getDefaultScene() ?? doc.getRoot().listScenes()[0];
+  for (const candidate of doc.getRoot().listScenes()) {
+    const extras = { ...candidate.getExtras() };
+    if (!(SILHOUETTE_HULL_KEY in extras)) continue;
+    delete extras[SILHOUETTE_HULL_KEY];
+    candidate.setExtras(extras);
+  }
+  try {
+    const hull = buildSilhouetteHull(doc);
+    if (!scene) throw new SilhouetteHullUnsupported('document has no scene to carry the hull');
+    scene.setExtras({ ...scene.getExtras(), [SILHOUETTE_HULL_KEY]: hull });
+    const hullPoints = hull.groups.reduce((n, g) => n + g.points.length / 3, 0);
+    logger.info(
+      `Silhouette hull: ${hullPoints} points over ${hull.groups.length} joint(s)` +
+        (hull.containedJoints.length > 0 ? `, ${hull.containedJoints.join('/')} contained.` : '.'),
+    );
+  } catch (err) {
+    if (!(err instanceof SilhouetteHullUnsupported)) throw err;
+    logger.note(`Silhouette hull skipped: ${err.message}; any stale hull was dropped.`);
+  }
 
   const out = await io.writeBinary(doc);
   await Bun.write(output, out);

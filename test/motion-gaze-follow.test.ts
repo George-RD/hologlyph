@@ -315,6 +315,9 @@ class FollowFakeEngine {
     this.mounted = true;
   }
 
+  /** Cast to `Engine` above, so the element's boot path calls this for real. */
+  setLensSource(): void {}
+
   markReady(): void {
     this.emit('ready');
   }

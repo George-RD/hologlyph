@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph stage lab (item 7)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070d;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+        /* One accent per marker, so a card's stripe says which contract it
+           signed and the copy does not have to carry that on its own. */
+        --buoyant: #ffb26c;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+      #host {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      #holo { width: 100%; height: 100%; display: block; }
+      /* The scroll travel IS the experiment here, so the spacer the other labs
+         use to make the page long is a real container: the marked cards live
+         inside it and sweep past the fixed head as the page moves. 320vh is
+         what it takes for the lower row to enter from the bottom, cross the
+         whole profile and clear the top with runway left over. */
+      #page { position: absolute; top: 0; left: 0; right: 0; height: 320vh; }
+      #panel {
+        position: fixed;
+        top: 0.75rem;
+        left: 0.75rem;
+        width: 20rem;
+        max-height: calc(100vh - 1.5rem);
+        overflow: auto;
+        padding: 0.9rem 1rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.6rem;
+        background: rgba(6, 10, 20, 0.86);
+        backdrop-filter: blur(6px);
+      }
+      #panel h1 { font-size: 1rem; margin: 0 0 0.25rem; }
+      #panel p.sub { margin: 0 0 0.75rem; opacity: 0.65; font-size: 0.8rem; }
+      fieldset {
+        border: 1px solid #1d2740;
+        border-radius: 0.4rem;
+        margin: 0 0 0.7rem;
+        padding: 0.5rem 0.6rem 0.6rem;
+      }
+      legend { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; }
+      label.row {
+        display: grid;
+        grid-template-columns: 6.5rem 1fr 3rem;
+        gap: 0.4rem;
+        align-items: center;
+        margin: 0.2rem 0;
+      }
+      label.row span { font-size: 0.78rem; opacity: 0.85; }
+      label.row output { font-variant-numeric: tabular-nums; font-size: 0.75rem; opacity: 0.7; text-align: right; }
+      input[type='range'] { width: 100%; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+      button {
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 0.35rem;
+        border: 1px solid var(--accent);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: #04121f; font-weight: 600; }
+      #perf, #status {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.78rem;
+        opacity: 0.8;
+        white-space: pre;
+      }
+      label.check { display: flex; gap: 0.4rem; align-items: center; font-size: 0.78rem; }
+      p.note { margin: 0.4rem 0 0; font-size: 0.72rem; line-height: 1.45; opacity: 0.6; }
+
+      /* --- page copy ------------------------------------------------------ */
+      .prose {
+        position: absolute;
+        padding: 1rem 1.15rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.6rem;
+        background: rgba(6, 10, 20, 0.86);
+        backdrop-filter: blur(6px);
+      }
+      .prose h2 { font-size: 0.85rem; margin: 0 0 0.4rem; }
+      .prose p { margin: 0 0 0.6rem; font-size: 0.82rem; opacity: 0.78; }
+      .prose p:last-child { margin-bottom: 0; }
+      .prose dl { margin: 0 0 0.6rem; font-size: 0.82rem; }
+      .prose dt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem; color: var(--accent); }
+      .prose dt.buoyant { color: var(--buoyant); }
+      .prose dd { margin: 0.1rem 0 0.5rem; opacity: 0.74; }
+      /* A band across the top rather than a column beside the head: a column
+         wide enough to read would sit exactly where the right-hand card has to
+         travel. Two columns because 1000 px of single-column prose is not
+         prose. */
+      #intro {
+        top: 1.5rem;
+        left: 21.75rem;
+        right: 1.5rem;
+        columns: 2;
+        column-gap: 2rem;
+      }
+      /* The panel keeps the page's only h1, as on the other four labs, so this
+         is an h2 sized up rather than a second top-level heading. */
+      #intro h2 { font-size: 1.05rem; margin-bottom: 0.5rem; column-span: all; }
+      /* Far enough down that the lower row has fully cleared the top before
+         this claims nothing is coupled. */
+      #outro { top: 275vh; right: 1.5rem; width: min(22rem, 30vw); }
+
+      /* --- marked cards ---------------------------------------------------
+         No transform anywhere in here. The stage reads the host's INLINE
+         transform once and puts its own push in front of it, so a card centred
+         by a stylesheet rule would be clobbered on the first push. Offsets
+         only. */
+      .card {
+        position: absolute;
+        width: min(15rem, 24vw);
+        padding: 0.7rem 0.85rem;
+        border: 1px solid #1d2740;
+        border-left-width: 3px;
+        border-radius: 0.5rem;
+        background: rgba(6, 10, 20, 0.86);
+        backdrop-filter: blur(6px);
+      }
+      .card h2 { font-size: 0.8rem; margin: 0 0 0.3rem; }
+      .card code { display: block; font-size: 0.72rem; opacity: 0.9; }
+      .card p { margin: 0.35rem 0 0; font-size: 0.75rem; line-height: 1.45; opacity: 0.7; }
+      .card.obstacle { border-left-color: var(--accent); }
+      .card.obstacle h2 { color: var(--accent); }
+      .card.buoyant { border-left-color: var(--buoyant); }
+      .card.buoyant h2 { color: var(--buoyant); }
+      /* The flanking gaps are in vh because the page-to-world map is too. One
+         world unit is `canvasHeight / (2 * tan(fov/2) * cameraZ)` pixels, which
+         at the eye below is about 63 vh, so a gap written in vh holds the same
+         world distance from the body axis at every viewport size. This bust
+         reports a radius of 0.391 at the shoulders and 0.229 at the neck, so
+         14 vh (0.221 world) clears the silhouette everywhere and bites
+         everywhere: the pair engages the whole way past. */
+      #card-left { top: 110vh; right: calc(50% + 14vh); }
+      #card-right { top: 110vh; left: calc(50% + 14vh); }
+      #card-drifter { top: 145vh; right: calc(50% + 11vh); }
+      #card-late { top: 145vh; left: calc(50% + 11vh); }
+
+      /* The one place this layout is genuinely tight. Half the viewport has to
+         hold the control panel, the world-space gap to the silhouette and a
+         readable card, and the gap cannot move: it is a world distance, so
+         shrinking it would stop the pair clearing the shoulders. Give back the
+         other two on a laptop. Below about 1230 px the panel wins and covers
+         the left-hand card, which costs paint, not measurement: the stage reads
+         rects, and an occluded card still collides. */
+      @media (max-width: 1400px) {
+        #panel { width: 17rem; }
+        .card { width: min(13rem, 24vw); }
+        .card code { font-size: 0.68rem; }
+        #intro { left: 18.75rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="host"><canvas id="holo"></canvas></div>
+
+    <div id="page">
+      <section class="prose" id="intro">
+        <h2>stage participants</h2>
+        <p>
+          The head has never known anything about the page around it, so it has
+          never been able to collide with anything. This is the whole of that
+          knowledge, and it is two attributes on elements the host already owns.
+        </p>
+        <dl>
+          <dt>data-hologlyph-obstacle</dt>
+          <dd>The fluid is squeezed by it. The element itself never moves.</dd>
+          <dt class="buoyant">data-hologlyph-body</dt>
+          <dd>
+            The same collision, and the element is pushed back as a CSS
+            transform. On its own this is the thing that floats in the current.
+            An element may carry both.
+          </dd>
+        </dl>
+        <p>
+          Two gates, and both are open on this page. The first is
+          <code>fluid.amount</code>, which ships at 0. With it at 0 there is no
+          bulge and no push back, because the reaction is Newton's third law on
+          the same interaction: both sides appear together or neither does.
+        </p>
+        <p>
+          The second gate is the participants themselves. A page that marks
+          nothing has no rect to read, no mode to integrate and no transform to
+          write, so it is the drop-in head reproduced exactly. At most three
+          elements couple at once. A fourth is dropped rather than folded into
+          the others, because two obstacles averaged into one mode cancel each
+          other instead of denting both sides.
+        </p>
+        <p>
+          Results come back as CSS transforms and nothing else, so a participant
+          must tolerate being transformed. If it cannot, do not mark it.
+        </p>
+        <p>
+          Now scroll. The pair below flanks the head and squeezes both sides at
+          once, which is the case a single global mode could not express.
+        </p>
+      </section>
+
+      <article class="card obstacle" id="card-left" data-hologlyph-obstacle>
+        <h2>obstacle, left</h2>
+        <code>data-hologlyph-obstacle</code>
+        <p>
+          The fluid is squeezed by this card and piles up on the far side of the
+          body. The card stays exactly where the page put it.
+        </p>
+      </article>
+
+      <article class="card obstacle" id="card-right" data-hologlyph-obstacle>
+        <h2>obstacle, right</h2>
+        <code>data-hologlyph-obstacle</code>
+        <p>
+          Its own mode, its own band. Both sides dent together as this row
+          crosses the shoulders, which is the whole reason the basis is modal.
+        </p>
+      </article>
+
+      <article class="card buoyant" id="card-drifter" data-hologlyph-body>
+        <h2>body, no obstacle marker</h2>
+        <code>data-hologlyph-body</code>
+        <p>
+          This one displaces the same liquid and is then shoved by the flow it
+          caused, up to <code>stage.maxPush</code> pixels. It is the only card
+          on the page the engine ever writes a transform to.
+        </p>
+      </article>
+
+      <section class="prose" id="outro">
+        <h2>everything is above you now</h2>
+        <p>
+          No participant is in the viewport, so every mode is released rather
+          than left to decay, and the head is the head that ships. Scroll back
+          up and it engages again from rest.
+        </p>
+      </section>
+    </div>
+
+    <div id="panel">
+      <h1>stage lab, item 7</h1>
+      <p class="sub">
+        Lab only. Nothing here ships until the look is approved
+        (dec.liquid-glass-architecture, item 7). Scroll: the marked cards sweep
+        past the head and squeeze it, and the amber one gets shoved back.
+      </p>
+
+      <fieldset>
+        <legend>gate: fluid.amount</legend>
+        <label class="row"><span>amount</span><input id="fluidAmount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <div class="buttons">
+          <button type="button" id="gateOff">shut (0)</button>
+          <button type="button" id="gateOn" class="primary">open (1)</button>
+        </div>
+        <p class="note">
+          Ships at 0. At 0 the whole coupling is inert: no bulge on the body and
+          no transform on the page.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>coupling</legend>
+        <div id="status">warming up</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>stage</legend>
+        <label class="row"><span>amount</span><input id="stageAmount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <label class="row"><span>squeeze</span><input id="squeeze" type="range" min="0" max="2" step="0.01" value="0.5" /><output></output></label>
+        <label class="row"><span>band</span><input id="band" type="range" min="0.05" max="1.5" step="0.01" value="0.45" /><output></output></label>
+        <label class="row"><span>push</span><input id="push" type="range" min="0" max="1" step="0.01" value="0.6" /><output></output></label>
+        <label class="row"><span>maxPush</span><input id="maxPush" type="range" min="0" max="80" step="1" value="24" /><output></output></label>
+        <label class="row"><span>displace</span><input id="displace" type="range" min="0" max="2" step="0.01" value="1" /><output></output></label>
+        <p class="note">
+          This bust reports a profile 1.0 world unit tall, minY -0.5 to maxY
+          0.5, so the shipped <code>band</code> of 0.45 covers nearly half of
+          it. Drop it to tell a shoulder apart from a crown.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>pool</legend>
+        <label class="row"><span>amount</span><input id="poolAmount" type="range" min="0" max="1" step="0.01" value="0" /><output></output></label>
+        <label class="row"><span>bias</span><input id="poolBias" type="range" min="0.005" max="0.15" step="0.001" value="0.04" /><output></output></label>
+        <p class="note">
+          Off at boot, as it ships. The water hides the shoulders, where an
+          obstacle bites hardest, so judge the squeeze with it off and the dent
+          with it on. Depth is <code>displace</code> times how far the card
+          reaches under the waterline over <code>bias</code>, clamped at 1: at
+          the shipped bias almost anything submerged saturates it.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>late arrival</legend>
+        <label class="check"><input id="late" type="checkbox" /> add a fourth marked element</label>
+        <p class="note">
+          Appends an obstacle beside the drifter and calls
+          <code>engine.refreshStage()</code>. Four marked, three coupled.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>jump</legend>
+        <div class="buttons">
+          <button type="button" id="jumpTop">top</button>
+          <button type="button" id="jumpPair">the pair</button>
+          <button type="button" id="jumpDrifter">the drifter</button>
+          <button type="button" id="jumpEnd">past the end</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>frame time</legend>
+        <div id="perf">warming up</div>
+      </fieldset>
+    </div>
+
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
+
+      const canvas = document.getElementById('holo');
+      const host = document.getElementById('host');
+      const page = document.getElementById('page');
+      const engine = createEngine();
+      // Lab-only debug handle, the same one the other demo pages expose.
+      window.__hologlyphEngine = engine;
+
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, host);
+
+      function resize() {
+        engine.resize(host.clientWidth, host.clientHeight);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // Emergence follows the behaviour state, and a page nobody has scrolled
+      // yet is still `hidden`. The reader arrives at the top of this one, so
+      // put the head up before they get there.
+      engine.behavior.dispatch({ type: 'enter-viewport' });
+
+      // --- camera ------------------------------------------------------
+      // FIXED, where the other two labs make it live, and pointed straight
+      // down -Z rather than aimed with `lookAt`. Both on purpose.
+      //
+      // `stageProjection` maps the page onto the head's plane assuming a camera
+      // that looks down -Z and whose X and Y shift the plane's centre by
+      // exactly their own value. An orbit control would break that assumption
+      // and put every participant where it is not, and a distance control would
+      // silently move the collisions this page is authored around: the card
+      // offsets in the stylesheet are world distances written in vh, and they
+      // only mean what they say at this eye.
+      //
+      // 2.5 out and 0.22 up frames the bust in the lower two thirds, which
+      // leaves the top of the viewport for the copy and puts the shoulders,
+      // the widest part of the profile and so the hardest to squeeze past,
+      // where a scrolling card can reach them.
+      const camera = engine.sysRenderer.camera;
+      camera.position.set(0, 0.22, 2.5);
+      camera.rotation.set(0, 0, 0);
+
+      // --- config ---------------------------------------------------------
+      // `fluid.amount` is the gate on the whole feature and `stage.*` is the
+      // strength of the coupling once it is open. `pool.*` is here for the
+      // other half: an obstacle that reaches below the waterline dents the
+      // tier 1 surface as well as the body.
+      const fluid = { amount: 1 };
+      function pushFluid() {
+        engine.vfx.setHeadConfig({ fluid: { ...fluid } });
+      }
+
+      const stage = { amount: 1, squeeze: 0.5, band: 0.45, push: 0.6, maxPush: 24, displace: 1 };
+      function pushStage() {
+        engine.vfx.setHeadConfig({ stage: { ...stage } });
+      }
+
+      const pool = { amount: 0, bias: 0.04 };
+      function pushPool() {
+        engine.vfx.setHeadConfig({ pool: { ...pool } });
+      }
+
+      function bindRange(id, key, target, after) {
+        const input = document.getElementById(id);
+        const out = input.parentElement.querySelector('output');
+        const sync = () => {
+          const value = Number(input.value);
+          target[key] = value;
+          out.textContent = value.toFixed(3);
+          after();
+        };
+        input.addEventListener('input', sync);
+        sync();
+      }
+
+      bindRange('fluidAmount', 'amount', fluid, pushFluid);
+      bindRange('stageAmount', 'amount', stage, pushStage);
+      for (const key of ['squeeze', 'band', 'push', 'maxPush', 'displace']) {
+        bindRange(key, key, stage, pushStage);
+      }
+      bindRange('poolAmount', 'amount', pool, pushPool);
+      bindRange('poolBias', 'bias', pool, pushPool);
+
+      const gateInput = document.getElementById('fluidAmount');
+      function setGate(value) {
+        gateInput.value = String(value);
+        gateInput.dispatchEvent(new Event('input'));
+      }
+      document.getElementById('gateOff').addEventListener('click', () => setGate(0));
+      document.getElementById('gateOn').addEventListener('click', () => setGate(1));
+
+      // --- late arrival -----------------------------------------------------
+      // The documented escape hatch. The engine scans `canvas.ownerDocument`
+      // once at mount and then watches what it found; it does NOT watch a
+      // document that marks nothing, because a subtree observer over a page
+      // using none of this is exactly the standing cost the drop-in promise
+      // forbids. A host that marks its first participant after mount calls
+      // `refreshStage`.
+      //
+      // This page marks three at boot, so the observer is already installed and
+      // the card below would be adopted anyway. Call it regardless: it is the
+      // contract, and it is what a page starting from zero participants has to
+      // do.
+      const cards = {
+        left: document.getElementById('card-left'),
+        right: document.getElementById('card-right'),
+        drifter: document.getElementById('card-drifter'),
+        late: null,
+      };
+
+      function addLate() {
+        if (cards.late) return false;
+        const el = document.createElement('article');
+        el.className = 'card obstacle';
+        el.id = 'card-late';
+        el.setAttribute('data-hologlyph-obstacle', '');
+        el.innerHTML =
+          '<h2>obstacle, added late</h2>' +
+          '<code>data-hologlyph-obstacle</code>' +
+          '<p>Marked after mount. The rescan walks the document in order and' +
+          ' stops at three, and this card is appended last, so while all four' +
+          ' are on screen it is the one that gets no mode.</p>';
+        page.appendChild(el);
+        cards.late = el;
+        engine.refreshStage();
+        return true;
+      }
+
+      function removeLate() {
+        if (!cards.late) return false;
+        cards.late.remove();
+        cards.late = null;
+        engine.refreshStage();
+        return true;
+      }
+
+      const lateToggle = document.getElementById('late');
+      lateToggle.addEventListener('change', () => {
+        if (lateToggle.checked) addLate();
+        else removeLate();
+      });
+
+      // --- jumps ------------------------------------------------------------
+      // 320vh of travel is a lot of wheel. Put each row where the head is.
+      //
+      // Reduced motion snaps instead of gliding, which is both the right answer
+      // for a reader who asked for it and the one a headless capture wants:
+      // a smooth scroll has no completion event to wait on.
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+      function scrollToY(top) {
+        window.scrollTo({ top, behavior: reduced.matches ? 'auto' : 'smooth' });
+      }
+      function jumpTo(element) {
+        if (!element) return;
+        // 0.75 rather than centred: the profile is widest at the shoulders, at
+        // world Y -0.33, which lands near the bottom of the viewport at this
+        // eye. That is where a card of this width actually bites.
+        scrollToY(element.offsetTop - window.innerHeight * 0.75);
+      }
+      document.getElementById('jumpTop').addEventListener('click', () => scrollToY(0));
+      document.getElementById('jumpPair').addEventListener('click', () => jumpTo(cards.left));
+      document.getElementById('jumpDrifter').addEventListener('click', () => jumpTo(cards.drifter));
+      document.getElementById('jumpEnd').addEventListener('click', () => {
+        scrollToY(document.documentElement.scrollHeight);
+      });
+
+      // --- scroll -----------------------------------------------------------
+      function updateScroll() {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        engine.setScrollProgress(max > 0 ? window.scrollY / max : 0);
+      }
+      window.addEventListener('scroll', updateScroll, { passive: true });
+      updateScroll();
+
+      // --- coupling readout ---------------------------------------------------
+      // Everything here is observed, not recomputed. `stageFlow` is the solver's
+      // own published per-slot flow, and the push is read back off the style
+      // attribute the engine wrote, so a card that claims to be pushed and a
+      // card that actually moved cannot disagree.
+      const status = document.getElementById('status');
+      /** Below this a slot is at rest, world units. */
+      const FLOW_EPS = 1e-5;
+      const PUSH = /translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px/;
+
+      function pushOf(name) {
+        const element = cards[name];
+        const match = element ? PUSH.exec(element.style.transform) : null;
+        return match ? [Number(match[1]), Number(match[2])] : [0, 0];
+      }
+
+      function slotFlow() {
+        const flow = engine.vfx.stageFlow;
+        const out = [];
+        for (let i = 0; i < flow.length; i += 3) {
+          out.push(Math.hypot(flow[i], flow[i + 1], flow[i + 2]));
+        }
+        return out;
+      }
+
+      function readStatus() {
+        const slots = slotFlow();
+        const active = slots.filter((m) => m > FLOW_EPS).length;
+        const marked = 3 + (cards.late ? 1 : 0);
+        const [dx, dy] = pushOf('drifter');
+        const lines = [
+          `gate     ${fluid.amount.toFixed(2)} ${fluid.amount > 0 ? 'open' : 'shut'}`,
+          `marked   ${marked} elements`,
+          `coupled  ${active} of ${slots.length} modes`,
+        ];
+        for (let i = 0; i < slots.length; i++) {
+          lines.push(
+            `slot ${i}   ${slots[i] > FLOW_EPS ? `${slots[i].toFixed(4)} world` : 'at rest'}`,
+          );
+        }
+        lines.push(`drifter  ${dx.toFixed(1)}, ${dy.toFixed(1)} px`);
+        status.textContent = lines.join('\n');
+      }
+
+      // --- lab handle ---------------------------------------------------------
+      window.__stageLab = {
+        cards,
+        addLate,
+        removeLate,
+        pushOf,
+        setStage(next) {
+          Object.assign(stage, next);
+          pushStage();
+        },
+        setFluid(next) {
+          Object.assign(fluid, next);
+          pushFluid();
+        },
+        setPool(next) {
+          Object.assign(pool, next);
+          pushPool();
+        },
+        activeSlots() {
+          return slotFlow().filter((m) => m > FLOW_EPS).length;
+        },
+        flow() {
+          return Array.from(engine.vfx.stageFlow);
+        },
+        /** Rest rect of a card, this page's own push subtracted back out. */
+        restOf(name) {
+          const element = cards[name];
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          const [dx, dy] = pushOf(name);
+          return { x: rect.x - dx, y: rect.y - dy, width: rect.width, height: rect.height };
+        },
+        /**
+         * Pin everything that moves by itself. The text skin's row flow is a
+         * GPU UV scroll that never stops, so two captures of an untouched page
+         * differ by the whole glyph grid; zeroing the speed is what makes a
+         * pixel comparison mean anything.
+         */
+        pinPose() {
+          engine.setMotionFrozen(true);
+          engine.sysTextSkin?.setScrollSpeed(0);
+          engine.eyeTextSkin?.setScrollSpeed(0);
+          const avatar = engine.avatar;
+          if (!avatar) return false;
+          for (const bone of Object.values(avatar.bones ?? {})) {
+            bone.rotation.set(0, 0, 0);
+          }
+          avatar.root.traverse((object) => {
+            if (object.morphTargetInfluences) object.morphTargetInfluences.fill(0);
+          });
+          return true;
+        },
+      };
+
+      // --- frame time -------------------------------------------------------
+      // Three marked elements cost one batched layout read, one style write and
+      // three damped modes a frame, and the read is skipped entirely unless an
+      // observer or a scroll invalidated it. Moving the gate between 0 and 1
+      // should not move these numbers.
+      const perf = document.getElementById('perf');
+      const WINDOW = 240;
+      const samples = [];
+      let last = 0;
+      let lastStatus = 0;
+      function tick(now) {
+        if (last) {
+          samples.push(now - last);
+          if (samples.length > WINDOW) samples.shift();
+        }
+        last = now;
+        if (now - lastStatus > 150) {
+          lastStatus = now;
+          readStatus();
+        }
+        if (samples.length === WINDOW && now % 500 < 20) {
+          const sorted = [...samples].sort((a, b) => a - b);
+          const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+          const p95 = sorted[Math.floor(sorted.length * 0.95)];
+          perf.textContent = `mean ${mean.toFixed(2)} ms\np95  ${p95.toFixed(2)} ms\nn    ${samples.length}`;
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

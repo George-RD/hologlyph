@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>spike: HTML-in-Canvas as a refraction source</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #0b1120;
+        color: #e6ecff;
+        font: 15px/1.5 system-ui, sans-serif;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        padding: 1rem;
+      }
+      h1 { font-size: 1rem; margin: 0 0 0.5rem; }
+      #gl { width: 100%; aspect-ratio: 1; display: block; background: #05070d; }
+      /* The DOM the canvas owns. Real elements: text, an input, a CSS animation. */
+      #stage {
+        width: 512px;
+        height: 512px;
+        display: block;
+      }
+      #ui {
+        width: 512px;
+        height: 512px;
+        padding: 1.5rem;
+        background: linear-gradient(140deg, #12305c, #6a2f8f 60%, #b3407a);
+        color: #fff;
+        font: 16px/1.45 system-ui, sans-serif;
+      }
+      #ui input { font: inherit; padding: 0.4rem 0.6rem; width: 100%; }
+      .spinner {
+        width: 64px;
+        height: 64px;
+        margin: 1rem 0;
+        border-radius: 50%;
+        background: conic-gradient(#fff, #ffffff00);
+        animation: spin 1.4s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #hud {
+        grid-column: 1 / -1;
+        font: 12px/1.5 ui-monospace, monospace;
+        white-space: pre-wrap;
+        background: #060b14;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1>source DOM (lives inside the WebGL canvas subtree, hidden behind it)</h1>
+      <p class="note" id="note">
+        The API only draws immediate children of the canvas being drawn into, so
+        the content must be reparented into our canvas. It stays real DOM:
+        selectable, focusable, in the accessibility tree.
+      </p>
+    </div>
+    <div>
+      <h1>output: that live DOM refracted through a WebGL lens</h1>
+      <canvas id="gl" width="1024" height="1024" layoutsubtree>
+        <div id="ui">
+          <p>Live DOM. Selectable text, a real input, a CSS animation.</p>
+          <div class="spinner"></div>
+          <label for="typed">type here</label>
+          <input id="typed" type="text" value="refraction" />
+          <p id="ticker">frame 0</p>
+        </div>
+      </canvas>
+    </div>
+    <div id="hud">running…</div>
+
+    <script type="module">
+      const hud = document.getElementById('hud');
+      const note = document.getElementById('note');
+      const ui = document.getElementById('ui');
+      const ticker = document.getElementById('ticker');
+      const glCanvas = document.getElementById('gl');
+      const gl = glCanvas.getContext('webgl2', { antialias: true });
+
+      const support = {
+        texElementImage2D: typeof gl.texElementImage2D === 'function',
+        drawElementImage: typeof glCanvas.getContext === 'function',
+        getElementTransform: typeof glCanvas.getElementTransform === 'function',
+      };
+      if (!support.texElementImage2D) {
+        hud.textContent =
+          'texElementImage2D missing. Launch with --enable-blink-features=CanvasDrawElement';
+        throw new Error('unsupported');
+      }
+
+      // A lens: sample the DOM texture with a radial displacement, so we can see
+      // per-pixel refraction of live page content rather than a flat blit.
+      const vs = `#version 300 es
+        in vec2 p; out vec2 uv;
+        void main(){ uv = (p + 1.0) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
+      const fs = `#version 300 es
+        precision highp float;
+        in vec2 uv; out vec4 o;
+        uniform sampler2D tex; uniform float t;
+        void main(){
+          vec2 c = uv - 0.5;
+          float r = length(c);
+          // Spherical lens over the middle, plus a travelling ripple.
+          float lens = 1.0 - sqrt(max(1.0 - pow(clamp(r / 0.42, 0.0, 1.0), 2.0), 0.0));
+          vec2 off = normalize(c + 1e-6) * lens * 0.12;
+          off += 0.006 * vec2(sin(uv.y * 40.0 + t * 3.0), cos(uv.x * 40.0 + t * 2.0));
+          vec2 s = clamp(vec2(uv.x, 1.0 - uv.y) + off, 0.0, 1.0);
+          float shift = lens * 0.01;
+          vec3 col = vec3(
+            texture(tex, s + vec2(shift, 0.0)).r,
+            texture(tex, s).g,
+            texture(tex, s - vec2(shift, 0.0)).b
+          );
+          float edge = smoothstep(0.40, 0.44, r);
+          col += vec3(0.35, 0.55, 0.9) * pow(lens, 3.0) * 0.6;
+          o = vec4(mix(col, vec3(0.02, 0.03, 0.06), edge), 1.0);
+        }`;
+      const compile = (type, src) => {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        return s;
+      };
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, 'p');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      const uT = gl.getUniformLocation(prog, 't');
+
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      /**
+       * Upload the live DOM subtree straight into the GPU texture.
+       * Real signature, discovered by introspection (arity 3, and the blog's
+       * six-argument texImage2D shape is rejected):
+       *   texElementImage2D(target, internalformat, element)
+       * internalformat must be a sized format such as RGBA8 or SRGB8_ALPHA8.
+       */
+      let uploadError = null;
+      function upload() {
+        try {
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texElementImage2D(gl.TEXTURE_2D, gl.RGBA8, ui);
+          uploadError = null;
+          return true;
+        } catch (err) {
+          uploadError = String(err);
+          return false;
+        }
+      }
+
+      const samples = [];
+      let frames = 0;
+      let last = performance.now();
+      let running = true;
+
+      function frame(now) {
+        samples.push(now - last);
+        last = now;
+        frames += 1;
+        ticker.textContent = `frame ${frames}`;
+        upload();
+        gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+        gl.uniform1f(uT, now / 1000);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        if (running) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+
+      /**
+       * Probe the restrictions that decide whether this can ever be a drop-in
+       * path, rather than a "restructure your page" path.
+       */
+      async function probeRestrictions() {
+        const out = {};
+        // 1. Ancestor of the canvas: this is the "page behind me" case.
+        try {
+          gl.texElementImage2D(gl.TEXTURE_2D, gl.RGBA8, document.body);
+          out.ancestor = 'allowed';
+        } catch (err) {
+          out.ancestor = `rejected: ${String(err).slice(0, 140)}`;
+        }
+        // 2. An element that is not in any canvas layoutsubtree.
+        const loose = document.createElement('div');
+        loose.textContent = 'loose element';
+        document.body.append(loose);
+        try {
+          gl.texElementImage2D(gl.TEXTURE_2D, gl.RGBA8, loose);
+          out.outsideCanvasSubtree = 'allowed';
+        } catch (err) {
+          out.outsideCanvasSubtree = `rejected: ${String(err).slice(0, 140)}`;
+        }
+        loose.remove();
+
+        /** Build a throwaway canvas subtree, wait for its first paint record. */
+        async function withProbeCanvas(build) {
+          const probeCanvas = document.createElement('canvas');
+          probeCanvas.setAttribute('layoutsubtree', '');
+          probeCanvas.width = 96;
+          probeCanvas.height = 96;
+          // Must be on-screen: an offscreen canvas never gets a paint record,
+          // which silently produced fully transparent probe results.
+          probeCanvas.style.cssText =
+            'width:96px;height:96px;position:fixed;right:4px;bottom:4px;z-index:99';
+          const child = document.createElement('div');
+          child.style.cssText = 'width:96px;height:96px;background:#3af';
+          build(child);
+          probeCanvas.append(child);
+          document.body.append(probeCanvas);
+          await new Promise((resolve) => {
+            probeCanvas.addEventListener('paint', resolve, { once: true });
+            probeCanvas.requestPaint?.();
+            setTimeout(resolve, 600);
+          });
+          return { probeCanvas, child };
+        }
+
+        // 3. Same-origin content: does the 2D canvas stay readable?
+        {
+          const { probeCanvas, child } = await withProbeCanvas((el) => {
+            el.textContent = 'same origin';
+          });
+          try {
+            const pctx = probeCanvas.getContext('2d');
+            pctx.drawElementImage(child, 0, 0);
+            const stats = regionStats(pctx, 0, 0, 96, 96);
+            out.sameOriginControl = `differing ${stats.differing}/${stats.total}, mean rgba ${stats.mean.join(',')} (expect mean near 51,170,255 = the div background)`;
+          } catch (err) {
+            out.sameOriginControl = `failed: ${String(err).slice(0, 140)}`;
+          }
+          probeCanvas.remove();
+        }
+
+        /**
+         * Summarise a region: how many pixels differ from the probe background,
+         * plus the mean colour and alpha. A silently omitted subresource still
+         * draws and still reads back, and a region that was never painted at all
+         * also "differs" from the background, so the mean alpha is what
+         * distinguishes painted-but-empty from not-painted.
+         */
+        function regionStats(pctx, x, y, w, h) {
+          const d = pctx.getImageData(x, y, w, h).data;
+          const bg = [0x33, 0xaa, 0xff];
+          let differing = 0;
+          const sum = [0, 0, 0, 0];
+          for (let i = 0; i < d.length; i += 4) {
+            const delta =
+              Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]);
+            if (delta > 40 && d[i + 3] > 8) differing += 1;
+            sum[0] += d[i];
+            sum[1] += d[i + 1];
+            sum[2] += d[i + 2];
+            sum[3] += d[i + 3];
+          }
+          const n = d.length / 4;
+          return {
+            differing,
+            total: n,
+            mean: sum.map((v) => Math.round(v / n)),
+          };
+        }
+
+        // 4. A cross-origin image child: is it actually painted, or omitted?
+        {
+          const img = new Image();
+          const loaded = new Promise((resolve) => {
+            img.onload = () => resolve(true);
+            img.onerror = () => resolve(false);
+          });
+          img.src = 'https://www.google.com/favicon.ico';
+          img.width = 48;
+          img.height = 48;
+          img.style.cssText = 'position:absolute;left:0;top:0;width:48px;height:48px';
+          const ok = await loaded;
+          const { probeCanvas, child } = await withProbeCanvas((el) => {
+            el.style.position = 'relative';
+            el.append(img);
+          });
+          try {
+            const pctx = probeCanvas.getContext('2d');
+            pctx.drawElementImage(child, 0, 0);
+            const stats = regionStats(pctx, 0, 0, 48, 48);
+            out.crossOriginImage = !ok
+              ? 'image failed to load, inconclusive'
+              : `differing ${stats.differing}/${stats.total}, mean rgba ${stats.mean.join(',')}`;
+          } catch (err) {
+            out.crossOriginImage = `${ok ? 'loaded' : 'load failed'}, then: ${String(err).slice(0, 140)}`;
+          }
+          probeCanvas.remove();
+        }
+
+        // 5. A cross-origin iframe child: the explainer says unsupported.
+        {
+          const frame = document.createElement('iframe');
+          frame.src = 'https://example.com';
+          frame.style.cssText =
+            'position:absolute;left:0;top:0;width:96px;height:96px;border:0;background:#fff';
+          const { probeCanvas, child } = await withProbeCanvas((el) => {
+            el.style.position = 'relative';
+            el.append(frame);
+          });
+          await new Promise((r) => setTimeout(r, 1200));
+          try {
+            const pctx = probeCanvas.getContext('2d');
+            pctx.drawElementImage(child, 0, 0);
+            const stats = regionStats(pctx, 8, 8, 80, 80);
+            out.crossOriginIframe = `differing ${stats.differing}/${stats.total}, mean rgba ${stats.mean.join(',')}`;
+          } catch (err) {
+            out.crossOriginIframe = `rejected: ${String(err).slice(0, 140)}`;
+          }
+          probeCanvas.remove();
+        }
+
+        return out;
+      }
+
+      /**
+       * Where does the browser think the drawn input is? `getElementTransform`
+       * can only express an affine mapping, and a lens distortion is not affine,
+       * so this reports layout box, drawn box, and what is hit-testable.
+       */
+      window.__interactionProbe = () => {
+        const input = document.getElementById('typed');
+        const layout = input.getBoundingClientRect();
+        const canvasRect = glCanvas.getBoundingClientRect();
+        const hitAtLayout = document.elementFromPoint(
+          layout.left + layout.width / 2,
+          layout.top + layout.height / 2,
+        );
+        const hitAtCanvasCentre = document.elementFromPoint(
+          canvasRect.left + canvasRect.width / 2,
+          canvasRect.top + canvasRect.height / 2,
+        );
+        return {
+          layoutBox: [layout.left, layout.top, layout.width, layout.height].map(Math.round),
+          canvasBox: [canvasRect.left, canvasRect.top, canvasRect.width, canvasRect.height].map(
+            Math.round,
+          ),
+          elementAtLayoutBox: hitAtLayout?.id || hitAtLayout?.tagName || null,
+          elementAtCanvasCentre: hitAtCanvasCentre?.id || hitAtCanvasCentre?.tagName || null,
+          activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
+          inputValue: input.value,
+          inAccessibilityTree: input.checkVisibility?.() ?? null,
+        };
+      };
+
+      window.__spike = async (durationMs = 4000) => {
+        samples.length = 0;
+        await new Promise((r) => setTimeout(r, durationMs));
+        running = false;
+        const sorted = [...samples].sort((a, b) => a - b);
+        const mean = sorted.reduce((s, v) => s + v, 0) / sorted.length;
+        const report = {
+          support,
+          uploadError,
+          frames: sorted.length,
+          meanFrameMs: +mean.toFixed(2),
+          p95FrameMs: +sorted[Math.floor(sorted.length * 0.95)].toFixed(2),
+          fps: +(1000 / mean).toFixed(0),
+          restrictions: await probeRestrictions(),
+        };
+        hud.textContent = JSON.stringify(report, null, 2);
+        running = true;
+        requestAnimationFrame(frame);
+        return report;
+      };
+    </script>
+  </body>
+</html>

@@ -10,13 +10,13 @@
     "lumThreshold": 120
   },
   "baseline": {
-    "glyphLegibility": 7.906,
-    "coverageFront": 0.1,
-    "coverageYawPlus": 0.111,
-    "coverageYawMinus": 0.096,
-    "flow": 26.643,
-    "yawLegibilityPlus": 28.203,
-    "yawLegibilityMinus": 26.848,
+    "glyphLegibility": 9.842,
+    "coverageFront": 0.138,
+    "coverageYawPlus": 0.146,
+    "coverageYawMinus": 0.156,
+    "flow": 24.952,
+    "yawLegibilityPlus": 32.494,
+    "yawLegibilityMinus": 32.266,
     "blendZoneGhosting": 0.64
   },
   "thresholds": {

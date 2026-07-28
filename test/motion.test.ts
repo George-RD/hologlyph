@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createMotionEngine } from '../src/motion';
 import { GazeController } from '../src/motion/gaze';
-import { clamp01 } from '../src/contracts';
+import { clamp01, RIG_VISEME_MORPHS } from '../src/contracts';
 import type { LoadedAvatar, NodClass, } from '../src/contracts';
 import * as THREE from 'three';
 
@@ -439,5 +439,48 @@ describe('blink hold', () => {
     m.setBlinkHold(-0.5);
     m.update(1 / 60, 3 / 60);
     expect(a.getMorph('exp_blink')).toBe(0);
+  });
+});
+
+/**
+ * The baked silhouette hull is an outer bound on at most two significant mouth
+ * morphs at once. Nothing clamps a heavier frame, but it must not be silent:
+ * anything clipped to the hull would fall short of the mouth with no clue why.
+ */
+describe('over-driven mouth blends', () => {
+  it('warns once, changes nothing, and stays quiet inside the budget', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const inBudget = createMotionEngine();
+      const a = makeAvatar();
+      inBudget.attach(a);
+      // The library's own frames: one viseme at full weight, jaw pinned.
+      inBudget.applyVisemeFrame({ time: 0, weights: { viseme_aa: 1, jaw_open: 0 } });
+      // And the heaviest cross-fade the smoothing can hold.
+      inBudget.applyVisemeFrame({ time: 0, weights: { jaw_open: 0.9, viseme_aa: 0.8 } });
+      expect(warn).not.toHaveBeenCalled();
+
+      const overDriven = createMotionEngine();
+      overDriven.attach(a);
+      const everyViseme: Record<string, number> = {};
+      for (const name of RIG_VISEME_MORPHS) everyViseme[name] = 1;
+      overDriven.applyVisemeFrame({ time: 0, weights: everyViseme });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('silhouette hull');
+
+      // Repeat offences stay quiet, and the frame is honoured unrescaled.
+      overDriven.applyVisemeFrame({ time: 0, weights: everyViseme });
+      expect(warn).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 200; i++) overDriven.update(0.05, i * 0.05);
+      expect(a.getMorph('viseme_aa')).toBeCloseTo(1, 3);
+      expect(a.getMorph('viseme_ou')).toBeCloseTo(1, 3);
+
+      // A fresh engine warns again: the flag is per engine, not per process.
+      const another = createMotionEngine();
+      another.applyVisemeFrame({ time: 0, weights: everyViseme });
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

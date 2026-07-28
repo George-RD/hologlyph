@@ -7,13 +7,14 @@
  * deterministic.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type {
   BehaviorState,
   Engine,
   EngineEvents,
   EngineOptions,
   Expression,
+  LensSourceOptions,
   TextSkinSource,
   TTSAdapter,
 } from '../src/contracts';
@@ -161,6 +162,21 @@ class FakeEngine implements Engine {
 
   setVoiceAdapter(adapter: TTSAdapter): void {
     this.voiceAdapterCalls.push(adapter);
+  }
+
+  lensSourceCalls: Array<{ element: Element | null; options?: LensSourceOptions }> = [];
+  captureLensCalls = 0;
+
+  setLensSource(element: Element | null, options?: LensSourceOptions): void {
+    this.lensSourceCalls.push(options === undefined ? { element } : { element, options });
+  }
+
+  captureLens(): void {
+    this.captureLensCalls += 1;
+  }
+  refreshStageCalls = 0;
+  refreshStage(): void {
+    this.refreshStageCalls += 1;
   }
   resize(width: number, height: number): void {
     this.resizeCalls.push({ width, height });
@@ -515,6 +531,67 @@ describe('imperative surface', () => {
     const adapter = {} as TTSAdapter;
     el.setVoiceAdapter(adapter);
     expect(engines[0]!.voiceAdapterCalls).toContain(adapter);
+  });
+});
+
+describe('refract attribute (dec.liquid-glass-architecture, item 4)', () => {
+  it('clears the lens source when the attribute is absent', async () => {
+    const { engines } = makeFactory();
+    defineHologlyphHead();
+    const el = document.createElement('hologlyph-head') as HologlyphHeadElement;
+    container.appendChild(el);
+    await flush();
+
+    expect(engines[0]!.lensSourceCalls).toEqual([{ element: null }]);
+  });
+
+  it('resolves the selector against the owner document, not the shadow root', async () => {
+    const hero = document.createElement('section');
+    hero.id = 'hero';
+    container.appendChild(hero);
+
+    const { engines } = makeFactory();
+    defineHologlyphHead();
+    const el = document.createElement('hologlyph-head') as HologlyphHeadElement;
+    el.setAttribute('refract', '#hero');
+    container.appendChild(el);
+    await flush();
+
+    expect(engines[0]!.lensSourceCalls.at(-1)?.element).toBe(hero);
+  });
+
+  it('re-resolves when the attribute changes and clears when it is removed', async () => {
+    const hero = document.createElement('section');
+    hero.id = 'hero';
+    container.appendChild(hero);
+
+    const { engines } = makeFactory();
+    defineHologlyphHead();
+    const el = document.createElement('hologlyph-head') as HologlyphHeadElement;
+    container.appendChild(el);
+    await flush();
+
+    el.setAttribute('refract', '#hero');
+    expect(engines[0]!.lensSourceCalls.at(-1)?.element).toBe(hero);
+
+    el.removeAttribute('refract');
+    expect(engines[0]!.lensSourceCalls.at(-1)?.element).toBeNull();
+  });
+
+  it('degrades on a selector that matches nothing or does not parse', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { engines } = makeFactory();
+    defineHologlyphHead();
+    const el = document.createElement('hologlyph-head') as HologlyphHeadElement;
+    container.appendChild(el);
+    await flush();
+
+    el.setAttribute('refract', '#nothing-here');
+    expect(engines[0]!.lensSourceCalls.at(-1)?.element).toBeNull();
+
+    el.setAttribute('refract', ':::not-a-selector');
+    expect(engines[0]!.lensSourceCalls.at(-1)?.element).toBeNull();
+    warn.mockRestore();
   });
 });
 

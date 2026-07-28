@@ -10,6 +10,11 @@ System Library "Web-native text-skinned talking-head library" id "hologlyph" {
             path "./src/contracts.ts"
             path "./src/index.ts"
             path "./test/core.test.ts"
+            path "./test/core-backdrop.test.ts"
+            path "./test/core-lens.test.ts"
+            path "./test/core-element-lens.test.ts"
+            path "./test/core-participants.test.ts"
+            path "./test/core-compositor-glass.test.ts"
             contract "meta/contracts/core.md"
         }
         Module Renderer "Three.js renderer, WebGPU/WebGL2 fallback, camera" id "hologlyph.runtime.renderer" {
@@ -27,6 +32,11 @@ System Library "Web-native text-skinned talking-head library" id "hologlyph" {
             path "./src/shaders"
             path "./test/shaders.test.ts"
             path "./test/evals-ghosting.test.ts"
+            path "./test/shaders-glass.test.ts"
+            path "./test/shaders-pool.test.ts"
+            path "./test/shaders-interior.test.ts"
+            path "./test/shaders-fluid.test.ts"
+            path "./test/shaders-melt.test.ts"
             contract "meta/contracts/shaders.md"
         }
         Module Motion "MotionEngine: blendshapes, gaze/saccades, gestures" id "hologlyph.runtime.motion" {

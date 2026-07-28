@@ -39,7 +39,9 @@ class RendererHostImpl implements RendererHost {
   backend: 'webgpu' | 'webgl2' | 'uninitialized' = 'uninitialized';
 
   constructor() {
-    this.scene.background = new THREE.Color(0x05070d);
+    // No scene background: the canvas clears to transparent so the host page
+    // shows through the glass skin (dec.glass-backdrop-adaptive).
+    this.scene.background = null;
     this.camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
     this.camera.position.set(0, 0.05, 2.4);
     this.camera.lookAt(0, 0, 0);
@@ -60,7 +62,8 @@ class RendererHostImpl implements RendererHost {
     if (this.renderer) return;
     if (this.rendererInit) return this.rendererInit;
 
-    const renderer = new WebGPURenderer({ canvas, antialias: true });
+    const renderer = new WebGPURenderer({ canvas, antialias: true, alpha: true });
+    renderer.setClearColor(0x000000, 0);
     const init = (async () => {
       await renderer.init();
       if (this.disposed) {

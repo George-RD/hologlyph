@@ -8,6 +8,7 @@ import {
   easeEmergence,
   visibleFraction,
 } from '../src/shaders/emergence';
+import { MELT_FLOOR, MELT_LAG, MELT_SPREAD } from '../src/shaders/melt';
 import {
   blendedProjectionUV,
   buildSkinMaterial,
@@ -23,8 +24,44 @@ import {
   U_SCALE,
   V_SCALE,
 } from '../src/shaders/materials';
+import { adaptToBackdrop } from '../src/shaders/glass';
+import { INTERIOR_GLYPH_MAX } from '../src/shaders/interior-glyphs';
 import { DEFAULT_HEAD_CONFIG } from '../src/contracts';
 import type { TextSkinEngine } from '../src/contracts';
+
+/**
+ * The slice of `MeshStandardNodeMaterial` these tests read. `buildSkinMaterial`
+ * returns `THREE.Material` so the contract stays free of the WebGPU node
+ * types, but every skin material is a node material underneath.
+ */
+interface TslNode {
+  traverse(callback: (node: unknown) => void): void;
+}
+interface NodeMaterialShape {
+  colorNode: TslNode;
+  emissiveNode: TslNode;
+  opacityNode: TslNode;
+  positionNode: TslNode;
+  normalNode: TslNode;
+}
+
+/** True when `target` appears anywhere in `root`'s node graph. */
+function reachesNode(root: TslNode, target: unknown): boolean {
+  let found = false;
+  root.traverse((node) => {
+    if (node === target) found = true;
+  });
+  return found;
+}
+
+/** The first node in `root`'s graph matching `predicate`, if any. */
+function findNode(root: TslNode, predicate: (node: unknown) => boolean): unknown {
+  let hit: unknown;
+  root.traverse((node) => {
+    if (hit === undefined && predicate(node)) hit = node;
+  });
+  return hit;
+}
 
 describe('emergence mapping maths (pure)', () => {
   it('easeEmergence is monotonic, bounded, and pinned at the ends', () => {
@@ -137,15 +174,59 @@ describe('VFX engine (no GPU objects)', () => {
         return 0;
       },
     } as unknown as TextSkinEngine;
-    const skinMaterial = vfx.createSkinMaterial(skin);
+    const skinMaterials = vfx.createSkinMaterial(skin);
     const eyeMaterial = vfx.createEyeballMaterial(skin, { cx: 0.688, cy: 0.003, cz: 0 });
 
-    skinMaterial.dispose();
+    skinMaterials.front.dispose();
+    skinMaterials.interior.dispose();
+    skinMaterials.mask.dispose();
     eyeMaterial.dispose();
     bindingsLive = false;
 
     expect(() => vfx.update(0.016)).not.toThrow();
     vfx.dispose();
+  });
+
+  it('keeps the skin binding alive while any of the three passes survives', () => {
+    // The three materials share one uniform set, and the engine drops the
+    // overlay passes on avatar replace while the front keeps rendering. If the
+    // binding retired on the first dispose, the survivors would stop receiving
+    // scroll and config updates.
+    const PASSES = ['front', 'interior', 'mask'] as const;
+    for (const disposeFirst of PASSES) {
+      const vfx = createVFXEngine();
+      let scrollReads = 0;
+      const skin = {
+        texture: new THREE.CanvasTexture(),
+        get scrollOffset() {
+          scrollReads++;
+          return 0.25;
+        },
+      } as unknown as TextSkinEngine;
+      const passes = vfx.createSkinMaterial(skin);
+      const survivors = PASSES.filter((pass) => pass !== disposeFirst).map((pass) => passes[pass]);
+
+      passes[disposeFirst].dispose();
+      // A repeated dispose must not retire the binding either.
+      passes[disposeFirst].dispose();
+      vfx.update(0.016);
+      expect(scrollReads, `${disposeFirst} disposed first`).toBeGreaterThan(0);
+
+      vfx.setHeadConfig({ skin: { glass: { amount: 0.4 } } });
+      expect(vfx.headConfig.skin.glass.amount).toBe(0.4);
+
+      // One survivor left is still a live binding.
+      survivors[0]?.dispose();
+      const midway = scrollReads;
+      vfx.update(0.016);
+      expect(scrollReads, `${disposeFirst}: one survivor keeps it alive`).toBeGreaterThan(midway);
+
+      const before = scrollReads;
+      survivors[1]?.dispose();
+      vfx.update(0.016);
+      expect(scrollReads, `${disposeFirst}: binding retired once all three are gone`).toBe(before);
+      vfx.dispose();
+    }
   });
 });
 describe('VFX reduced motion', () => {
@@ -250,19 +331,199 @@ describe('owner-approved head configuration', () => {
         tone: {
           balance: 0.21, amount: 0.65, skinWarmth: 0, rim: 0.065, glowGain: 0.55,
         },
+        glass: {
+          amount: 1, fresnel: 0.65, fresnelPower: 2.6, specular: 0.55,
+          sheen: 40, refraction: 0.03, tint: '#bfe6ff',
+        },
+        backdrop: { color: '#05070d', adapt: 1, auto: true },
       },
       eyes: {
         density: 300, scleraGlow: 0.51, irisGlow: 2.35, presence: 0.74,
         pupil: 0.24, flowDirection: 1, irisSize: 0.43,
         irisColor: '#d78bf8', scleraColor: '#e1edf9',
       },
+      pool: {
+        amount: 0, bias: 0.04, ripple: 1, meniscus: 0.55, contact: 0.7,
+        breathe: 0.006, fade: 0.14, tint: '#4f8fbf',
+      },
+      interior: {
+        count: 0, size: 0.02, drift: 0.008, inertia: 0.55, depthFade: 0.65,
+        brightness: 0.55, tint: '#9fe7ff',
+      },
+      lens: {
+        amount: 1, strength: 0.06, recaptureMs: 250,
+      },
+      fluid: {
+        amount: 0, sag: 0.05, wobble: 1, tension: 0.55, crisp: 2, reach: 0.6,
+      },
+      melt: {
+        amount: 0, spread: 1.6, floor: 0.06, lag: 0.55,
+      },
+      stage: {
+        amount: 1, squeeze: 0.5, band: 0.45, push: 0.6, maxPush: 24, displace: 1,
+      },
+      compositor: {
+        amount: 0, blur: 18, saturate: 1.6, tint: '#bfe6ff', tintOpacity: 0.12,
+      },
     });
+    // `pool.amount` is the tier 1 gate. It ships at 0 on purpose: the pool is
+    // lab-only until the owner approves the look, and at 0 the engine builds
+    // no pool at all (dec.liquid-glass-architecture, item 3).
+    expect(DEFAULT_HEAD_CONFIG.pool.amount).toBe(0);
+    // `interior.count` is the item 10 gate, and ships at 0 for the same
+    // reason: the field is lab-only until the owner approves the look, and at
+    // 0 the engine samples nothing and adds no draw call.
+    expect(DEFAULT_HEAD_CONFIG.interior.count).toBe(0);
+    // `stage.amount` is NOT a gate and ships at 1: the marked participants
+    // are the gate, and a page that marks none has nothing to couple to
+    // (dec.liquid-glass-participants).
+    expect(DEFAULT_HEAD_CONFIG.stage.amount).toBe(1);
+    // `compositor.amount` IS a gate and ships at 0: rung 2 puts real page
+    // content inside the head, and at 0 the engine authors no DOM node at all
+    // (dec.liquid-glass-compositor).
+    expect(DEFAULT_HEAD_CONFIG.compositor.amount).toBe(0);
+    // `melt.amount` IS a gate and ships at 0: at 0 the map is an exact
+    // identity, so the shipped head is reproduced bit for bit
+    // (dec.liquid-glass-melt).
+    expect(DEFAULT_HEAD_CONFIG.melt.amount).toBe(0);
+    // The defaults are literals in `contracts.ts`, which may not import from a
+    // runtime module, so they are pinned against the shader constants here
+    // rather than left to drift.
+    expect(DEFAULT_HEAD_CONFIG.melt.spread).toBe(MELT_SPREAD);
+    expect(DEFAULT_HEAD_CONFIG.melt.floor).toBe(MELT_FLOOR);
+    expect(DEFAULT_HEAD_CONFIG.melt.lag).toBe(MELT_LAG);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.opacity)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.eyes)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.pool)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.interior)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.lens)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.stage)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.melt)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.compositor)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.shading)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glyph)).toBe(true);
     expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.tone)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.glass)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_HEAD_CONFIG.skin.backdrop)).toBe(true);
+  });
+
+  it('normalises and freezes the compositor block', () => {
+    const merged = normaliseHeadConfig({
+      compositor: { amount: 3, blur: -4, saturate: -1, tintOpacity: 2, tint: 'nope' },
+    });
+    expect(merged.compositor.amount).toBe(1);
+    expect(merged.compositor.blur).toBe(0);
+    expect(merged.compositor.saturate).toBe(0);
+    expect(merged.compositor.tintOpacity).toBe(1);
+    expect(merged.compositor.tint).toBe(DEFAULT_HEAD_CONFIG.compositor.tint);
+    expect(Object.isFrozen(merged.compositor)).toBe(true);
+  });
+
+  it('keeps a NaN out of the compositor filter string', () => {
+    // `blur(NaNpx)` is dropped by the CSS parser without a word anywhere, so
+    // the layer would be installed, visible and doing nothing.
+    const merged = normaliseHeadConfig({
+      compositor: { amount: Number.NaN, blur: Number.NaN, saturate: Number.NaN, tintOpacity: Number.NaN },
+    });
+    expect(merged.compositor.amount).toBe(DEFAULT_HEAD_CONFIG.compositor.amount);
+    expect(merged.compositor.blur).toBe(DEFAULT_HEAD_CONFIG.compositor.blur);
+    expect(merged.compositor.saturate).toBe(DEFAULT_HEAD_CONFIG.compositor.saturate);
+    expect(merged.compositor.tintOpacity).toBe(DEFAULT_HEAD_CONFIG.compositor.tintOpacity);
+  });
+
+  it('normalises and freezes the pool block', () => {
+    const merged = normaliseHeadConfig({
+      pool: { amount: 3, bias: -1, meniscus: -0.5, breathe: -2, tint: 'nope' },
+    });
+    expect(merged.pool.amount).toBe(1);
+    expect(merged.pool.bias).toBe(0);
+    expect(merged.pool.meniscus).toBe(0);
+    expect(merged.pool.breathe).toBe(0);
+    expect(merged.pool.tint).toBe(DEFAULT_HEAD_CONFIG.pool.tint);
+    expect(merged.pool.ripple).toBe(DEFAULT_HEAD_CONFIG.pool.ripple);
+    expect(Object.isFrozen(merged.pool)).toBe(true);
+  });
+
+  it('normalises and freezes the interior block', () => {
+    const merged = normaliseHeadConfig({
+      interior: {
+        count: 9000,
+        size: -1,
+        drift: -0.5,
+        inertia: 4,
+        depthFade: -2,
+        brightness: 6,
+        tint: 'nope',
+      },
+    });
+    // Capped: the sort and the buffer writes are linear in the count.
+    expect(merged.interior.count).toBe(INTERIOR_GLYPH_MAX);
+    expect(merged.interior.size).toBe(0);
+    expect(merged.interior.drift).toBe(0);
+    expect(merged.interior.inertia).toBe(1);
+    expect(merged.interior.depthFade).toBe(0);
+    // The contract says an interior glyph never outshines the surface text.
+    expect(merged.interior.brightness).toBe(1);
+    expect(merged.interior.tint).toBe(DEFAULT_HEAD_CONFIG.interior.tint);
+    expect(Object.isFrozen(merged.interior)).toBe(true);
+  });
+
+  it('takes an integral count, never a fraction of a glyph', () => {
+    expect(normaliseHeadConfig({ interior: { count: 7.9 } }).interior.count).toBe(7);
+    expect(normaliseHeadConfig({ interior: { count: -3 } }).interior.count).toBe(0);
+  });
+
+  it('rejects every non-finite interior value rather than poisoning the field', () => {
+    // `Math.max(0, NaN)` is NaN and `clamp01(NaN)` is NaN. A NaN inertia
+    // reaches the spring, and the integrator reads its own last position, so
+    // the field never recovers even from a later good config.
+    const merged = normaliseHeadConfig({
+      interior: {
+        count: Number.NaN,
+        size: Number.NaN,
+        drift: Number.POSITIVE_INFINITY,
+        inertia: Number.NaN,
+        depthFade: Number.NaN,
+        brightness: Number.NaN,
+      },
+    });
+    for (const value of [
+      merged.interior.count,
+      merged.interior.size,
+      merged.interior.drift,
+      merged.interior.inertia,
+      merged.interior.depthFade,
+      merged.interior.brightness,
+    ]) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
+    expect(merged.interior.inertia).toBe(DEFAULT_HEAD_CONFIG.interior.inertia);
+    expect(merged.interior.count).toBe(DEFAULT_HEAD_CONFIG.interior.count);
+  });
+
+  it('gates the lens on a bound snapshot, not on lens.amount', () => {
+    // `lens.amount` ships at 1 because the SOURCE ELEMENT is the gate: with
+    // nothing named to refract the engine binds no texture and the material
+    // keeps its own derived gate shut, so the approved look is untouched.
+    expect(DEFAULT_HEAD_CONFIG.lens.amount).toBe(1);
+  });
+
+  it('normalises and freezes the lens block, keeping strength signed', () => {
+    const merged = normaliseHeadConfig({
+      lens: { amount: 4, strength: -0.2, recaptureMs: -50 },
+    });
+    expect(merged.lens.amount).toBe(1);
+    // Negative strength is legitimate: it flips the head between reading as a
+    // converging and a diverging lens.
+    expect(merged.lens.strength).toBe(-0.2);
+    expect(merged.lens.recaptureMs).toBe(0);
+    expect(Object.isFrozen(merged.lens)).toBe(true);
+  });
+
+  it('rejects a non-finite lens strength rather than passing NaN to a uniform', () => {
+    const merged = normaliseHeadConfig({ lens: { strength: Number.NaN } });
+    expect(merged.lens.strength).toBe(DEFAULT_HEAD_CONFIG.lens.strength);
   });
 
   it('deep-merges partial overrides, clamps values, and rejects malformed colours', () => {
@@ -333,5 +594,175 @@ describe('buildSkinMaterial (no GPU objects)', () => {
     buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
     expect(skin.texture.wrapS).toBe(THREE.RepeatWrapping);
     expect(skin.texture.wrapT).toBe(THREE.RepeatWrapping);
+  });
+
+  it('pairs the front surface with a back-facing interior wall', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    expect(interior).not.toBe(material);
+    expect(material.side).toBe(THREE.FrontSide);
+    expect(interior.side).toBe(THREE.BackSide);
+    expect(interior.transparent).toBe(true);
+    // The interior draws behind the occlusion mask, so it must not contribute
+    // depth or the eyeballs and mouth cavity would resolve against it.
+    expect(interior.depthWrite).toBe(false);
+    expect(material.depthWrite).toBe(true);
+  });
+
+  it('builds the occlusion mask as a depth-only pass carrying the same displacement', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior, mask } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    expect(mask).not.toBe(material);
+    expect(mask).not.toBe(interior);
+    expect(mask.colorWrite).toBe(false);
+    expect(mask.depthWrite).toBe(true);
+    expect(mask.depthTest).toBe(true);
+    expect(mask.blending).toBe(THREE.NoBlending);
+    expect(mask.side).toBe(THREE.FrontSide);
+
+    // The whole reason the mask moved out of the core: it must melt with the
+    // body, or the puddle shows the mouth cavity and the eyeballs through it
+    // (dec.liquid-glass-melt).
+    const front = material as unknown as NodeMaterialShape;
+    const shape = mask as unknown as NodeMaterialShape;
+    expect(shape.positionNode).toBe(front.positionNode);
+  });
+
+  it('gates the melt on both the amount and a measured body extent', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    // Shipped defaults: melt off, and no body measured yet. Both have to be
+    // inert on their own, because `setBodyExtent` lands after the material is
+    // built and a host may raise the amount before an avatar loads.
+    expect(uniforms.meltAmount.value).toBe(0);
+    expect(uniforms.meltNormalGate.value).toBe(0);
+    expect(uniforms.meltExtent.value).toBe(0);
+    expect(uniforms.meltMinY.value).toBe(0);
+    expect(uniforms.meltSpread.value).toBe(MELT_SPREAD);
+    expect(uniforms.meltFloor.value).toBe(MELT_FLOOR);
+    expect(uniforms.meltLag.value).toBe(MELT_LAG);
+
+    // The map reaches the vertex stage, and the extent reaches the map.
+    const front = material as unknown as NodeMaterialShape;
+    expect(reachesNode(front.positionNode, uniforms.meltAmount)).toBe(true);
+    expect(reachesNode(front.positionNode, uniforms.meltExtent)).toBe(true);
+    // And the shading normal follows it, or the melt reads as texture swim
+    // rather than as liquid.
+    expect(reachesNode(front.normalNode, uniforms.meltNormalGate)).toBe(true);
+  });
+
+  it('wires the baked thickness into both Beer-Lambert terminals', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+    const front = material as unknown as NodeMaterialShape;
+    const back = interior as unknown as NodeMaterialShape;
+
+    const thickness = findNode(
+      front.opacityNode,
+      (node) => (node as { _attributeName?: string })._attributeName === 'aThickness',
+    );
+    expect(thickness, 'aThickness reaches the front opacity').toBeDefined();
+
+    // Absorption is the half of the feature that cannot be seen in the
+    // material's shape: thick body hides more of the page, and the light that
+    // does reach the far wall is tinted on the way through. Remove either and
+    // this fails while every other test here stays green.
+    expect(reachesNode(back.colorNode, thickness)).toBe(true);
+    expect(reachesNode(back.colorNode, uniforms.glassTint)).toBe(true);
+    // The front stays achromatic: tinting it flattened the glyph field and
+    // failed the visual eval's yaw legibility, so the tint must not be there.
+    expect(reachesNode(front.colorNode, uniforms.glassTint)).toBe(false);
+  });
+
+  it('drives both halves of the body from one shared uniform node', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { material, interior, uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+
+    // `buildSkinMaterial` returns THREE.Material to keep the contract free of
+    // the WebGPU node types; both are MeshStandardNodeMaterial in fact.
+    const front = material as unknown as NodeMaterialShape;
+    const back = interior as unknown as NodeMaterialShape;
+
+    // The interior graph is built from the same uniform objects rather than
+    // cloned off the front material, so `applyConfigToBindings` needs no
+    // fan-out and the two halves cannot drift on `setHeadConfig`. This is a
+    // representative sample across the config groups the interior reads, not
+    // an exhaustive enumeration of its graph.
+    const shared = [
+      ['glassAmount', uniforms.glassAmount],
+      ['glassTint', uniforms.glassTint],
+      ['glowGain', uniforms.glowGain],
+      ['glowScale', uniforms.glowScale],
+      ['scroll', uniforms.scroll],
+      ['tone', uniforms.tone],
+      ['inkColor', uniforms.inkColor],
+      ['glyphScale', uniforms.glyphScale],
+      ['cavity', uniforms.cavity],
+      ['baseOpacity', uniforms.baseOpacity],
+    ] as const;
+    for (const [name, node] of shared) {
+      const inFront =
+        reachesNode(front.colorNode, node) ||
+        reachesNode(front.emissiveNode, node) ||
+        reachesNode(front.opacityNode, node);
+      const inInterior =
+        reachesNode(back.colorNode, node) ||
+        reachesNode(back.emissiveNode, node) ||
+        reachesNode(back.opacityNode, node);
+      expect(inFront, `${name} reachable from the front graph`).toBe(true);
+      expect(inInterior, `${name} reachable from the interior graph`).toBe(true);
+    }
+
+    // Negative control. The rim colour is a silhouette term with no meaning on
+    // an inside face, so a graph search that always succeeded is caught here.
+    expect(reachesNode(front.emissiveNode, uniforms.rimColor)).toBe(true);
+    expect(reachesNode(back.emissiveNode, uniforms.rimColor)).toBe(false);
+    expect(reachesNode(back.colorNode, uniforms.rimColor)).toBe(false);
+    expect(reachesNode(back.opacityNode, uniforms.rimColor)).toBe(false);
+  });
+
+  it('seeds the glass uniforms and the backdrop adaptation from the config', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const { uniforms } = buildSkinMaterial(skin, DEFAULT_HEAD_CONFIG);
+    expect(uniforms.fresnel.value).toBe(DEFAULT_HEAD_CONFIG.skin.glass.fresnel);
+    expect(uniforms.refraction.value).toBe(DEFAULT_HEAD_CONFIG.skin.glass.refraction);
+    expect(uniforms.sheen.value).toBe(DEFAULT_HEAD_CONFIG.skin.glass.sheen);
+    // The default backdrop is the dark page the look was approved on, so the
+    // adaptation is the identity: full glow, no ink, no opacity floor.
+    expect(uniforms.inkMix.value).toBe(0);
+    expect(uniforms.glowScale.value).toBeGreaterThan(0.99);
+    expect(uniforms.opacityFloor.value).toBeLessThan(0.01);
+  });
+
+  it('writes the adaptation into the live material when the backdrop turns light', () => {
+    const vfx = createVFXEngine();
+    const skin = { texture: new THREE.CanvasTexture(), scrollOffset: 0 } as unknown as TextSkinEngine;
+    const materials = vfx.createSkinMaterial(skin);
+    const setRGB = vi.spyOn(THREE.Color.prototype, 'setRGB');
+
+    vfx.setHeadConfig({ skin: { backdrop: { color: '#ffffff' } } });
+
+    const adaptation = adaptToBackdrop('#ffffff', 1);
+    expect(vfx.headConfig.skin.backdrop.color).toBe('#ffffff');
+    // The ink and rim colours are pushed into the existing uniforms rather
+    // than rebuilding the material.
+    expect(setRGB).toHaveBeenCalledWith(...adaptation.inkColor);
+    expect(setRGB).toHaveBeenCalledWith(...adaptation.rimColor);
+    setRGB.mockRestore();
+    materials.front.dispose();
+    materials.interior.dispose();
+    vfx.dispose();
+  });
+
+  it('keeps the dark-page look when adaptation is switched off', () => {
+    const skin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const config = normaliseHeadConfig({ skin: { backdrop: { color: '#ffffff', adapt: 0 } } });
+    const { uniforms } = buildSkinMaterial(skin, config);
+    expect(uniforms.inkMix.value).toBe(0);
+    expect(uniforms.glowScale.value).toBe(1);
+    expect(uniforms.opacityFloor.value).toBe(0);
   });
 });

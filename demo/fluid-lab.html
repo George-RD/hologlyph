@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph fluid lab (tier 3)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070d;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      #host {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      #holo { width: 100%; height: 100%; display: block; }
+      #scroll { position: absolute; top: 0; left: 0; width: 1px; height: 600vh; }
+      #panel {
+        position: fixed;
+        top: 0.75rem;
+        left: 0.75rem;
+        width: 20rem;
+        max-height: calc(100vh - 1.5rem);
+        overflow: auto;
+        padding: 0.9rem 1rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.6rem;
+        background: rgba(6, 10, 20, 0.86);
+        backdrop-filter: blur(6px);
+      }
+      #panel h1 { font-size: 1rem; margin: 0 0 0.25rem; }
+      #panel p.sub { margin: 0 0 0.75rem; opacity: 0.65; font-size: 0.8rem; }
+      fieldset {
+        border: 1px solid #1d2740;
+        border-radius: 0.4rem;
+        margin: 0 0 0.7rem;
+        padding: 0.5rem 0.6rem 0.6rem;
+      }
+      legend { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; }
+      label.row {
+        display: grid;
+        grid-template-columns: 6.5rem 1fr 3rem;
+        gap: 0.4rem;
+        align-items: center;
+        margin: 0.2rem 0;
+      }
+      label.row span { font-size: 0.78rem; opacity: 0.85; }
+      label.row output { font-variant-numeric: tabular-nums; font-size: 0.75rem; opacity: 0.7; text-align: right; }
+      input[type='range'] { width: 100%; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+      button {
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 0.35rem;
+        border: 1px solid var(--accent);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); color: #04121f; font-weight: 600; }
+      #perf {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.78rem;
+        opacity: 0.8;
+        white-space: pre;
+      }
+      label.check { display: flex; gap: 0.4rem; align-items: center; font-size: 0.78rem; }
+    </style>
+  </head>
+  <body>
+    <div id="host"><canvas id="holo"></canvas></div>
+    <div id="scroll"></div>
+
+    <div id="panel">
+      <h1>fluid lab</h1>
+      <p class="sub">
+        Lab only. Nothing here ships until the look is approved
+        (dec.liquid-glass-fluidity). At <code>amount 0</code> the render is the
+        approved look exactly; at 1 the base and shoulders sag, wobble and
+        slosh while the face stays crisp. Scroll or drag the head to drive it.
+      </p>
+
+      <fieldset>
+        <legend>fluid</legend>
+        <label class="row"><span>amount</span><input id="amount" type="range" min="0" max="1" step="0.01" value="1" /><output></output></label>
+        <label class="row"><span>sag</span><input id="sag" type="range" min="0" max="0.3" step="0.005" value="0.05" /><output></output></label>
+        <label class="row"><span>wobble</span><input id="wobble" type="range" min="0" max="4" step="0.05" value="1" /><output></output></label>
+        <label class="row"><span>tension</span><input id="tension" type="range" min="0" max="1" step="0.01" value="0.55" /><output></output></label>
+        <label class="row"><span>crisp</span><input id="crisp" type="range" min="0" max="8" step="0.1" value="2" /><output></output></label>
+        <label class="row"><span>reach</span><input id="reach" type="range" min="0.05" max="2" step="0.01" value="0.6" /><output></output></label>
+        <div class="buttons">
+          <button type="button" id="fluidOff">rigid (0)</button>
+          <button type="button" id="fluidOn" class="primary">molten (1)</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>camera</legend>
+        <label class="row"><span>height</span><input id="camY" type="range" min="-0.2" max="1.6" step="0.01" value="0.55" /><output></output></label>
+        <label class="row"><span>distance</span><input id="camZ" type="range" min="1.2" max="5" step="0.05" value="2.6" /><output></output></label>
+        <label class="row"><span>orbit</span><input id="camYaw" type="range" min="-1.6" max="1.6" step="0.01" value="0" /><output></output></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>scenario</legend>
+        <div class="buttons">
+          <button type="button" id="submerge">submerge</button>
+          <button type="button" id="emerge">emerge</button>
+          <button type="button" id="speak">speak</button>
+          <button type="button" id="shake">shake</button>
+          <button type="button" id="splash">scroll kick</button>
+          <button type="button" id="poolOn">pool on</button>
+        </div>
+        <label class="check"><input id="reduced" type="checkbox" /> reduced motion</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>frame time</legend>
+        <div id="perf">warming up</div>
+      </fieldset>
+    </div>
+
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
+
+      const canvas = document.getElementById('holo');
+      const host = document.getElementById('host');
+      const engine = createEngine();
+      // Lab-only debug handle, the same one the other demo pages expose.
+      window.__hologlyphEngine = engine;
+
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, host);
+
+      function resize() {
+        engine.resize(host.clientWidth, host.clientHeight);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // --- camera ------------------------------------------------------
+      // Same eye as the pool lab: above the waterline, so the flowing band at
+      // the base of the bust is actually visible rather than edge on.
+      const camera = engine.sysRenderer.camera;
+      const cam = { y: 0.55, z: 2.6, yaw: 0 };
+      const LOOK_Y = 0.6;
+      function applyCamera() {
+        camera.position.set(cam.z * Math.sin(cam.yaw), cam.y, cam.z * Math.cos(cam.yaw));
+        camera.lookAt(0, LOOK_Y, 0);
+      }
+      applyCamera();
+
+      // --- fluid config ---------------------------------------------------
+      const fluid = {
+        amount: 1,
+        sag: 0.05,
+        wobble: 1,
+        tension: 0.55,
+        crisp: 2,
+        reach: 0.6,
+      };
+      function pushFluid() {
+        engine.vfx.setHeadConfig({ fluid: { ...fluid } });
+      }
+
+      function bindRange(id, key, target, after) {
+        const input = document.getElementById(id);
+        const out = input.parentElement.querySelector('output');
+        const sync = () => {
+          const value = input.type === 'color' ? input.value : Number(input.value);
+          target[key] = value;
+          out.textContent = input.type === 'color' ? '' : value.toFixed(3);
+          after();
+        };
+        input.addEventListener('input', sync);
+        sync();
+      }
+
+      for (const key of ['amount', 'sag', 'wobble', 'tension', 'crisp', 'reach']) {
+        bindRange(key, key, fluid, pushFluid);
+      }
+      bindRange('camY', 'y', cam, applyCamera);
+      bindRange('camZ', 'z', cam, applyCamera);
+      bindRange('camYaw', 'yaw', cam, applyCamera);
+
+      const amountInput = document.getElementById('amount');
+      function setAmount(value) {
+        amountInput.value = String(value);
+        amountInput.dispatchEvent(new Event('input'));
+      }
+      document.getElementById('fluidOff').addEventListener('click', () => setAmount(0));
+      document.getElementById('fluidOn').addEventListener('click', () => setAmount(1));
+
+      // --- scenarios ------------------------------------------------------
+      document.getElementById('submerge').addEventListener('click', () => {
+        engine.behavior.dispatch({ type: 'exit-viewport' });
+      });
+      document.getElementById('emerge').addEventListener('click', () => {
+        engine.behavior.dispatch({ type: 'enter-viewport' });
+      });
+      // Visemes must be unaffected at every fluidity: this is the check that
+      // the mouth still reads correctly while the jawline is flowing.
+      document.getElementById('speak').addEventListener('click', () => {
+        void engine.speak('The water remembers every shape it has held.');
+      });
+
+      // Drive the carrier hard from side to side. The base should lag the
+      // skull and keep moving after the head stops, which is the whole tier.
+      let shaking = 0;
+      document.getElementById('shake').addEventListener('click', () => {
+        shaking = performance.now();
+      });
+
+      document.getElementById('splash').addEventListener('click', () => {
+        engine.setScrollProgress(0);
+        engine.setScrollProgress(1);
+      });
+
+      // The pool is the surface this body is supposed to be flowing into, so
+      // the two tiers need judging together as well as apart.
+      document.getElementById('poolOn').addEventListener('click', () => {
+        engine.vfx.setHeadConfig({ pool: { amount: 1 } });
+      });
+
+      document.getElementById('reduced').addEventListener('change', (event) => {
+        engine.vfx.setReducedMotion(event.target.checked);
+      });
+
+      // --- pointer drag ------------------------------------------------------
+      // The library seam for host-driven head motion. Dragging is the most
+      // direct way to feel the carrier coupling.
+      let dragging = false;
+      host.addEventListener('pointerdown', () => {
+        dragging = true;
+      });
+      window.addEventListener('pointerup', () => {
+        dragging = false;
+        engine.motion.setHeadTarget(0, 0);
+      });
+      window.addEventListener('pointermove', (event) => {
+        if (!dragging) return;
+        const yaw = (event.clientX / window.innerWidth - 0.5) * 1.2;
+        const pitch = (event.clientY / window.innerHeight - 0.5) * -0.6;
+        engine.motion.setHeadTarget(yaw, pitch);
+      });
+
+      // --- scroll ---------------------------------------------------------
+      function updateScroll() {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        engine.setScrollProgress(max > 0 ? window.scrollY / max : 0);
+      }
+      window.addEventListener('scroll', updateScroll, { passive: true });
+      updateScroll();
+
+      // --- frame time -------------------------------------------------------
+      // The tier 3 field is analytic and the solver is six floats a frame, so
+      // moving `amount` between 0 and 1 should not move these numbers.
+      const perf = document.getElementById('perf');
+      const WINDOW = 240;
+      const samples = [];
+      let last = 0;
+      function tick(now) {
+        if (shaking) {
+          const t = (now - shaking) / 1000;
+          if (t > 2) {
+            shaking = 0;
+            engine.motion.setHeadTarget(0, 0);
+          } else {
+            engine.motion.setHeadTarget(Math.sin(t * 9) * 0.55, 0);
+          }
+        }
+        if (last) {
+          samples.push(now - last);
+          if (samples.length > WINDOW) samples.shift();
+        }
+        last = now;
+        if (samples.length === WINDOW && now % 500 < 20) {
+          const sorted = [...samples].sort((a, b) => a - b);
+          const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+          const p95 = sorted[Math.floor(sorted.length * 0.95)];
+          perf.textContent = `mean ${mean.toFixed(2)} ms\np95  ${p95.toFixed(2)} ms\nn    ${samples.length}`;
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

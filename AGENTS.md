@@ -83,20 +83,28 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
   `hologlyph.runtime.core`). All commands accept `--json`.
 - Work flows through typed changes: `cairn change new <id>` -> implement on a
   feature branch -> `cairn change show <id>` -> `cairn change accept <id>` ->
-  `cairn change archive <id>` after merge. Note: the accept gate's
-  `cairn lint --strict` sub-step still fails on 12 pre-existing advisory
-  `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings; `cairn hook all` remains the
-  authoritative gate.
+  `cairn change archive <id>` after merge. The note that the accept gate's
+  `cairn lint --strict` sub-step fails on 12 pre-existing
+  `CAIRN_CONTRACT_LEAF_UNCOVERED` warnings is out of date: as of 2026-07-26 it
+  reports 0 findings and the whole accept gate passes. `cairn hook all`
+  remains the authoritative gate either way.
 - Editing `cairn.blueprint` (new module, `path` claim, dependency edge) is an
   architecture change and requires a paired decision artefact under
   `meta/decisions/` (`cairn decision new <slug> --node <id>`).
 - Fresh session: run `cairn brief` (no arguments) to fuse the next open todo
-  with its binding decisions and gates. Then: branch from main
-  (`git checkout -b <type>/<slug>`), set the todo `status: in_progress`, TDD,
-  record decision artefacts BEFORE building on resolved open decisions, log
-  cairn friction to `meta/cairn-feedback.jsonl` as it happens, run the full
-  gate, set the todo `status: done`, tick the change's `tasks.md`, land via
-  squash-merged PR.
+  with its binding decisions and gates. Then: branch from the current
+  integration base (`git checkout -b <type>/<slug> glass` for liquid-glass
+  work, otherwise `main`), set the todo `status: in_progress`, TDD, record
+  decision artefacts BEFORE building on resolved open decisions, log cairn
+  friction to `meta/cairn-feedback.jsonl` as it happens, run the full gate, set
+  the todo `status: done`, tick the change's `tasks.md`, land via squash-merged
+  PR into that same base.
+- If `cairn brief` says the backlog is empty, it means every remaining todo is
+  `blocked`, not that the project is finished. The live handover is the "Next
+  unit of work" heading of `demo/LAB-STATUS.md`, backed by the section of the
+  same name in `meta/decisions/liquid-glass-architecture.md`. Read those before
+  concluding there is nothing to do, and before re-attempting anything either
+  one records as already closed.
 - Keep a running `implementation-notes.md` in the active change directory
   logging every deviation from the plan and every discovered edge case.
 
@@ -125,7 +133,13 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 
 ### Git conventions
 
-- Feature branch + squash-merge PR; never commit directly to main.
+- Feature branch + squash-merge PR; never commit directly to main or to an
+  integration branch.
+- `glass` is the integration branch for the liquid-glass programme
+  (`dec.liquid-glass-architecture`). Every item in that backlog branches from
+  `glass` and its PR targets `glass`, NOT `main`. Pushing to `main` redeploys
+  the live demo via `.github/workflows/pages.yml`, so `main` only receives
+  `glass` once the owner is happy with the look end to end.
 - Stage explicit paths (`git add src/foo.ts`); never `git add -A` or
   `git add .`.
 - Commit with a message file: write the message to a temp file, review it, then
@@ -140,7 +154,7 @@ frames pin `jaw_open` to 0 because authored visemes embed their own jaw deltas.
 - `src/contracts.ts` - the contract spine (see Architecture).
 - `src/core/engine.ts` - composition root and frame loop.
 - `src/core/default-avatar.ts` - resolves the bundled bust GLB; Vite lib mode
-  inlines it as a lazy data-URL chunk so the main bundle stays ~11 kB gzip.
+  inlines it as a lazy data-URL chunk so the main bundle stays ~20 kB gzip.
 - `cairn.blueprint` / `cairn.config.yaml` - architecture and gate config.
 - `vite.config.ts` (library, four entries, `three` externalised),
   `demo/vite.config.ts` (demo app), `vitest.config.ts` (happy-dom).

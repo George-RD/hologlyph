@@ -20,3 +20,6 @@ map.md
 
 # Visual eval generated output
 tools/evals/out/
+
+# Smoke-shot generated captures
+tools/smoke/out/

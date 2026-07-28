@@ -1,0 +1,65 @@
+---
+node: hologlyph.runtime.shaders
+status: done
+created: 2026-07-27
+---
+
+# Owner look session over the gated labs
+
+Not an engineering item, and the reason `cairn brief` has nothing to offer.
+This is next unit of work 1 in `dec.liquid-glass-architecture`, and it needs the
+owner, not an agent. It is tracked here so the gate is visible in the backlog
+rather than buried in a decision artefact.
+
+Six features shipped between 2026-07-26 and 2026-07-27, every one of them
+deliberately gated to zero and reachable only from a lab page. That was the
+plan: land the mechanism, defer the look, and settle all six in one sitting
+against the two criteria in `dec.liquid-glass-architecture`, that it must look
+great and it must feel authentic.
+
+Run `bun run dev`, then walk these in order. The first six ship off and each
+has a slider that takes it to full; the seventh is where two of them are
+settled against each other rather than a feature of its own.
+
+| Lab | Knob | What to rule on |
+| --- | --- | --- |
+| `demo/pool-lab.html` | `pool.amount`, 0 | The waterline at the bust base: ripple scale, meniscus, and whether the head emerging from it reads as water or as a mirror |
+| `demo/lens-lab.html` | `lens.amount`, gated by a bound `refract` element | Whether true per-pixel lensing beats the shipped flat-colour adaptation enough to justify the host naming a subtree |
+| `demo/interior-glyph-lab.html` | `interior.count`, 0 | Glyphs suspended inside the glass: density, drift, and whether they fight the surface text |
+| `demo/fluid-lab.html` | `fluid.amount`, 0 | Sag and wobble on the rig. Check a viseme sentence at every setting, since the whole tier 3 argument is that the mouth stays exact |
+| `demo/stage-lab.html` | `stage.amount` plus marked participants | Whether the head squeezing against page elements reads as physics or as a glitch. Needs `fluid.amount` above zero to show anything, so judge it after the fluid lab |
+| `demo/compositor-lab.html` | `compositor.amount`, 0 | Live page content frosted inside the head. Blur, saturation and tint, and the bigger question of whether real page content inside the silhouette beats the shipped flat-colour adaptation |
+| `demo/ladder-lab.html` | both of the above | Rungs 2 and 3 over the SAME `#hero`, which is where the previous two rows are settled against each other. They are mutually exclusive by construction (`dec.liquid-glass-rung-exclusion`), so this is one ruling, not two: frost, lens, or neither. No ruling of its own is needed if the two rows above already agree |
+
+What a ruling looks like: for each lab, either a default value to ship, or
+"stays at zero", plus anything that has to change first. Record the outcome as a
+source artefact under `meta/sources/`, the way
+`src.owner-approved-look-2026-07-21` recorded the last one, and open a todo per
+accepted default. Do not change a shipped default without that artefact.
+
+Two of these interact and should not be judged in isolation: `fluid.amount`
+moves the surface the interior glyphs are suspended behind, and `pool.amount`
+sets the waterline the stage participants dent. If both are approved, look at
+them together once before fixing either default.
+
+Acceptance: a ruling on all six gated features, recorded as a source artefact,
+and this todo set to done.
+
+## Ruling, 2026-07-27
+
+The session ran. The outcome is recorded verbatim in
+`src.owner-look-2026-07-27`, which is the artefact this todo asked for and the
+one later decisions are adjudicated against.
+
+In short: the pool is cut, tier 3 fluid and the stage participants missed, the
+compositor layer was rejected on the shape of its clip rather than on its
+content, the interior glyphs are kept as experimental and default off, and of
+the two backdrop rungs the lens is preferred. No shipped default moves, so
+every gated feature stays at 0.
+
+What the session opened rather than closed is the melt: the owner wants the
+head to morph from a flat puddle up into the head, and to squeeze between page
+elements. That is `dec.liquid-glass-melt`.
+
+Two defects surfaced and have their own todos:
+`todo.interior-glyph-containment` and `todo.silhouette-hull-halo`.

@@ -78,7 +78,7 @@ export class HologlyphHeadElement extends HTMLElement {
   static engineFactory: EngineFactory | null = null;
 
   static get observedAttributes(): string[] {
-    return ['src', 'text-skin', 'reduced-motion'];
+    return ['src', 'text-skin', 'reduced-motion', 'refract'];
   }
 
   private _engine: Engine | null = null;
@@ -139,6 +139,8 @@ export class HologlyphHeadElement extends HTMLElement {
       // Live avatar hot-swap is unsupported by the engine contract; recreate
       // the engine on the next connect.
       this._needsRecreate = true;
+    } else if (name === 'refract') {
+      this._applyRefract(this._engine);
     }
   }
   private async _boot(): Promise<void> {
@@ -168,6 +170,7 @@ export class HologlyphHeadElement extends HTMLElement {
     this._engine = engine;
     this._wire(engine);
     this._ensureResizeObserver();
+    this._applyRefract(engine);
 
     try {
       await engine.mount(canvas, this);
@@ -207,6 +210,34 @@ export class HologlyphHeadElement extends HTMLElement {
     } catch {
       /* Observation is best-effort. */
     }
+  }
+
+  /**
+   * Resolve the `refract` attribute to an element and hand it to the engine
+   * (dec.liquid-glass-architecture, rung 3, item 4).
+   *
+   * A CSS selector, resolved against the OWNER DOCUMENT, not the shadow root:
+   * the point is to refract the host's page, and nothing of the host's is
+   * inside our shadow tree. An absent or unresolvable selector clears the
+   * source, which is the shipped state and costs nothing.
+   */
+  private _applyRefract(engine: Engine): void {
+    const selector = this.getAttribute('refract');
+    if (!selector) {
+      engine.setLensSource(null);
+      return;
+    }
+    let target: Element | null = null;
+    try {
+      target = (this.ownerDocument ?? document).querySelector(selector);
+    } catch {
+      // An invalid selector is a host typo, not a reason to stop rendering.
+      target = null;
+    }
+    if (!target) {
+      console.warn(`[hologlyph] refract="${selector}" matched nothing; refraction stays off.`);
+    }
+    engine.setLensSource(target);
   }
 
   private _teardown(): void {

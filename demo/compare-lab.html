@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph compare lab: hand-rolled beside the library</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070d;
+        --fg: #e6ecff;
+        --accent: #6cc6ff;
+        --strip: 2.6rem;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      #strip {
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: var(--strip);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: center;
+        border-bottom: 1px solid #1d2740;
+        background: rgba(6, 10, 20, 0.92);
+        backdrop-filter: blur(6px);
+        z-index: 2;
+      }
+      #strip div {
+        padding: 0 0.9rem;
+        font-size: 0.82rem;
+        display: flex;
+        gap: 0.6rem;
+        align-items: baseline;
+      }
+      #strip div + div { border-left: 1px solid #1d2740; }
+      #strip b { color: var(--accent); font-weight: 600; }
+      #strip small { opacity: 0.55; font-size: 0.72rem; }
+      /* The frames are the full viewport: 50vw by 100vh each, as asked. The
+         strip overlays them rather than shortening them, and both pages centre
+         their head, so a 2.6rem band at the top occludes nothing. */
+      #frames {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        grid-template-columns: 50vw 50vw;
+      }
+      iframe {
+        width: 50vw;
+        height: 100vh;
+        border: 0;
+        display: block;
+      }
+      iframe + iframe { border-left: 1px solid #1d2740; }
+      #note {
+        position: fixed;
+        left: 50%;
+        bottom: 0.6rem;
+        transform: translateX(-50%);
+        padding: 0.3rem 0.7rem;
+        border: 1px solid #1d2740;
+        border-radius: 0.4rem;
+        background: rgba(6, 10, 20, 0.9);
+        font-size: 0.72rem;
+        opacity: 0.7;
+        z-index: 2;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="strip">
+      <div><b>old</b> hand-rolled approved look <small>demo/index.html</small></div>
+      <div><b>new</b> library engine <small>demo/engine.html</small></div>
+    </div>
+    <div id="frames">
+      <!-- `handrolled.html`, not `index.html`: the studio took the root, and
+           pointing this at the root would silently compare the library against
+           itself. -->
+      <iframe id="left" src="./handrolled.html" title="hand-rolled approved look"></iframe>
+      <iframe id="right" src="./engine.html" title="library engine"></iframe>
+    </div>
+    <p id="note">
+      Framing, camera and controls differ between the two pages. This compares
+      the look, not the pixels.
+    </p>
+
+    <script type="module">
+      // Both frames are same origin, so the chrome each page carries can be
+      // hidden from here. At 50vw the panels and intro copy crowd the heads,
+      // and the comparison is of the shading, not of the furniture.
+      const CHROME = {
+        left: '#intro, #topbar, #quickbar, #saybar, #panel, #status',
+        right: '.intro, .outro, .controls',
+      };
+
+      function hideChrome(frame, selector) {
+        const doc = frame.contentDocument;
+        if (!doc || doc.getElementById('compare-lab-chrome')) return;
+        const style = doc.createElement('style');
+        style.id = 'compare-lab-chrome';
+        style.textContent = `${selector} { display: none !important; }`;
+        doc.head.appendChild(style);
+      }
+
+      // engine.html drives emergence from page scroll (demo/main.ts), so inside
+      // an iframe parked at scroll 0 the head never rises. main.ts already
+      // publishes the engine on window, so nothing there needs changing: force
+      // the progress from out here. The engine is created asynchronously, so
+      // the global may not exist on the frame's first `load`.
+      const EMERGE_TRIES = 20;
+      const EMERGE_INTERVAL = 250;
+
+      function forceEmerged(frame) {
+        let tries = 0;
+        const timer = setInterval(() => {
+          tries += 1;
+          const engine = frame.contentWindow?.__hologlyphEngine;
+          if (engine) {
+            engine.setScrollProgress(1);
+            clearInterval(timer);
+          } else if (tries >= EMERGE_TRIES) {
+            clearInterval(timer);
+            console.warn('[compare-lab] no __hologlyphEngine after', tries, 'tries');
+          }
+        }, EMERGE_INTERVAL);
+      }
+
+      const left = document.getElementById('left');
+      const right = document.getElementById('right');
+
+      left.addEventListener('load', () => hideChrome(left, CHROME.left));
+      right.addEventListener('load', () => {
+        hideChrome(right, CHROME.right);
+        forceEmerged(right);
+      });
+    </script>
+  </body>
+</html>
