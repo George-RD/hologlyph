@@ -1,977 +1,699 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>hologlyph - a web native text-skinned talking head</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { background:#07090d; color:#cdd6e4; font:12px/1.5 ui-monospace,monospace; margin:0; display:flex; height:100vh; overflow:hidden; }
-  #stage { flex:1; position:relative; min-width:0; }
-  #view { width:100%; height:100%; display:block; background:#04060b; }
-  #panel { width:330px; flex:none; overflow-y:auto; padding:12px 14px; background:#0b0e14; border-left:1px solid #1b2230; display:none; }
-  body.tuning #panel { display:block; }
-  #panel h1 { font-size:13px; margin:0 0 2px; color:#9fe7ff; }
-  #panel .sub { color:#6b7688; margin:0 0 10px; font-size:11px; }
-  fieldset { border:1px solid #1b2230; border-radius:6px; margin:0 0 10px; padding:8px 10px 10px; }
-  legend { color:#7fd7ff; padding:0 4px; font-size:11px; letter-spacing:.4px; text-transform:uppercase; }
-  .row { display:grid; grid-template-columns:1fr 42px; gap:6px; align-items:center; margin:5px 0 0; }
-  .row label { color:#aeb8c8; }
-  .row output { text-align:right; color:#8fa; font-variant-numeric:tabular-nums; }
-  input[type=range] { width:100%; accent-color:#3fd0ff; }
-  .btns { display:flex; gap:6px; margin-top:4px; flex-wrap:wrap; }
-  button { flex:1; background:#152233; color:#cde; border:1px solid #24384f; border-radius:5px; padding:5px 6px; cursor:pointer; font:inherit; white-space:nowrap; }
-  button:hover { background:#1c3247; }
-  button.active { background:#2a5f43; border-color:#3f8f63; }
-  .chk { display:flex; align-items:center; gap:6px; margin:5px 0; }
-  #status { position:absolute; left:10px; bottom:8px; color:#6b7688; font-size:11px; max-width:70%; }
-  .hint { color:#6b7688; font-size:10.5px; margin:4px 0 0; }
-  #topbar { position:absolute; top:10px; right:12px; display:flex; gap:8px; align-items:center; }
-  #topbar a, #topbar button { flex:none; background:rgba(11,14,20,0.75); color:#9fb2c8; border:1px solid #24384f; border-radius:5px; padding:4px 10px; font:inherit; text-decoration:none; cursor:pointer; }
-  #topbar a:hover, #topbar button:hover { background:#1c3247; color:#cde; }
-  #tuneBtn { font-size:15px; line-height:1; padding:4px 9px; }
-  #quickbar { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); display:flex; flex-direction:column; gap:8px; align-items:center; max-width:min(92%, 760px); }
-  .qrow { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
-  #quickbar button { flex:none; background:rgba(11,14,20,0.78); color:#9fb2c8; border:1px solid #24384f; border-radius:5px; padding:5px 12px; font:inherit; cursor:pointer; }
-  #quickbar button:hover { background:#1c3247; color:#cde; }
-  #quickbar button.active { background:#2a5f43; border-color:#3f8f63; color:#dfe; }
-  #saybar { display:flex; gap:6px; width:min(92vw, 520px); }
-  #saybar input { flex:1; min-width:0; background:rgba(11,14,20,0.78); color:#cde; border:1px solid #24384f; border-radius:5px; padding:5px 10px; font:inherit; }
-  #saybar input::placeholder { color:#5f6b7e; }
-  #intro { position:absolute; left:24px; top:20px; max-width:360px; pointer-events:none; }
-  #intro h1 { font-size:22px; letter-spacing:2px; color:#9fe7ff; margin:0 0 8px; }
-  #intro p { color:#8fa0b6; font-size:12.5px; margin:0 0 8px; text-shadow:0 1px 4px #04060b; }
-  #intro .dim { color:#5f6b7e; font-size:11.5px; }
-</style>
-</head>
-<body>
-<div id="stage">
-  <canvas id="view"></canvas>
-  <div id="status">loading...</div>
-  <div id="quickbar"></div>
-  <div id="intro">
-    <h1>hologlyph</h1>
-    <p>A web native talking head whose skin is living text. No video, no image files: a small 3D bust rendered from streaming glyphs, with lip sync, gaze and expressions computed entirely in your browser.</p>
-    <p class="dim">Drag to orbit. Pick an expression, or type something below and make it speak.</p>
-  </div>
-  <div id="topbar">
-    <button type="button" id="tuneBtn" title="open the tuning panel" aria-label="open the tuning panel">&#9881;</button>
-    <a href="./studio.html" title="the library engine with the controls organised">studio</a>
-    <a href="https://github.com/George-RD/hologlyph">github</a>
-  </div>
-</div>
-<div id="panel">
-  <h1>feature-shading lab</h1>
-  <p class="sub">Live TSL uniforms on the real bust. Drag canvas to orbit camera.</p>
-</div>
-<script type="module">
-import * as THREE from 'three/webgpu';
-import {
-  acos, atan, attribute, dot, float, floor, fract, luminance, mix, pow as tpow,
-  normalGeometry, normalView, normalWorld, positionGeometry,
-  positionViewDirection, saturate, smoothstep, texture, uniform, vec2, vec3,
-} from 'three/tsl';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { createTextSkinEngine, createStaticTextSource } from '../src/text-skin/index.ts';
-import { IdleController } from '../src/motion/idle.ts';
-import { weightsFor, lerpWeights, emptyExpressionWeights } from '../src/motion/expressions.ts';
-import { wordAt, visemeSequenceForWord } from '../src/speech/visemes.ts';
-import { DEFAULT_HEAD_CONFIG, RIG_TONGUE_MORPHS, RIG_VISEME_MORPHS } from '../src/contracts.ts';
-import { bakeFeatureMasks } from '../src/asset/rig.ts';
-import { createAudioEngine } from '../src/audio/index.ts';
-import { createSpeechEngine, createDemoTTSAdapter } from '../src/speech/index.ts';
-import { visemeTap } from '../src/core/index.ts';
-import bustUrl from '../assets/hologlyph-bust.glb?url';
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hologlyph studio</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --panel: #080d18;
+        --line: #1d2740;
+        --fg: #e6ecff;
+        --dim: #8c9ab8;
+        --accent: #6cc6ff;
+        --warn: #ffd479;
+        --bad: #ff8f9c;
+        --rail: 23rem;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; }
+      body {
+        color: var(--fg);
+        font: 13px/1.55 system-ui, sans-serif;
+        /* The stage colour is the page colour: the head is transparent, so a
+           backdrop is not decoration, it is what you judge the glass against. */
+        background: #05070d;
+      }
 
-const GRID_COLS = 96, GRID_ROWS = 64, PLANAR_DENSITY = 40;
-const SHADE_KEY_WEIGHT = 2.2, SHADE_FILL_WEIGHT = 0.8, SHADE_AMBIENT = 0.08, SHADE_FLOOR = 0.12;
-const TEXT = 'hologlyph is a web native text skinned talking head. '.repeat(40);
+      #stage { position: fixed; inset: 0; }
+      #holo { width: 100%; height: 100%; display: block; }
 
-function bakeFeatures(mesh) {
-  bakeFeatureMasks(mesh);
-  const geo = mesh.geometry;
-  const pos = geo?.attributes?.position;
-  if (!pos) return;
+      /* --- rail ------------------------------------------------------- */
+      #rail {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: var(--rail);
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel) 88%, transparent);
+        backdrop-filter: blur(10px);
+        transition: transform 0.22s ease;
+        z-index: 3;
+      }
+      body.focus #rail { transform: translateX(calc(-1 * var(--rail))); }
 
-  // Caruncle size attribute: side-aware distance from the inner corner.
-  if (mesh.name === 'eye_trim' || (mesh.material && mesh.material.name === 'eye_trim')) {
-    const count = pos.count;
-    const distArr = new Float32Array(count);
-    const sideMin = { l: Infinity, r: Infinity };
-    const sideMax = { l: -Infinity, r: -Infinity };
-    for (let index = 0; index < count; index++) {
-      const x = Math.abs(pos.getX(index));
-      const side = pos.getX(index) < 0 ? 'l' : 'r';
-      if (x < sideMin[side]) sideMin[side] = x;
-      if (x > sideMax[side]) sideMax[side] = x;
-    }
-    for (let index = 0; index < count; index++) {
-      const x = Math.abs(pos.getX(index));
-      const side = pos.getX(index) < 0 ? 'l' : 'r';
-      const range = (sideMax[side] - sideMin[side]) || 1;
-      distArr[index] = Math.max(0, Math.min(1, (x - sideMin[side]) / range));
-    }
-    geo.setAttribute('aTrimDistance', new THREE.BufferAttribute(distArr, 1));
-  }
-}
+      #railHead { padding: 0.85rem 1rem 0.6rem; border-bottom: 1px solid var(--line); }
+      #railHead h1 { font-size: 0.95rem; margin: 0; }
+      #railHead p { margin: 0.1rem 0 0; font-size: 0.72rem; color: var(--dim); }
+      #railBody { flex: 1; overflow-y: auto; padding: 0.5rem 0.75rem 3rem; }
 
-// ---- live uniforms backed by the library-owned approved defaults ----
-const OWNER_LOOK = DEFAULT_HEAD_CONFIG;
-const uTrimSize = uniform(1.0);
-const uLegacyProjection = uniform(0);
-const U = {
-  scroll: uniform(0),
-  // opacity zones (the "clarity comes from opacity" finding)
-  baseOpacity: uniform(OWNER_LOOK.skin.opacity.base),
-  lipsOp: uniform(OWNER_LOOK.skin.opacity.lips),
-  noseOp: uniform(OWNER_LOOK.skin.opacity.nose),
-  jawOp: uniform(OWNER_LOOK.skin.opacity.jaw),
-  orbitOp: uniform(OWNER_LOOK.skin.opacity.orbit),
-  browOp: uniform(OWNER_LOOK.skin.opacity.brow),
-  socketShadow: uniform(OWNER_LOOK.skin.shading.socketShadow),
-  socketMask: uniform(OWNER_LOOK.skin.opacity.socketMask),
-  socketSize: uniform(OWNER_LOOK.skin.shading.socketSize),
-  // feature shading
-  cavity: uniform(OWNER_LOOK.skin.shading.cavity),
-  lipDark: uniform(OWNER_LOOK.skin.shading.lipDark),
-  lipHue: uniform(OWNER_LOOK.skin.shading.lipHue),
-  lipGate: uniform(OWNER_LOOK.skin.shading.lipGate),
-  eyelid: uniform(OWNER_LOOK.skin.shading.eyelid),
-  brow: uniform(OWNER_LOOK.skin.shading.brow),
-  browGate: uniform(OWNER_LOOK.skin.shading.browGate),
-  // text fit
-  glyphScale: uniform(OWNER_LOOK.skin.glyph.scale),
-  hDensity: uniform(OWNER_LOOK.skin.glyph.horizontalDensity),
-  vDensity: uniform(OWNER_LOOK.skin.glyph.verticalDensity),
-  sharp: uniform(OWNER_LOOK.skin.glyph.sharpness),
-  // tone
-  tone: uniform(OWNER_LOOK.skin.tone.balance),
-  toneAmt: uniform(OWNER_LOOK.skin.tone.amount),
-  skinWarm: uniform(OWNER_LOOK.skin.tone.skinWarmth),
-  rim: uniform(OWNER_LOOK.skin.tone.rim),
-  glowGain: uniform(OWNER_LOOK.skin.tone.glowGain),
-  // eyes
-  eyeDensity: uniform(OWNER_LOOK.eyes.density),
-  scleraGlow: uniform(OWNER_LOOK.eyes.scleraGlow),
-  irisGlow: uniform(OWNER_LOOK.eyes.irisGlow),
-  eyePresence: uniform(OWNER_LOOK.eyes.presence),
-  pupil: uniform(OWNER_LOOK.eyes.pupil),
-  flowDir: uniform(OWNER_LOOK.eyes.flowDirection),
-  irisSize: uniform(OWNER_LOOK.eyes.irisSize),
-  irisColor: uniform(new THREE.Color(OWNER_LOOK.eyes.irisColor)),
-  scleraColor: uniform(new THREE.Color(OWNER_LOOK.eyes.scleraColor)),
-};
+      /* --- progressive disclosure -------------------------------------- */
+      details.group {
+        border: 1px solid var(--line);
+        border-radius: 0.45rem;
+        margin-bottom: 0.45rem;
+        background: rgba(255, 255, 255, 0.015);
+      }
+      details.group > summary {
+        cursor: pointer;
+        padding: 0.45rem 0.65rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      details.group > summary::-webkit-details-marker { display: none; }
+      details.group > summary::before {
+        content: '▸';
+        color: var(--dim);
+        font-size: 0.7rem;
+        transition: transform 0.15s;
+      }
+      details.group[open] > summary::before { transform: rotate(90deg); }
+      details.group > summary .note {
+        margin-left: auto;
+        font-weight: 400;
+        font-size: 0.68rem;
+        color: var(--dim);
+      }
+      details.group > .body { padding: 0.1rem 0.65rem 0.6rem; }
 
-function prepTexture(tex) {
-  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; tex.generateMipmaps = false;
-  tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.anisotropy = Math.max(tex.anisotropy, 4);
-}
+      details.tier { border-color: transparent; background: none; margin-bottom: 0.2rem; }
+      details.tier > summary {
+        color: var(--dim);
+        text-transform: uppercase;
+        font-size: 0.68rem;
+        letter-spacing: 0.09em;
+        padding: 0.7rem 0.3rem 0.3rem;
+      }
+      details.tier > .body { padding: 0 0 0.4rem; }
+      details.tier.dev > summary { color: var(--warn); }
+      details.tier.legacy > summary { color: var(--bad); }
+      details.tier.notes > summary { color: var(--accent); }
+      /* Prose, not a control. Wider measure than a slider row and left aligned
+         with the group body rather than the label column. */
+      .noteText {
+        font-size: 0.74rem;
+        color: var(--dim);
+        margin: 0.15rem 0 0.35rem;
+      }
 
-function triplanarText(tex, densU, densV, scrollNode) {
-  const bindNormal = normalGeometry.normalize();
-  const axisW = tpow(bindNormal.abs(), U.sharp);
-  const weights = axisW.div(axisW.dot(vec3(1)));
-  const px = positionGeometry.x.mul(weights.z).add(positionGeometry.z.mul(weights.x)).add(positionGeometry.x.mul(weights.y));
-  const py = positionGeometry.y.mul(weights.z.add(weights.x)).add(positionGeometry.z.mul(weights.y));
-  const projectedRow = floor(py.mul(PLANAR_DENSITY));
-  const projectedRate = float(0.75).add(fract(projectedRow.mul(0.618)).mul(0.5));
-  const interpolated = texture(tex, vec2(px.mul(densU).add(0.5).add(scrollNode.mul(projectedRate)), py.mul(densV)));
+      .tierNote {
+        font-size: 0.7rem;
+        color: var(--dim);
+        margin: 0 0.3rem 0.5rem;
+        padding-left: 0.55rem;
+        border-left: 2px solid var(--line);
+      }
 
-  // Lab-only A/B reference for the prior three-sample projection.
-  const rowY = floor(positionGeometry.y.mul(PLANAR_DENSITY));
-  const rowZ = floor(positionGeometry.z.mul(PLANAR_DENSITY));
-  const rateY = float(0.75).add(fract(rowY.mul(0.618)).mul(0.5));
-  const rateZ = float(0.75).add(fract(rowZ.mul(0.618)).mul(0.5));
-  const sampleXY = texture(tex, vec2(positionGeometry.x.mul(densU).add(0.5).add(scrollNode.mul(rateY)), positionGeometry.y.mul(densV)));
-  const sampleZY = texture(tex, vec2(positionGeometry.z.mul(densU).add(0.5).add(scrollNode.mul(rateY)), positionGeometry.y.mul(densV)));
-  const sampleXZ = texture(tex, vec2(positionGeometry.x.mul(densU).add(0.5).add(scrollNode.mul(rateZ)), positionGeometry.z.mul(densV)));
-  const legacy = sampleXY.mul(weights.z).add(sampleZY.mul(weights.x)).add(sampleXZ.mul(weights.y));
-  return mix(interpolated, legacy, uLegacyProjection);
-}
+      /* --- controls ---------------------------------------------------- */
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 2fr auto;
+        gap: 0.4rem;
+        align-items: center;
+        margin: 0.18rem 0;
+      }
+      .row > label { font-size: 0.76rem; color: var(--fg); }
+      .row > label.off { color: var(--dim); }
+      .row output {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.7rem;
+        color: var(--dim);
+        min-width: 3rem;
+        text-align: right;
+      }
+      input[type='range'] { width: 100%; accent-color: var(--accent); }
+      input[type='color'] {
+        width: 100%;
+        height: 1.35rem;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 0.25rem;
+        background: none;
+      }
+      .row.check { grid-template-columns: auto 1fr; }
+      .row.check input { accent-color: var(--accent); }
 
-function buildHeadMaterial(skin) {
-  const mat = new THREE.MeshStandardNodeMaterial();
-  mat.metalness = 0; mat.roughness = 0.4; mat.transparent = true; mat.depthTest = true; mat.depthWrite = true;
-  prepTexture(skin.texture);
+      .btns { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.4rem 0 0.1rem; }
+      button {
+        font: inherit;
+        font-size: 0.74rem;
+        padding: 0.28rem 0.55rem;
+        border-radius: 0.3rem;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      button.on { border-color: var(--accent); background: rgba(108, 198, 255, 0.16); }
 
-  const aLips = attribute('aLips', 'float'), aJaw = attribute('aJaw', 'float');
-  const aEyelid = attribute('aEyelid', 'float'), aBrow = attribute('aBrow', 'float');
-  const aCavity = attribute('aCavity', 'float'), aNose = attribute('aNose', 'float'), aSocket = attribute('aSocket', 'float');
+      .swatches { display: flex; gap: 0.25rem; flex-wrap: wrap; margin: 0.35rem 0 0.15rem; }
+      .swatches button {
+        width: 1.5rem;
+        height: 1.5rem;
+        padding: 0;
+        border-radius: 0.25rem;
+      }
 
-  const densU = float(PLANAR_DENSITY / GRID_COLS).mul(U.hDensity).div(U.glyphScale);
-  const densV = float(PLANAR_DENSITY / GRID_ROWS).mul(U.vDensity).div(U.glyphScale);
-  const sampled = triplanarText(skin.texture, densU, densV, U.scroll);
+      /* --- focus toggle ------------------------------------------------ */
+      /* This chip floats over the stage, so it cannot inherit the rail's
+         contrast: on a light backdrop a near-white button on near-white page
+         disappears. It carries its own dark ground. */
+      #focus {
+        position: fixed;
+        top: 0.6rem;
+        left: calc(var(--rail) + 0.6rem);
+        z-index: 4;
+        transition: left 0.22s ease;
+        background: rgba(8, 13, 24, 0.82);
+        border-color: rgba(230, 236, 255, 0.28);
+        color: #e6ecff;
+        backdrop-filter: blur(6px);
+      }
+      body.focus #focus { left: 0.6rem; }
 
-  const keyDir = vec3(1.2, 1.6, 2.0).normalize(), fillDir = vec3(-1.5, 0.4, 1.0).normalize();
-  const shadeBase = saturate(dot(normalWorld, keyDir)).mul(SHADE_KEY_WEIGHT)
-    .add(saturate(dot(normalWorld, fillDir)).mul(SHADE_FILL_WEIGHT)).add(SHADE_AMBIENT).clamp(SHADE_FLOOR, 1);
+      /* Same reasoning as the focus chip: it sits over the stage, and the
+         stage colour is now user-chosen. */
+      #hud {
+        position: fixed;
+        right: 0.7rem;
+        bottom: 0.7rem;
+        z-index: 3;
+        font-size: 0.7rem;
+        color: #e6ecff;
+        background: rgba(8, 13, 24, 0.72);
+        padding: 0.15rem 0.45rem;
+        border-radius: 0.3rem;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><canvas id="holo"></canvas></div>
 
-  const lipM = tpow(aLips, U.lipGate);
-  const browM = tpow(aBrow, U.browGate);
-  const socket = saturate(tpow(aSocket, float(1).div(U.socketSize)));
-  // One-surface recess model (owner direction): text stays continuous and
-  // darkens as it "goes in" - same mechanism the nostrils already get from
-  // cavity AO, extended to the eye sockets via the socket mask.
-  const shade = shadeBase
-    .mul(float(1).sub(aCavity.mul(U.cavity)))
-    .mul(float(1).sub(socket.mul(U.socketShadow)))
-    .mul(float(1).sub(lipM.mul(U.lipDark)))
-    .mul(float(1).sub(aEyelid.mul(U.eyelid)))
-    .mul(float(1).sub(browM.mul(U.brow)))
-    .clamp(0.03, 1);
+    <button id="focus" type="button" title="Hide the rail and give the head the whole viewport (F)">
+      focus
+    </button>
 
-  const luma = luminance(sampled.rgb);
-  const toneCol = mix(vec3(0.62, 0.90, 1.0), vec3(1.0, 0.82, 0.5), U.tone);
-  const toned = mix(sampled.rgb, toneCol.mul(luma), U.toneAmt);
-  const skinCol = vec3(1.0, 0.76, 0.62);
-  const warmed = mix(toned, skinCol.mul(luma), U.skinWarm.mul(shadeBase));
-  const lipCol = vec3(1.0, 0.42, 0.38);
-  const glyph = mix(warmed, lipCol.mul(luma), lipM.mul(U.lipHue));
+    <div id="rail">
+      <div id="railHead">
+        <h1>hologlyph studio</h1>
+        <p>One surface over the library engine. Key looks live, the rest folded away.</p>
+      </div>
+      <div id="railBody"></div>
+    </div>
 
-  mat.colorNode = glyph.mul(shade);
+    <div id="hud"></div>
 
-  // Opacity zones: the clarity dial. Base curve + per-zone density boosts.
-  const zoneBoost = lipM.mul(U.lipsOp)
-    .add(aNose.mul(U.noseOp))
-    .add(aJaw.mul(U.jawOp))
-    .add(aEyelid.mul(U.orbitOp))
-    .add(browM.mul(U.browOp));
-  mat.opacityNode = luma.mul(float(1).sub(U.baseOpacity)).add(U.baseOpacity)
-    .add(zoneBoost)
-    .add(socket.mul(U.socketMask))
-    .clamp(0, 1);
+    <script type="module">
+      import { createEngine } from '../src/index.ts';
 
-  const rim = tpow(saturate(float(1).sub(dot(normalView, positionViewDirection))), 3).mul(U.rim);
-  mat.emissiveNode = glyph.mul(U.glowGain).mul(shade).add(vec3(0.5, 0.7, 1.0).mul(rim));
-  return mat;
-}
+      const canvas = document.getElementById('holo');
+      const stage = document.getElementById('stage');
+      const engine = createEngine();
+      window.__hologlyphEngine = engine;
+      engine.on('error', (err) => console.error('[hologlyph]', err));
+      await engine.mount(canvas, stage);
+      engine.setScrollProgress(1);
 
-// One eyeball surface (resolved topology: sclera and iris are concentric FULL
-// spheres in the asset; the inner "iris" ball can never show correctly, and
-// the original render simply had blank white orbs). The iris is therefore
-// painted procedurally on the sclera's front cap: an angular cone around the
-// eye's forward axis, anatomical default ~30 degrees. Bind-space anchoring
-// makes the disc rotate with the eye bones. Unlit: no specular glints.
-function buildEyeballMaterial(eyeSkin, c) {
-  const mat = new THREE.MeshBasicNodeMaterial();
-  mat.transparent = false; mat.depthTest = true; mat.depthWrite = true;
-  prepTexture(eyeSkin.texture);
+      const resize = () => engine.resize(stage.clientWidth, stage.clientHeight);
+      window.addEventListener('resize', resize);
+      resize();
 
-  // Per-side forward-axis frame; mirror x so both eyes share one graph.
-  const px = positionGeometry.x.abs().sub(c.cx);
-  const py = positionGeometry.y.sub(c.cy);
-  const pz = positionGeometry.z.sub(c.cz);
-  const len = px.mul(px).add(py.mul(py)).add(pz.mul(pz)).sqrt();
-  const ang = acos(saturate(pz.div(len)));        // 0 = looking straight out
-  const r = ang.div(U.irisSize);                  // 1 = outer iris boundary
-  const theta = atan(py, px);
+      // ================================================================
+      // Control schema.
+      //
+      // Three tiers, which is the whole point of this page:
+      //   live    - what someone dressing the head actually reaches for
+      //   advanced- real knobs, but per-region trims nobody needs day to day
+      //   dev     - work in progress, and superseded features kept for reference
+      //
+      // `path` addresses HeadConfig. Everything is driven through
+      // `engine.vfx.setHeadConfig`, so this page exercises the shipped surface
+      // rather than a parallel one.
+      // ================================================================
+      // The engine's own live config, not `DEFAULT_HEAD_CONFIG`: that is a value
+      // and `src/index.ts` re-exports only types, so it is not on the public
+      // surface. `headConfig` is, and at boot it IS the defaults.
+      const D = engine.vfx.headConfig;
 
-  // Iris: rings of text circling the pupil, sinking inward (the sinkhole).
-  const WEDGES = 10, RINGS = 3.0;
-  const u = theta.div(Math.PI * 2).mul(WEDGES);
-  const v = r.mul(RINGS).sub(U.scroll.mul(U.flowDir).mul(3.0));
-  const ringText = luminance(texture(eyeSkin.texture, vec2(u, v)).rgb);
+      const SCHEMA = [
+        {
+          tier: 'live',
+          groups: [
+            {
+              title: 'Backdrop',
+              open: true,
+              note: 'what you judge glass against',
+              controls: [
+                { kind: 'backdrop', label: 'page colour' },
+                { kind: 'swatches', label: 'presets' },
+              ],
+            },
+            {
+              title: 'Glass',
+              open: true,
+              controls: [
+                { path: 'skin.glass.amount', label: 'glass', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.glass.tint', label: 'tint', kind: 'color' },
+                { path: 'skin.opacity.base', label: 'presence', min: 0, max: 1, step: 0.005 },
+              ],
+            },
+            {
+              title: 'Ink and tone',
+              open: true,
+              controls: [
+                { path: 'skin.tone.balance', label: 'balance', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.tone.skinWarmth', label: 'warmth', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.tone.rim', label: 'rim', min: 0, max: 0.5, step: 0.005 },
+              ],
+            },
+            {
+              title: 'Glyphs',
+              controls: [
+                { path: 'skin.glyph.scale', label: 'size', min: 0.2, max: 2, step: 0.01 },
+                { path: 'skin.glyph.sharpness', label: 'sharpness', min: 0.5, max: 12, step: 0.1 },
+              ],
+            },
+            {
+              title: 'Eyes',
+              controls: [
+                { path: 'eyes.irisColor', label: 'iris', kind: 'color' },
+                { path: 'eyes.scleraColor', label: 'sclera', kind: 'color' },
+                { path: 'eyes.irisSize', label: 'iris size', min: 0.1, max: 0.9, step: 0.01 },
+                { path: 'eyes.presence', label: 'presence', min: 0, max: 1, step: 0.01 },
+              ],
+            },
+            { title: 'Motion', controls: [{ kind: 'motion' }] },
+          ],
+        },
+        {
+          tier: 'advanced',
+          label: 'Advanced',
+          note: 'Per-region trims and shading internals. These were how the approved look was found; they are not day-to-day controls.',
+          groups: [
+            {
+              title: 'Region opacity',
+              note: 'was the whole panel once',
+              controls: [
+                { path: 'skin.opacity.lips', label: 'lips', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.opacity.nose', label: 'nose', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.opacity.jaw', label: 'jaw', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.opacity.orbit', label: 'orbit', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.opacity.brow', label: 'brow', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.opacity.socketMask', label: 'socket mask', min: 0, max: 1, step: 0.01 },
+              ],
+            },
+            {
+              title: 'Feature shading',
+              controls: [
+                { path: 'skin.shading.socketShadow', label: 'socket', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.shading.socketSize', label: 'socket size', min: 0, max: 3, step: 0.01 },
+                { path: 'skin.shading.cavity', label: 'cavity', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.shading.lipDark', label: 'lip dark', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.shading.lipHue', label: 'lip hue', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.shading.lipGate', label: 'lip gate', min: 0, max: 4, step: 0.05 },
+                { path: 'skin.shading.eyelid', label: 'eyelid', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.shading.brow', label: 'brow', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.shading.browGate', label: 'brow gate', min: 0, max: 4, step: 0.05 },
+              ],
+            },
+            {
+              title: 'Glass response',
+              controls: [
+                { path: 'skin.glass.fresnel', label: 'fresnel', min: 0, max: 2, step: 0.01 },
+                { path: 'skin.glass.fresnelPower', label: 'fresnel pow', min: 0.5, max: 8, step: 0.05 },
+                { path: 'skin.glass.specular', label: 'specular', min: 0, max: 2, step: 0.01 },
+                { path: 'skin.glass.sheen', label: 'sheen', min: 0, max: 120, step: 1 },
+                { path: 'skin.glass.refraction', label: 'refraction', min: 0, max: 0.2, step: 0.002 },
+              ],
+            },
+            {
+              title: 'Glyph grid',
+              controls: [
+                { path: 'skin.glyph.horizontalDensity', label: 'h density', min: 0.5, max: 6, step: 0.05 },
+                { path: 'skin.glyph.verticalDensity', label: 'v density', min: 0.5, max: 6, step: 0.05 },
+                { path: 'skin.tone.amount', label: 'tone amount', min: 0, max: 1, step: 0.01 },
+                { path: 'skin.tone.glowGain', label: 'glow gain', min: 0, max: 2, step: 0.01 },
+              ],
+            },
+            {
+              title: 'Eye internals',
+              controls: [
+                { path: 'eyes.density', label: 'density', min: 50, max: 600, step: 5 },
+                { path: 'eyes.scleraGlow', label: 'sclera glow', min: 0, max: 2, step: 0.01 },
+                { path: 'eyes.irisGlow', label: 'iris glow', min: 0, max: 4, step: 0.01 },
+                { path: 'eyes.pupil', label: 'pupil', min: 0, max: 0.8, step: 0.01 },
+                { path: 'skin.backdrop.adapt', label: 'backdrop adapt', min: 0, max: 1, step: 0.01 },
+              ],
+            },
+          ],
+        },
+        {
+          tier: 'dev',
+          label: 'Developer, work in progress',
+          note: 'The melt is the live liquid direction (dec.liquid-glass-melt) and needs judging. Everything under Superseded was ruled against on 2026-07-27 and is kept only so it can be compared against.',
+          groups: [
+            {
+              title: 'Melt',
+              open: true,
+              note: 'WIP',
+              controls: [
+                { path: 'melt.amount', label: 'amount', min: 0, max: 1, step: 0.005 },
+                { path: 'melt.spread', label: 'spread', min: 0, max: 4, step: 0.05 },
+                { path: 'melt.floor', label: 'floor', min: 0, max: 0.4, step: 0.005 },
+                { path: 'melt.lag', label: 'lag', min: 0, max: 2, step: 0.01 },
+                { kind: 'melt-actions' },
+              ],
+            },
+          ],
+        },
+        {
+          tier: 'legacy',
+          label: 'Superseded',
+          note: 'Cut or missed on 2026-07-27 (src.owner-look-2026-07-27). All gated off. Nothing here is a direction; they are here to A/B against the melt.',
+          groups: [
+            {
+              title: 'Pool',
+              note: 'CUT',
+              controls: [{ path: 'pool.amount', label: 'amount', min: 0, max: 1, step: 0.01 }],
+            },
+            {
+              title: 'Modal fluid',
+              note: 'MISSED',
+              controls: [
+                { path: 'fluid.amount', label: 'amount', min: 0, max: 1, step: 0.01 },
+                { path: 'stage.amount', label: 'stage', min: 0, max: 1, step: 0.01 },
+              ],
+            },
+            {
+              title: 'Backdrop rungs',
+              note: 'lens preferred',
+              controls: [
+                { path: 'lens.amount', label: 'lens', min: 0, max: 1, step: 0.01 },
+                { path: 'compositor.amount', label: 'frost', min: 0, max: 1, step: 0.01 },
+              ],
+            },
+            {
+              title: 'Interior glyphs',
+              note: 'experimental',
+              controls: [
+                { path: 'interior.count', label: 'count', min: 0, max: 400, step: 1 },
+                { path: 'interior.drift', label: 'drift', min: 0, max: 0.05, step: 0.001 },
+              ],
+            },
+          ],
+        },
+        {
+          // The 2026-07-27 rulings and the melt's status, folded in from what
+          // used to be a separate outcomes page. One environment: a ruling you
+          // have to open a second URL to read is a ruling nobody reads.
+          tier: 'notes',
+          label: 'What was decided, and when',
+          groups: [
+            {
+              title: 'The look session, 2026-07-27',
+              controls: [
+                {
+                  kind: 'note',
+                  text: 'Six gated features walked in one sitting, most ruled against. Pool: CUT, "thats not at all what i was getting at". Modal fluid: MISSED, "its just like a gravity effect? and it all bulges". Stage participants: MISSED, "a bit weird, and doesnt hit the mark". Compositor frost: rejected on the shape of its clip, not its content. Interior glyphs: kept, experimental, default off. Of the two backdrop rungs the lens wins. Verbatim in src.owner-look-2026-07-27.',
+                },
+              ],
+            },
+            {
+              title: 'Glass is the default now',
+              open: true,
+              controls: [
+                {
+                  kind: 'note',
+                  text: 'Approved, and no longer a lab feature: skin.glass.amount ships at 1 and this page is the one environment it is shown in. Above 0 it is a live uniform you can dial freely. At exactly 0 it is a mode switch, because applyGlassLayering drops the interior wall, flips transparency across the layered set and recompiles. So treat 0 as off rather than as the bottom of the dial.',
+                },
+              ],
+            },
+            {
+              title: 'The melt is active development',
+              open: true,
+              controls: [
+                {
+                  kind: 'note',
+                  text: 'Promoted 2026-07-28 from experimental spike to the approved liquid direction (dec.liquid-glass-melt). Active development, not ready. A vertex melt on the real bust rather than a particle field: neither the puddle morph nor the squeeze changes topology, so the rig, the authored visemes, the glyphs and the glass all survive and it runs on WebGL2. The escalation criterion did not fire, and at full melt the rim is a smooth ellipse with no facial features on it. Two things are known missing, both inside mesh displacement rather than arguments against it: the eyeballs and mouth cavity do not melt with the shell (todo.melt-internals), and the puddle has no thickness at exactly 1. The second half of the ask, squeezing between page elements, is this same melt driven by the stage colliders and is not built.',
+                },
+              ],
+            },
+            {
+              title: 'Known gaps in this page',
+              controls: [
+                {
+                  kind: 'note',
+                  text: 'No camera framing. It needs EngineImpl.sysRenderer.camera, which is private and not on the Engine contract, so this page goes without rather than widening the contract as a side effect of a demo. todo.public-camera-pose is the prerequisite, and the presentation overhaul in todo.studio-showcase-overhaul depends on it.',
+                },
+              ],
+            },
+          ],
+        },
+      ];
 
-  // Donut brightness profile (owner spec): soft fade INTO the pupil void,
-  // sharp edge at the OUTER iris boundary so it reads as a circle, not a torus.
-  const voidFade = smoothstep(U.pupil, U.pupil.add(0.28), r);
-  const outerEdge = float(1).sub(smoothstep(0.955, 1.0, r));
-  const iris = U.irisColor.mul(ringText).mul(U.irisGlow).mul(voidFade).mul(outerEdge);
+      // ================================================================
+      // Plumbing
+      // ================================================================
+      const at = (obj, path) => path.split('.').reduce((o, k) => o?.[k], obj);
 
-  // Sclera beyond the iris: dim white, optional micro-text (default off).
-  const densU = U.eyeDensity.div(GRID_COLS), densV = U.eyeDensity.div(GRID_ROWS);
-  const scleraText = luminance(triplanarText(eyeSkin.texture, densU, densV, U.scroll.mul(0.4)).rgb);
-  const scleraLit = U.scleraColor.mul(scleraText.mul(U.scleraGlow).add(0.012));
-  const outsideIris = smoothstep(0.97, 1.02, r);
-  const sclera = scleraLit.mul(outsideIris);
+      /** A single-key-deep patch object for `setHeadConfig`, from a dotted path. */
+      function patch(path, value) {
+        const keys = path.split('.');
+        const out = {};
+        let node = out;
+        for (let i = 0; i < keys.length - 1; i++) node = node[keys[i]] = {};
+        node[keys[keys.length - 1]] = value;
+        return out;
+      }
 
-  mat.colorNode = iris.add(sclera).mul(U.eyePresence).add(vec3(0.004, 0.005, 0.008));
-  return mat;
-}
-function buildBlendMaskMaterial() {
-  const mat = new THREE.MeshBasicNodeMaterial();
-  const axisW = tpow(normalGeometry.normalize().abs(), U.sharp);
-  const weights = axisW.div(axisW.dot(vec3(1)));
-  const blend = weights.x.mul(weights.y)
-    .add(weights.x.mul(weights.z))
-    .add(weights.y.mul(weights.z))
-    .mul(4)
-    .clamp(0, 1);
-  mat.colorNode = vec3(blend);
-  return mat;
-}
+      const push = (path, value) => engine.vfx.setHeadConfig(patch(path, value));
 
+      const el = (tag, props = {}, kids = []) => {
+        const node = Object.assign(document.createElement(tag), props);
+        for (const kid of kids) node.append(kid);
+        return node;
+      };
 
-// ---- scene ----
-const canvas = document.getElementById('view');
-const renderer = new THREE.WebGPURenderer({ canvas, antialias: true, forceWebGL: true });
-await renderer.init();
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060b);
-const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-camera.position.set(0, 0.06, 2.05);
-const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, 0.02, 0); controls.enablePan = false; controls.minDistance = 0.35; controls.maxDistance = 3;
-scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1.2, 1.6, 2.0); scene.add(key);
-const fill = new THREE.DirectionalLight(0xbcd4ff, 0.8); fill.position.set(-1.5, 0.4, 1.0); scene.add(fill);
+      const railBody = document.getElementById('railBody');
+      const rangeInputs = new Map();
 
-const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
-const gltf = await loader.loadAsync(bustUrl);
-gltf.scene.traverse((o) => { if (o.isMesh) bakeFeatures(o); });
+      function addRange(host, spec) {
+        const current = at(engine.vfx.headConfig, spec.path) ?? 0;
+        const input = el('input', {
+          type: 'range',
+          min: String(spec.min),
+          max: String(spec.max),
+          step: String(spec.step),
+          value: String(current),
+        });
+        const out = el('output', { textContent: fmt(current, spec.step) });
+        const label = el('label', { textContent: spec.label });
+        input.addEventListener('input', () => {
+          const v = Number(input.value);
+          out.textContent = fmt(v, spec.step);
+          push(spec.path, v);
+        });
+        rangeInputs.set(spec.path, { input, out, spec });
+        host.append(el('div', { className: 'row' }, [label, input, out]));
+      }
 
-const skin = createTextSkinEngine(); skin.setSource(createStaticTextSource(TEXT));
-const eyeSkin = createTextSkinEngine({ cols: 128, rows: 96, cellWidth: 10, cellHeight: 12, fontSize: 9 });
-eyeSkin.setSource(createStaticTextSource(TEXT));
+      const fmt = (v, step) => v.toFixed(step >= 1 ? 0 : step >= 0.05 ? 2 : 3);
 
-// Eye forward-axis frame from the sclera geometry (right-eye half, mirrored
-// in-shader). cz matters: the frame axis is +z through the ball centre.
-let eyeFrame = { cx: 0.688, cy: 0.003, cz: 0 };
-gltf.scene.traverse((o) => {
-  if (!o.isMesh) return;
-  const mn = Array.isArray(o.material) ? '' : o.material?.name || '';
-  if (mn !== 'eye_sclera') return;
-  const p = o.geometry.attributes.position;
-  let sx = 0, sy = 0, sz = 0, n = 0;
-  for (let i = 0; i < p.count; i++) { if (p.getX(i) <= 0) continue; sx += p.getX(i); sy += p.getY(i); sz += p.getZ(i); n++; }
-  if (n) eyeFrame = { cx: sx / n, cy: sy / n, cz: sz / n };
-});
+      function addColor(host, spec) {
+        const input = el('input', {
+          type: 'color',
+          value: at(engine.vfx.headConfig, spec.path) ?? '#ffffff',
+        });
+        input.addEventListener('input', () => push(spec.path, input.value));
+        host.append(el('div', { className: 'row' }, [el('label', { textContent: spec.label }), input, el('output')]));
+      }
 
-const headMat = buildHeadMaterial(skin);
-const eyeballMat = buildEyeballMaterial(eyeSkin, eyeFrame);
-const blendMaskMat = buildBlendMaskMaterial();
+      // --- the backdrop, which is two writes, not one ------------------
+      // `skin.backdrop` only retunes the ink and glow so the glyphs stay legible
+      // (`adaptToBackdrop`). It does not paint anything. And `auto: true` makes
+      // the engine read the colour off the host at mount, which would overwrite
+      // whatever is set here. So: paint the page, push the colour, and turn
+      // `auto` off so the push sticks.
+      function setBackdrop(color) {
+        document.body.style.background = color;
+        engine.vfx.setHeadConfig({ skin: { backdrop: { color, auto: false } } });
+      }
 
-const bones = {}; const morphMeshes = []; const originals = new Map(); const hiddenIris = []; const trimMeshes = [];
-gltf.scene.traverse((o) => {
-  if (o.isBone) { if (o.name === 'head') bones.head = o; if (o.name === 'neck') bones.neck = o; if (o.name === 'eye_l') bones.eyeL = o; if (o.name === 'eye_r') bones.eyeR = o; }
-  if (!o.isMesh) return;
-  const mn = Array.isArray(o.material) ? '' : o.material?.name || '';
-  if (mn === 'mouth_interior') {
-    // Keep its authored dark cavity material (KEEP_MATERIALS pattern; this
-    // mesh carries gums and tongue), but drive all canonical expression,
-    // viseme, and tongue corrective morphs with the rest of the bust.
-    o.renderOrder = 1;
-    if (o.morphTargetInfluences) morphMeshes.push(o);
-    return;
-  }
-  if (mn === 'eye_trim') {
-    const mat = new THREE.MeshBasicNodeMaterial();
-    const aTrimDist = attribute('aTrimDistance', 'float');
-    mat.colorNode = vec3(0.02, 0.03, 0.05);
-    mat.opacityNode = float(1).sub(smoothstep(uTrimSize.sub(0.08), uTrimSize, aTrimDist));
-    mat.transparent = true;
-    mat.depthTest = true;
-    mat.depthWrite = true;
-    o.material = mat;
-    o.renderOrder = 1;
-    trimMeshes.push(o);
-    return;
-  }
-  if (mn === 'eye_iris') {
-    // The asset's iris is a full ball enclosed by the sclera ball; it can
-    // never render correctly, so the lab hides it (base-model toggle restores).
-    o.visible = false; hiddenIris.push(o); return;
-  }
-  const lab = mn === 'eye_sclera' ? eyeballMat : headMat;
-  originals.set(o, { orig: o.material, lab });
-  o.renderOrder = mn === 'eye_sclera' ? 1 : 2;
-  o.material = lab;
-  if (mn === 'eye_sclera') {
-    eyeballMat.transparent = true;
-    eyeballMat.side = THREE.FrontSide;
-    eyeballMat.depthTest = true;
-    eyeballMat.depthWrite = true;
-  }
-  if (lab === headMat && o.morphTargetInfluences) morphMeshes.push(o);
-});
+      const BACKDROPS = ['#05070d', '#101826', '#1b2430', '#2b1d33', '#0e2a2a', '#f4f1ea', '#ffffff'];
 
-let primaryMesh = null;
-gltf.scene.traverse((o) => {
-  if (o.isMesh && o.morphTargetInfluences && !primaryMesh) primaryMesh = o;
-});
-if (primaryMesh) {
-  const occlusionMaskMaterial = new THREE.MeshBasicMaterial({
-    colorWrite: false,
-    depthWrite: true,
-    depthTest: true,
-    side: THREE.FrontSide,
-  });
-  let maskMesh;
-  if (primaryMesh.isSkinnedMesh) {
-    maskMesh = new THREE.SkinnedMesh(primaryMesh.geometry, occlusionMaskMaterial);
-    if (primaryMesh.skeleton) {
-      maskMesh.bindMode = primaryMesh.bindMode;
-      maskMesh.bind(primaryMesh.skeleton, primaryMesh.bindMatrix);
-    }
-  } else {
-    maskMesh = new THREE.Mesh(primaryMesh.geometry, occlusionMaskMaterial);
-  }
-  maskMesh.position.copy(primaryMesh.position);
-  maskMesh.rotation.copy(primaryMesh.rotation);
-  maskMesh.scale.copy(primaryMesh.scale);
-  maskMesh.morphTargetDictionary = primaryMesh.morphTargetDictionary;
-  maskMesh.morphTargetInfluences = primaryMesh.morphTargetInfluences;
-  maskMesh.renderOrder = 0;
-  const maskParent = primaryMesh.parent ?? gltf.scene;
-  maskParent.add(maskMesh);
-}
+      function addBackdrop(host, spec) {
+        const input = el('input', { type: 'color', value: D.skin.backdrop.color });
+        input.addEventListener('input', () => setBackdrop(input.value));
+        host.append(el('div', { className: 'row' }, [el('label', { textContent: spec.label }), input, el('output')]));
+        host.dataset.backdropInput = '1';
+        host._backdropInput = input;
+      }
 
-const restHead = bones.head ? bones.head.rotation.clone() : null;
-scene.add(gltf.scene);
-// ---- state / controls ----
-const state = {
-  scrollSpeed: skin.scrollSpeed, yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0,
-  idle: true, thinking: false, speaking: false, expression: 'neutral',
-  speakGain: 0.55,
-};
-const cur = { yaw: 0, pitch: 0, roll: 0, lookX: 0, lookY: 0, speed: state.scrollSpeed };
-const idle = new IdleController();
-let exprCur = emptyExpressionWeights();
-let exprTarget = weightsFor('neutral');
-const VISEME_MS = 0.075;
-const speech = { seq: [], boundaryAt: 0, sawBoundary: false, words: [], wordIdx: 0, nextWordAt: 0, gen: 0 };
+      function addSwatches(host) {
+        const wrap = el('div', { className: 'swatches' });
+        for (const color of BACKDROPS) {
+          const b = el('button', { type: 'button', title: color });
+          b.style.background = color;
+          b.addEventListener('click', () => {
+            setBackdrop(color);
+            const input = host._backdropInput;
+            if (input) input.value = color;
+          });
+          wrap.append(b);
+        }
+        host.append(wrap);
+      }
 
-const audioEngine = createAudioEngine();
-const demoBaseAdapter = createDemoTTSAdapter();
-let hqBaseAdapter = null;
-let activeAdapterKind = 'browser';
-const speechEngine = createSpeechEngine(audioEngine);
-const tappedWeights = {};
-let lastFrameWasSilence = true;
+      // No camera controls. Framing would need `engine.sysRenderer.camera`,
+      // which is an `EngineImpl` private and not on the `Engine` contract. The
+      // five one-off lab pages reach for it because they are throwaway; this
+      // page is meant to be deployable, so it stays on the public surface.
+      // A public camera-pose method is a contract change with its own decision:
+      // `todo.public-camera-pose`.
 
-function clearTappedWeights() {
-  for (const vn of RIG_VISEME_MORPHS) tappedWeights[vn] = 0;
-  lastFrameWasSilence = true;
-}
+      // --- motion ------------------------------------------------------
+      let frozen = false;
+      function addMotion(host) {
+        const mk = (label, title, onChange) => {
+          const cb = el('input', { type: 'checkbox' });
+          cb.addEventListener('change', () => onChange(cb.checked));
+          const row = el('div', { className: 'row check' }, [cb, el('label', { textContent: label, title })]);
+          host.append(row);
+          return cb;
+        };
+        mk('freeze pose', 'The melt runs in bind space, so freezing keeps a puddle from following head yaw', (on) => {
+          frozen = on;
+          engine.setMotionFrozen(on);
+        });
+        mk('reduced motion', 'Damps nods, disables saccades, shortens ramps', (on) => engine.vfx.setReducedMotion(on));
+      }
 
-function setSpeechAdapter(baseAdapter, isHq = false) {
-  clearTappedWeights();
-  const wrapped = visemeTap(
-    baseAdapter,
-    (frame) => {
-      clearTappedWeights();
-      let allSil = true;
-      if (frame.weights) {
-        for (const [k, v] of Object.entries(frame.weights)) {
-          if (k !== 'viseme_sil' && v > 0.001) allSil = false;
-          tappedWeights[k] = v;
+      // --- melt actions ------------------------------------------------
+      const CYCLE_MS = 6000;
+      let cycleStart = 0;
+      function setMelt(v) {
+        const entry = rangeInputs.get('melt.amount');
+        if (!entry) return;
+        entry.input.value = String(v);
+        entry.out.textContent = fmt(v, entry.spec.step);
+        push('melt.amount', v);
+      }
+
+      function addMeltActions(host) {
+        const btns = el('div', { className: 'btns' });
+        const head = el('button', { type: 'button', textContent: 'head' });
+        const puddle = el('button', { type: 'button', textContent: 'puddle' });
+        const cycle = el('button', { type: 'button', textContent: 'cycle' });
+        head.addEventListener('click', () => { cycleStart = 0; setMelt(0); });
+        puddle.addEventListener('click', () => { cycleStart = 0; setMelt(1); });
+        cycle.addEventListener('click', () => {
+          // A hand-dragged slider does not show a morph. The sweep does.
+          cycleStart = performance.now();
+          cycle.classList.add('on');
+        });
+        host.append(btns);
+        btns.append(head, puddle, cycle);
+        host.append(
+          el('p', {
+            className: 'tierNote',
+            textContent:
+              'Known: the eyeballs and mouth cavity do not melt with the shell (todo.melt-internals), and the puddle has no thickness at exactly 1. Judge the shell, not those.',
+          }),
+        );
+        return cycle;
+      }
+      let cycleBtn = null;
+
+      // --- build -------------------------------------------------------
+      for (const tier of SCHEMA) {
+        let host = railBody;
+        if (tier.tier !== 'live') {
+          const body = el('div', { className: 'body' });
+          const summary = el('summary', { textContent: tier.label });
+          const details = el('details', { className: `tier ${tier.tier}` }, [summary, body]);
+          railBody.append(details);
+          if (tier.note) body.append(el('p', { className: 'tierNote', textContent: tier.note }));
+          host = body;
+        }
+
+        for (const group of tier.groups) {
+          const body = el('div', { className: 'body' });
+          const summary = el('summary');
+          summary.append(document.createTextNode(group.title));
+          if (group.note) summary.append(el('span', { className: 'note', textContent: group.note }));
+          const details = el('details', { className: 'group' }, [summary, body]);
+          if (group.open) details.open = true;
+          host.append(details);
+
+          for (const c of group.controls) {
+            if (c.kind === 'color') addColor(body, c);
+            else if (c.kind === 'backdrop') addBackdrop(body, c);
+            else if (c.kind === 'swatches') addSwatches(body);
+            else if (c.kind === 'motion') addMotion(body);
+            else if (c.kind === 'melt-actions') cycleBtn = addMeltActions(body);
+            else if (c.kind === 'note') body.append(el('p', { className: 'noteText', textContent: c.text }));
+            else addRange(body, c);
+          }
         }
       }
-      lastFrameWasSilence = allSil;
-      state.speakUntil = performance.now() / 1000 + 0.3;
-    },
-    () => {},
-    false,
-  );
-  speechEngine.setAdapter(wrapped);
-  activeAdapterKind = isHq ? 'kokoro' : 'browser';
-}
-setSpeechAdapter(demoBaseAdapter, false);
-const panel = document.getElementById('panel');
-function group(title) { const f = document.createElement('fieldset'); const l = document.createElement('legend'); l.textContent = title; f.appendChild(l); panel.appendChild(f); return f; }
-const sliders = {};
-function slider(parent, id, label, min, max, step, value, onInput) {
-  const wrap = document.createElement('div'); wrap.className = 'row';
-  const lab = document.createElement('label'); lab.textContent = label;
-  const out = document.createElement('output'); out.textContent = (+value).toFixed(2);
-  const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = value;
-  inp.id = `slider_${id}`;
-  lab.htmlFor = inp.id;
-  out.setAttribute('for', inp.id);
-  wrap.appendChild(lab); wrap.appendChild(out);
-  parent.appendChild(wrap); parent.appendChild(inp);
-  inp.addEventListener('input', () => { const v = +inp.value; out.textContent = v.toFixed(2); onInput(v); });
-  if (id) sliders[id] = inp;
-  return inp;
-}
-let chkSeq = 0;
-function checkbox(parent, label, value, onChange) {
-  const d = document.createElement('div'); d.className = 'chk';
-  const c = document.createElement('input'); c.type = 'checkbox'; c.checked = value;
-  c.id = `chk_${++chkSeq}`;
-  const l = document.createElement('label'); l.textContent = label; l.htmlFor = c.id;
-  d.appendChild(c); d.appendChild(l); parent.appendChild(d);
-  c.addEventListener('change', () => onChange(c.checked)); return c;
-}
-function uslider(parent, id, label, min, max, step) { return slider(parent, id, label, min, max, step, U[id].value, (v) => U[id].value = v); }
 
-const gMotion = group('motion');
-slider(gMotion, 'scrollSpeed', 'text scroll speed', 0, 0.5, 0.005, state.scrollSpeed, (v) => state.scrollSpeed = v);
-slider(gMotion, 'yaw', 'head turn (whole bust)', -0.6, 0.6, 0.01, 0, (v) => state.yaw = v);
-slider(gMotion, 'pitch', 'head tilt', -0.4, 0.4, 0.01, 0, (v) => state.pitch = v);
-slider(gMotion, 'roll', 'head roll', -0.4, 0.4, 0.01, 0, (v) => state.roll = v);
-slider(gMotion, 'lookX', 'look left/right (eyes)', -0.5, 0.5, 0.01, 0, (v) => state.lookX = v);
-slider(gMotion, 'lookY', 'look up/down (eyes)', -0.4, 0.4, 0.01, 0, (v) => state.lookY = v);
-slider(gMotion, 'blinkHold', 'blink hold (eyelid closure)', 0, 1, 0.01, 0, (v) => state.blinkHold = v);
-slider(gMotion, 'speakGain', 'mouth movement scale (speech)', 0.1, 1, 0.01, state.speakGain, (v) => state.speakGain = v);
-checkbox(gMotion, 'idle drift + breathing + blink', state.idle, (v) => state.idle = v);
-checkbox(gMotion, 'show original materials (base model)', false, (v) => {
-  for (const [mesh, mats] of originals) mesh.material = v ? mats.orig : mats.lab;
-  for (const m of hiddenIris) m.visible = v;
-});
-const thinkBtn = document.createElement('button');
-thinkBtn.textContent = 'thinking state demo';
-thinkBtn.addEventListener('click', () => { state.thinking = !state.thinking; thinkBtn.classList.toggle('active', state.thinking); });
-gMotion.appendChild(thinkBtn);
-const mhint = document.createElement('p'); mhint.className = 'hint';
-mhint.textContent = 'Rig limitation found: every bust vertex is 100% weighted to the head joint, so any turn moves the whole bust rigidly. True neck articulation needs graduated weights in the asset pipeline (recorded as a future todo).';
-gMotion.appendChild(mhint);
-
-const gOp = group('opacity zones (clarity)');
-uslider(gOp, 'baseOpacity', 'base opacity floor', 0, 0.3, 0.005);
-uslider(gOp, 'lipsOp', 'lips opacity', 0, 0.8, 0.01);
-uslider(gOp, 'noseOp', 'nose opacity', 0, 0.8, 0.01);
-uslider(gOp, 'jawOp', 'jaw/chin opacity', 0, 0.8, 0.01);
-uslider(gOp, 'orbitOp', 'eye-orbit opacity', 0, 0.8, 0.01);
-uslider(gOp, 'browOp', 'brow opacity', 0, 0.8, 0.01);
-uslider(gOp, 'socketShadow', 'socket recess shadow (text goes in)', 0, 1, 0.01);
-uslider(gOp, 'socketMask', 'socket skin mask (hide orb behind lids)', 0, 1, 0.01);
-slider(gOp, 'trimSize', 'inner-corner trim size (caruncle shell cutoff)', 0, 1, 0.01, 1, (v) => {
-  uTrimSize.value = v;
-});
-uslider(gOp, 'socketSize', 'socket size', 0.3, 2, 0.01);
-const ohint = document.createElement('p'); ohint.className = 'hint';
-ohint.textContent = 'One-surface model: recess shadow keeps the text continuous and darkens it into the sockets, the same way cavity AO already sinks the nostrils. The inner-corner trim is the anatomical caruncle shell, split out in the asset (eye_trim) so it is independently dialable.';
-gOp.appendChild(ohint);
-
-const gFeat = group('feature shading');
-uslider(gFeat, 'cavity', 'cavity AO (all creases)', 0, 1, 0.01);
-uslider(gFeat, 'lipDark', 'lip darken', 0, 1, 0.01);
-uslider(gFeat, 'lipHue', 'lip hue -> warm red', 0, 1, 0.01);
-uslider(gFeat, 'lipGate', 'lip tightness (pow)', 1, 6, 0.1);
-uslider(gFeat, 'eyelid', 'eye-orbit shadow', 0, 1, 0.01);
-uslider(gFeat, 'brow', 'brow shadow', 0, 1, 0.01);
-uslider(gFeat, 'browGate', 'brow tightness (pow)', 1, 6, 0.1);
-const lhint = document.createElement('p'); lhint.className = 'hint';
-lhint.textContent = 'Lip mask now excludes jaw movers (jaw_open, viseme_aa), so hue/darken stay on the lip band instead of the whole chin. Chin is its own opacity zone above.';
-gFeat.appendChild(lhint);
-
-const gFit = group('text fit');
-uslider(gFit, 'glyphScale', 'glyph size', 0.3, 2.2, 0.01);
-uslider(gFit, 'hDensity', 'horizontal density', 0.5, 2, 0.01);
-uslider(gFit, 'vDensity', 'line density', 0.5, 2, 0.01);
-uslider(gFit, 'sharp', 'projection sharpness (nose)', 1, 8, 0.1);
-checkbox(gFit, 'legacy projection overlap (A/B)', false, (on) => {
-  uLegacyProjection.value = on ? 1 : 0;
-});
-
-const gEyes = group('eyes');
-uslider(gEyes, 'pupil', 'pupil size (dilation)', 0.1, 0.75, 0.01);
-uslider(gEyes, 'irisSize', 'iris size (cone radians)', 0.2, 1.0, 0.01);
-uslider(gEyes, 'irisGlow', 'iris glow', 0, 3, 0.01);
-slider(gEyes, 'irisHue', 'iris hue', 0, 1, 0.01, 0.78, (v) => U.irisColor.value.setHSL(v, 0.85, 0.6));
-uslider(gEyes, 'scleraGlow', 'sclera text glow (0 = off)', 0, 1.5, 0.01);
-uslider(gEyes, 'eyePresence', 'eyeball presence (dim orb in recess mode)', 0, 1, 0.01);
-uslider(gEyes, 'eyeDensity', 'sclera text density', 40, 300, 1);
-const flowBtn = document.createElement('button');
-flowBtn.textContent = 'reverse iris flow';
-flowBtn.addEventListener('click', () => { U.flowDir.value = -U.flowDir.value; flowBtn.classList.toggle('active', U.flowDir.value < 0); });
-gEyes.appendChild(flowBtn);
-const ehint = document.createElement('p'); ehint.className = 'hint';
-ehint.textContent = 'Iris = polar text flowing into the pupil (the sinkhole). Pupil dilates live; flow reverses. Iris patterns/distortions and eyelid-over-eye physics staged as later work.';
-gEyes.appendChild(ehint);
-
-const gTone = group('tone');
-uslider(gTone, 'tone', 'glyph tone (cool <-> warm)', 0, 1, 0.01);
-uslider(gTone, 'toneAmt', 'tone strength', 0, 1, 0.01);
-uslider(gTone, 'skinWarm', 'whole-head skin warmth', 0, 1, 0.01);
-uslider(gTone, 'rim', 'rim glow', 0, 0.4, 0.005);
-uslider(gTone, 'glowGain', 'glyph glow gain (brightness)', 0, 4, 0.05);
-slider(gTone, 'roughness', 'surface roughness (1 kills specular sheen)', 0.05, 1, 0.01, 0.4, (v) => { headMat.roughness = v; });
-
-const gBg = group('background & theme (lab-only)');
-const bgBtns = document.createElement('div'); bgBtns.className = 'btns'; gBg.appendChild(bgBtns);
-function setBgColor(hex) {
-  scene.background = new THREE.Color(hex);
-  document.getElementById('view').style.background = hex;
-  const isLight = new THREE.Color(hex).getHSL({}).l > 0.5;
-  document.getElementById('status').style.color = isLight ? '#233248' : '#6b7688';
-  const introPs = document.getElementById('intro').querySelectorAll('p');
-  for (const p of introPs) {
-    p.style.color = isLight ? '#1c2838' : '#8fa0b6';
-    p.style.textShadow = isLight ? 'none' : '0 1px 4px #04060b';
-  }
-}
-for (const [name, hex] of Object.entries({ dark: '#04060b', mid: '#1a2332', light: '#e5ebf5' })) {
-  const b = document.createElement('button'); b.textContent = name;
-  b.addEventListener('click', () => setBgColor(hex));
-  bgBtns.appendChild(b);
-}
-const colRow = document.createElement('div'); colRow.className = 'row';
-const colLab = document.createElement('label'); colLab.textContent = 'custom background'; colLab.htmlFor = 'customBgColor';
-const colInp = document.createElement('input'); colInp.type = 'color'; colInp.id = 'customBgColor'; colInp.value = '#04060b';
-colInp.setAttribute('aria-label', 'custom background color');
-colInp.addEventListener('input', (e) => setBgColor(e.target.value));
-colRow.appendChild(colLab); colRow.appendChild(colInp); gBg.appendChild(colRow);
-
-let coreMesh = null;
-checkbox(gBg, 'near-opaque inner core (prototype)', false, (on) => {
-  if (on) {
-    if (!coreMesh) {
-      gltf.scene.traverse((o) => {
-        if (coreMesh || !o.isMesh) return;
-        const mn = Array.isArray(o.material) ? '' : o.material?.name || '';
-        if (mn === 'bust' || (!mn && o.morphTargetInfluences)) {
-          coreMesh = o.clone();
-          coreMesh.scale.set(0.985, 0.985, 0.985);
-          const coreMat = new THREE.MeshBasicNodeMaterial();
-          coreMat.colorNode = vec3(0.03, 0.04, 0.06);
-          coreMat.depthTest = true; coreMat.depthWrite = true;
-          coreMesh.material = coreMat; coreMesh.renderOrder = 0;
-          scene.add(coreMesh);
+      // --- focus mode --------------------------------------------------
+      const focusBtn = document.getElementById('focus');
+      function setFocus(on) {
+        document.body.classList.toggle('focus', on);
+        focusBtn.textContent = on ? 'controls' : 'focus';
+        focusBtn.classList.toggle('on', on);
+        // The canvas is fixed to the viewport, so nothing needs resizing: the
+        // rail floats over it. Kept explicit so it stays true if that changes.
+        resize();
+      }
+      focusBtn.addEventListener('click', () => setFocus(!document.body.classList.contains('focus')));
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'f' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName ?? '')) {
+          setFocus(!document.body.classList.contains('focus'));
         }
       });
-    }
-    if (coreMesh) coreMesh.visible = true;
-  } else {
-    if (coreMesh) coreMesh.visible = false;
-  }
-});
 
-const themeBtns = document.createElement('div'); themeBtns.className = 'btns'; gBg.appendChild(themeBtns);
-function applyThemeValues(values) {
-  for (const [id, value] of Object.entries(values)) {
-    const input = sliders[id];
-    if (input) {
-      input.value = value;
-      input.dispatchEvent(new Event('input'));
-    } else if (U[id]) {
-      U[id].value = value;
-    }
-  }
-}
-const nightBtn = document.createElement('button'); nightBtn.textContent = 'night preset';
-nightBtn.addEventListener('click', () => {
-  setBgColor('#04060b');
-  applyThemeValues({ baseOpacity: 0.075, rim: 0.065, glowGain: 0.55, tone: 0.21, toneAmt: 0.65 });
-});
-const dayBtn = document.createElement('button'); dayBtn.textContent = 'day preset';
-dayBtn.addEventListener('click', () => {
-  setBgColor('#e5ebf5');
-  applyThemeValues({ baseOpacity: 0.15, rim: 0.18, glowGain: 0.85, tone: 0.05, toneAmt: 0.45 });
-});
-themeBtns.appendChild(nightBtn); themeBtns.appendChild(dayBtn);
-// Expressions + speak live on the stage quickbar (always visible), not in
-// the tuning panel. Expressions use the real semantic map
-// (src/motion/expressions.ts); speak is a lab approximation cycling viseme
-// morphs off SpeechSynthesis (library route: SpeechEngine -> visemeTap ->
-// MotionEngine).
-const quickbar = document.getElementById('quickbar');
-const exprBtns = document.createElement('div');
-exprBtns.className = 'qrow';
-quickbar.appendChild(exprBtns);
-for (const name of ['neutral', 'friendly', 'thinking', 'happy', 'surprised', 'concern', 'listening']) {
-  const b = document.createElement('button');
-  b.type = 'button'; b.textContent = name;
-  const on = name === state.expression;
-  b.classList.toggle('active', on);
-  b.setAttribute('aria-pressed', String(on));
-  b.addEventListener('click', () => {
-    state.expression = name; exprTarget = weightsFor(name);
-    for (const x of exprBtns.children) {
-      const sel = x.textContent === name;
-      x.classList.toggle('active', sel);
-      x.setAttribute('aria-pressed', String(sel));
-    }
-  });
-  exprBtns.appendChild(b);
-}
-// Speak: word-boundary driven visemes (the same mapping the library's demo
-// TTS adapter uses: onboundary -> wordAt -> visemeSequenceForWord, walked at
-// 75 ms per viseme). When the browser/voice emits no boundary events, a
-// pre-chunked word walker keeps the mouth tracking the text on a timer.
-const saybar = document.createElement('div');
-saybar.id = 'saybar';
-const sayInput = document.createElement('input');
-sayInput.type = 'text';
-sayInput.setAttribute('aria-label', 'Text to speak');
-sayInput.maxLength = 240;
-sayInput.placeholder = 'type something for it to say...';
-const speakBtn = document.createElement('button');
-speakBtn.type = 'button';
-speakBtn.id = 'speakBtn';
-speakBtn.textContent = 'speak';
-
-const hqVoiceBtn = document.createElement('button');
-hqVoiceBtn.type = 'button';
-hqVoiceBtn.id = 'hqVoiceBtn';
-hqVoiceBtn.textContent = 'Load HQ voice';
-hqVoiceBtn.setAttribute('aria-label', 'Load HQ voice');
-
-const voiceStatus = document.createElement('span');
-voiceStatus.id = 'voiceStatus';
-voiceStatus.setAttribute('role', 'status');
-voiceStatus.setAttribute('aria-live', 'polite');
-voiceStatus.className = 'hint';
-voiceStatus.textContent = 'browser voice (zero-download)';
-
-const voiceProgress = document.createElement('progress');
-voiceProgress.id = 'voiceProgress';
-voiceProgress.max = 100;
-voiceProgress.value = 0;
-voiceProgress.hidden = true;
-voiceProgress.setAttribute('aria-label', 'HQ voice loading progress');
-
-saybar.appendChild(sayInput);
-saybar.appendChild(speakBtn);
-saybar.appendChild(hqVoiceBtn);
-saybar.appendChild(voiceProgress);
-saybar.appendChild(voiceStatus);
-quickbar.appendChild(saybar);
-
-hqVoiceBtn.addEventListener('click', async () => {
-  if (hqVoiceBtn.disabled) return;
-  hqVoiceBtn.disabled = true;
-  hqVoiceBtn.setAttribute('aria-busy', 'true');
-  voiceProgress.hidden = false;
-  voiceProgress.value = 0;
-  voiceStatus.textContent = 'loading hq voice...';
-  let attemptAdapter = null;
-  try {
-    await audioEngine.resumeFromGesture();
-    const { createKokoroTTSAdapter } = await import('../src/speech/index.ts');
-    const customLoader = window.__kokoroLoader;
-    const customDevice = window.__kokoroDevice;
-    attemptAdapter = createKokoroTTSAdapter({
-      ...(customLoader ? { loader: customLoader } : {}),
-      ...(customDevice ? { device: customDevice } : {}),
-      onProgress: (p) => {
-        if (typeof p.progress === 'number') {
-          voiceProgress.value = Math.min(100, Math.round(p.progress));
+      // --- hud ---------------------------------------------------------
+      const hud = document.getElementById('hud');
+      let last = 0;
+      const frames = [];
+      function tick(now) {
+        if (cycleStart) {
+          const t = (now - cycleStart) / CYCLE_MS;
+          if (t >= 1) {
+            cycleStart = 0;
+            cycleBtn?.classList.remove('on');
+            setMelt(0);
+          } else {
+            setMelt(Math.round((1 - Math.abs(1 - t * 2)) * 200) / 200);
+          }
         }
-      },
-    });
-    await attemptAdapter.load();
-    hqBaseAdapter = attemptAdapter;
-    attemptAdapter = null;
-    setSpeechAdapter(hqBaseAdapter, true);
-    voiceStatus.textContent = 'hq voice ready (Kokoro-82M)';
-    hqVoiceBtn.textContent = 'HQ voice ready';
-    hqVoiceBtn.disabled = true;
-    hqVoiceBtn.removeAttribute('aria-busy');
-    voiceProgress.hidden = true;
-  } catch {
-    if (attemptAdapter) {
-      attemptAdapter.dispose();
-      attemptAdapter = null;
-    }
-    if (hqBaseAdapter) {
-      hqBaseAdapter.dispose();
-      hqBaseAdapter = null;
-    }
-    setSpeechAdapter(demoBaseAdapter, false);
-    voiceStatus.textContent = 'hq voice load failed: browser voice restored';
-    hqVoiceBtn.textContent = 'Retry loading HQ voice';
-    hqVoiceBtn.disabled = false;
-    hqVoiceBtn.removeAttribute('aria-busy');
-    voiceProgress.hidden = true;
-  }
-});
-
-async function startSpeak() {
-  const gen = ++speech.gen;
-  if (state.speaking || speechEngine.speaking) {
-    state.speakUntil = 0;
-    clearTappedWeights();
-    speechEngine.cancel();
-    return;
-  }
-  const text = sayInput.value.trim() || 'hologlyph is a web native text skinned talking head.';
-  const now = performance.now() / 1000;
-  clearTappedWeights();
-
-  speech.seq = []; speech.sawBoundary = false;
-  speech.words = text.split(/\s+/).filter(Boolean).map(visemeSequenceForWord);
-  speech.wordIdx = 0; speech.nextWordAt = now + 0.25; speech.boundaryAt = now;
-  state.speakUntil = now + Math.min(60, Math.max(3.0, text.length * 0.15));
-
-  try {
-    await speechEngine.speak(text);
-    if (gen === speech.gen) {
-      state.speakUntil = 0;
-      clearTappedWeights();
-    }
-  } catch {
-    if (gen === speech.gen) {
-      state.speakUntil = 0;
-      clearTappedWeights();
-    }
-    if (activeAdapterKind === 'kokoro') {
-      if (hqBaseAdapter) {
-        hqBaseAdapter.dispose();
-        hqBaseAdapter = null;
+        if (last) {
+          frames.push(now - last);
+          if (frames.length > 120) frames.shift();
+        }
+        last = now;
+        if (frames.length === 120 && now % 500 < 20) {
+          const mean = frames.reduce((a, b) => a + b, 0) / frames.length;
+          hud.textContent = `${mean.toFixed(1)} ms  ${(1000 / mean).toFixed(0)} fps${frozen ? '  frozen' : ''}`;
+        }
+        requestAnimationFrame(tick);
       }
-      setSpeechAdapter(demoBaseAdapter, false);
-      voiceStatus.textContent = 'synthesis failed: browser voice restored';
-      hqVoiceBtn.textContent = 'Retry loading HQ voice';
-      hqVoiceBtn.disabled = false;
-      hqVoiceBtn.removeAttribute('aria-busy');
-      startSpeak();
-    }
-  }
-}
-speakBtn.addEventListener('click', startSpeak);
-sayInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startSpeak(); });
-const gPre = group('presets + export');
-const btns = document.createElement('div'); btns.className = 'btns'; gPre.appendChild(btns);
-const PRESETS = {
-  'V0 baseline': { baseOpacity: 0.02, lipsOp: 0, noseOp: 0, jawOp: 0, orbitOp: 0, browOp: 0, socketShadow: 0, socketSize: 1, cavity: 0, lipDark: 0, lipHue: 0, lipGate: 1, eyelid: 0, brow: 0, browGate: 1, tone: 0.25, toneAmt: 0, skinWarm: 0, rim: 0.12, glowGain: 1.9, scleraGlow: 0, irisGlow: 0 },
-  'V5 zones': { baseOpacity: 0.02, lipsOp: 0.30, noseOp: 0.30, jawOp: 0.10, orbitOp: 0.15, browOp: 0.05, socketShadow: 0.8, socketSize: 1, cavity: 0.45, lipDark: 0.5, lipHue: 0.6, lipGate: 1.4, eyelid: 0.5, brow: 0.3, browGate: 2.2, tone: 0.25, toneAmt: 0.85, skinWarm: 0.2, rim: 0.12, glowGain: 1.9, scleraGlow: 0, irisGlow: 1.4 },
-  'V6 zones+': { baseOpacity: 0.03, lipsOp: 0.45, noseOp: 0.45, jawOp: 0.18, orbitOp: 0.25, browOp: 0.10, socketShadow: 1, socketSize: 1.1, cavity: 0.55, lipDark: 0.6, lipHue: 0.75, lipGate: 1.6, eyelid: 0.6, brow: 0.35, browGate: 2.4, tone: 0.3, toneAmt: 0.9, skinWarm: 0.3, rim: 0.14, glowGain: 2.1, scleraGlow: 0.15, irisGlow: 1.8 },
-  'Owner 07-21': { baseOpacity: 0.075, lipsOp: 0.32, noseOp: 0.38, jawOp: 0.21, orbitOp: 0.15, browOp: 0, socketShadow: 0.64, socketMask: 1, socketSize: 1, cavity: 0.45, lipDark: 0.5, lipHue: 0.6, lipGate: 1.4, eyelid: 0.5, brow: 0.3, browGate: 2.2, glyphScale: 0.79, hDensity: 2, vDensity: 2, sharp: 5.5, tone: 0.21, toneAmt: 0.65, skinWarm: 0, rim: 0.065, glowGain: 0.55, eyeDensity: 300, scleraGlow: 0.51, irisGlow: 2.35, eyePresence: 0.74, pupil: 0.24, flowDir: 1, irisSize: 0.43 },
-};
-for (const [name, p] of Object.entries(PRESETS)) {
-  const b = document.createElement('button'); b.textContent = name;
-  b.addEventListener('click', () => { for (const [k, v] of Object.entries(p)) { if (U[k] !== undefined) U[k].value = v; if (sliders[k]) { sliders[k].value = v; sliders[k].dispatchEvent(new Event('input')); } } });
-  btns.appendChild(b);
-}
-const exp = document.createElement('button'); exp.textContent = 'copy config JSON';
-exp.addEventListener('click', async () => {
-  const cfg = { scrollSpeed: state.scrollSpeed, expression: state.expression };
-  for (const [k, u] of Object.entries(U)) {
-    if (k === 'scroll') continue;
-    cfg[k] = u.value?.isColor ? `#${u.value.getHexString()}` : +(+u.value).toFixed(3);
-  }
-  const json = JSON.stringify(cfg, null, 2);
-  console.log(json);
-  try { await navigator.clipboard.writeText(json); document.getElementById('status').textContent = 'config copied to clipboard (also in console)'; }
-  catch { document.getElementById('status').textContent = 'config in console (clipboard blocked)'; }
-});
-gPre.appendChild(exp);
-
-// ---- resize + loop ----
-function resize() {
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (w === 0 || h === 0) return;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-}
-new ResizeObserver(resize).observe(document.getElementById('stage')); resize();
-
-const THINK = { yaw: 0.22, pitch: -0.14, lookX: 0.30, lookY: 0.26, speedMul: 4 };
-let last = performance.now();
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now; const t = now / 1000;
-  state.speaking = t < (state.speakUntil || 0);
-  speakBtn.classList.toggle('active', state.speaking);
-  speakBtn.setAttribute('aria-pressed', String(state.speaking));
-
-  const tgt = state.thinking
-    ? { yaw: THINK.yaw, pitch: THINK.pitch, roll: 0, lookX: THINK.lookX, lookY: THINK.lookY, speed: state.scrollSpeed * THINK.speedMul }
-    : { yaw: state.yaw, pitch: state.pitch, roll: state.roll, lookX: state.lookX, lookY: state.lookY, speed: state.scrollSpeed };
-  const k = 1 - Math.exp(-dt * 8);
-  for (const key of ['yaw', 'pitch', 'roll', 'lookX', 'lookY', 'speed']) cur[key] += (tgt[key] - cur[key]) * k;
-  U.scroll.value += cur.speed * dt;
-
-  let iy = 0, ip = 0, ir = 0, blink = state.blinkHold || 0;
-  if (state.idle) {
-    const pose = idle.update(dt, t, state.speaking);
-    ip = pose.pitch; iy = pose.yaw; ir = pose.roll; blink = Math.max(blink, pose.blink);
-  }
-  // Whole-bust turn: rig weights are rigid to the head joint (see hint).
-  if (bones.head && restHead) bones.head.rotation.set(restHead.x + cur.pitch + ip, restHead.y + cur.yaw + iy, restHead.z + cur.roll + ir);
-  if (bones.eyeL) bones.eyeL.rotation.set(-cur.lookY, cur.lookX, 0);
-  if (bones.eyeR) bones.eyeR.rotation.set(-cur.lookY, cur.lookX, 0);
-
-  // Expressions ease toward the semantic target (real map from src/motion).
-  exprCur = lerpWeights(exprCur, exprTarget, Math.min(1, dt * 6));
-
-  // Current viseme from the word-boundary cursor (75 ms per viseme). Silence
-  // (past the end of a word's sequence) closes the mouth between words.
-  let visemeName = null;
-  if (state.speaking && activeAdapterKind === 'browser') {
-    if (!speech.sawBoundary && t >= speech.nextWordAt && speech.wordIdx < speech.words.length) {
-      speech.seq = speech.words[speech.wordIdx++];
-      speech.boundaryAt = t;
-      speech.nextWordAt = t + speech.seq.length * VISEME_MS + 0.12;
-    }
-    const idx = Math.floor((t - speech.boundaryAt) / VISEME_MS);
-    if (idx >= 0 && idx < speech.seq.length) visemeName = speech.seq[idx];
-  }
-  const speechWeight = (name) =>
-    activeAdapterKind === 'kokoro' ? (tappedWeights[name] ?? 0) : (visemeName === name ? 1 : 0);
-  const tongueTargets = {
-    tongue_up: Math.max(speechWeight('viseme_dd'), speechWeight('viseme_nn'), speechWeight('viseme_ss')),
-    tongue_out: speechWeight('viseme_th'),
-    tongue_back: speechWeight('viseme_kk'),
-  };
-  for (const m of morphMeshes) {
-    const dict = m.morphTargetDictionary; if (!dict) continue;
-    for (const [name, w] of Object.entries(exprCur)) {
-      const idx = dict[name]; if (idx === undefined) continue;
-      let target = w;
-      if (name === 'exp_blink') target = Math.max(w, blink);
-      m.morphTargetInfluences[idx] += (target - m.morphTargetInfluences[idx]) * Math.min(1, dt * 10);
-    }
-    for (const vn of RIG_VISEME_MORPHS) {
-      if (vn === 'viseme_sil') continue;
-      const idx = dict[vn]; if (idx === undefined) continue;
-      let target = 0;
-      if (activeAdapterKind === 'kokoro') {
-        target = (tappedWeights[vn] ?? 0) * state.speakGain;
-      } else {
-        target = vn === visemeName ? state.speakGain : 0;
-      }
-      const curW = m.morphTargetInfluences[idx];
-      const tc = target > curW ? 0.05 : 0.12;
-      m.morphTargetInfluences[idx] += (target - curW) * Math.min(1, dt / tc);
-    }
-    for (const name of RIG_TONGUE_MORPHS) {
-      const idx = dict[name]; if (idx === undefined) continue;
-      const target = tongueTargets[name] * state.speakGain;
-      const current = m.morphTargetInfluences[idx];
-      const timeConstant = target > current ? 0.05 : 0.12;
-      m.morphTargetInfluences[idx] += (target - current) * Math.min(1, dt / timeConstant);
-    }
-  }
-  const sourceMorphs = morphMeshes[0]?.morphTargetInfluences;
-  const targetMorphs = coreMesh?.morphTargetInfluences;
-  if (sourceMorphs && targetMorphs) {
-    for (let i = 0; i < sourceMorphs.length; i++) targetMorphs[i] = sourceMorphs[i];
-  }
-
-  controls.update();
-  renderer.renderAsync(scene, camera);
-  requestAnimationFrame(frame);
-}
-// Debug/capture handle for smoke scripts (lab-only scaffolding).
-window.__lab = {
-  camera, controls, bones, U, state, THREE, scene, skin, headMat, blendMaskMat, morphMeshes,
-  uLegacyProjection,
-  speech: {
-    get activeKind() { return activeAdapterKind; },
-    get hqLoaded() { return Boolean(hqBaseAdapter?.loaded); },
-    get frameWeights() { return { ...tappedWeights }; },
-    get speaking() { return state.speaking || speechEngine.speaking; },
-    get lastFrameWasSilence() { return lastFrameWasSilence; },
-  },
-};
-let isDisposed = false;
-function disposeAll() {
-  if (isDisposed) return;
-  isDisposed = true;
-  speechEngine.dispose();
-  if (hqBaseAdapter) {
-    hqBaseAdapter.dispose();
-    hqBaseAdapter = null;
-  }
-  demoBaseAdapter.dispose();
-  audioEngine.dispose();
-}
-window.addEventListener('beforeunload', disposeAll);
-
-// Landing shell: the tuning panel is hidden by default; "tune" (or ?tune in
-// the URL) opens it. Resize fires so the canvas reclaims/yields the width.
-const tuneBtn = document.getElementById('tuneBtn');
-function setTuning(on) {
-  document.body.classList.toggle('tuning', on);
-  tuneBtn.classList.toggle('active', on);
-  resize();
-}
-tuneBtn.addEventListener('click', () => setTuning(!document.body.classList.contains('tuning')));
-if (/[?#&]tune/.test(location.search + location.hash)) setTuning(true);
-document.getElementById('status').textContent = 'live - drag to orbit';
-requestAnimationFrame(frame);
-</script>
-</body>
+      requestAnimationFrame(tick);
+    </script>
+  </body>
 </html>

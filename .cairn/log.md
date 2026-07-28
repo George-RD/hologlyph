@@ -185,3 +185,4 @@
 - scan: nodes=16, findings=4, errors=0
 - scan: nodes=16, findings=5, errors=0
 - scan: nodes=16, findings=5, errors=0
+- scan: nodes=16, findings=7, errors=0
