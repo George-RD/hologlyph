@@ -68,3 +68,23 @@ edge tearing while the head moves or the page scrolls, inside the 1 ms budget,
 and an unchanged look when the feature is absent. Real Safari is unverified for
 the backdrop-root leg, because headless WebKit composites no `backdrop-filter`
 at all and this host cannot photograph a real one.
+
+## Ruling 2026-07-27
+
+Judged in `demo/compositor-lab.html` and rejected on shape
+(`src.owner-look-2026-07-27`):
+
+> "its just a weird patch behind the head? though i do see objects on the page
+> through the head, so thats working well"
+
+The content works; the silhouette it is clipped to does not. The cause is the
+hull halo already recorded above: the 20 to 40 point budget leaves the polygon
+27 to 41 per cent larger in area than the true silhouette, so the frost reads
+as a patch behind the head rather than as the head.
+
+`compositor.amount` stays 0. Tightening the hull is `todo.silhouette-hull-halo`
+and needs a decision superseding the point budget in
+`todo.liquid-glass-silhouette-hull`, plus an asset rebake.
+
+Separately, in the ladder lab the owner preferred the lens over this rung,
+which is the outcome `dec.liquid-glass-rung-exclusion` already encodes.

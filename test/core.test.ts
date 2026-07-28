@@ -93,6 +93,12 @@ interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
     carrier: readonly [number, number, number];
   }>;
   stageColliderCalls: StageCollider[][];
+  bodyExtents: Array<readonly [number, number]>;
+  /** One entry per `createSkinMaterial` call: the three passes and their dispose counts. */
+  skinPassSets: Array<{
+    passes: { front: THREE.Material; interior: THREE.Material; mask: THREE.Material };
+    disposals: { front: number; interior: number; mask: number };
+  }>;
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -377,10 +383,43 @@ vi.mock('../src/shaders', async () => ({
       },
       rootOffsetY: 0,
       clippingPlane: new THREE.Plane(),
+      skinPassSets: [],
       createSkinMaterial() {
-        const front =
-          h.skinMaterialOverride ?? ({ isSkin: true, dispose() {} } as unknown as THREE.Material);
-        return { front, interior: { isInterior: true, dispose() {} } as unknown as THREE.Material };
+        // Disposal is the point of this fake, not just the shape: the mask
+        // moved out of the core into `buildSkinMaterial`, so the engine must
+        // now dispose all three passes exactly once and detach them first.
+        const disposals = { front: 0, interior: 0, mask: 0 };
+        const override = h.skinMaterialOverride;
+        const front = (override ??
+          ({ isSkin: true } as unknown as THREE.Material)) as THREE.Material & {
+          dispose(): void;
+        };
+        front.dispose = () => {
+          disposals.front++;
+        };
+        const passes = {
+          front,
+          interior: {
+            isInterior: true,
+            dispose() {
+              disposals.interior++;
+            },
+          } as unknown as THREE.Material,
+          // Mirrors what `buildSkinMaterial` actually configures, since the
+          // engine now takes the mask from there rather than building one.
+          // `test/shaders.test.ts` pins the real material's flags.
+          mask: {
+            isMask: true,
+            colorWrite: false,
+            depthWrite: true,
+            depthTest: true,
+            dispose() {
+              disposals.mask++;
+            },
+          } as unknown as THREE.Material,
+        };
+        this.skinPassSets.push({ passes, disposals });
+        return passes;
       },
       createEyeballMaterial() {
         return { isEyeball: true, dispose() {} } as unknown as THREE.Material;
@@ -401,6 +440,7 @@ vi.mock('../src/shaders', async () => ({
           interior: { ...this._headConfig.interior, ...config.interior },
           lens: { ...this._headConfig.lens, ...config.lens },
           fluid: { ...this._headConfig.fluid, ...config.fluid },
+          melt: { ...this._headConfig.melt, ...config.melt },
           stage: { ...this._headConfig.stage, ...config.stage },
           compositor: { ...this._headConfig.compositor, ...config.compositor },
         };
@@ -426,6 +466,10 @@ vi.mock('../src/shaders', async () => ({
       stageColliderCalls: [],
       setStageColliders(colliders: readonly StageCollider[]) {
         this.stageColliderCalls.push(colliders.map((c) => ({ ...c })));
+      },
+      bodyExtents: [],
+      setBodyExtent(minY: number, maxY: number) {
+        this.bodyExtents.push([minY, maxY]);
       },
       stageFlow: new Float32Array(FLUID_PARTICIPANT_MODES * 3),
       update() {},
@@ -2479,5 +2523,193 @@ describe('live lens selection (dec.liquid-glass-architecture, item 5)', () => {
 
     warn.mockRestore();
     engine.dispose();
+  });
+});
+
+describe('melt (dec.liquid-glass-melt)', () => {
+  /** A body with real bind-space positions, so the profile has an extent. */
+  function makeMeasurableAvatar(ys: readonly number[]): {
+    group: THREE.Group;
+    body: THREE.Mesh;
+  } {
+    const positions = new Float32Array(ys.length * 3);
+    for (let i = 0; i < ys.length; i++) {
+      positions[i * 3] = 0.1;
+      positions[i * 3 + 1] = ys[i] ?? 0;
+      positions[i * 3 + 2] = -0.05;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const body = new THREE.Mesh(geometry, { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  function overrideAvatar(group: THREE.Group, body: THREE.Mesh): void {
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+  }
+
+  it('measures the loaded body once and hands the VFX engine its own extent', async () => {
+    const ys = [-0.35, 0, 0.8, 1.72];
+    const { group, body } = makeMeasurableAvatar(ys);
+    overrideAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const vfx = h.registry.vfx.at(-1);
+    expect(vfx?.bodyExtents).toHaveLength(1);
+    // The rig's own numbers, not the shipped bust's: a replacement body must
+    // not silently inherit another one's extent. Compared at float32
+    // precision, because the profile is read back through a Float32Array.
+    const extent = vfx?.bodyExtents[0];
+    expect(extent?.[0]).toBeCloseTo(Math.min(...ys), 6);
+    expect(extent?.[1]).toBeCloseTo(Math.max(...ys), 6);
+
+    engine.dispose();
+  });
+
+  it('reports a zero extent for a body with no positions, which leaves the melt inert', async () => {
+    const body = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    overrideAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    expect(h.registry.vfx.at(-1)?.bodyExtents).toEqual([[0, 0]]);
+
+    engine.dispose();
+  });
+
+  it('keeps the shipped passes in place at full melt', async () => {
+    const { group, body } = makeMeasurableAvatar([-0.35, 0.4, 1.72]);
+    overrideAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const authored = new Set<THREE.Object3D>([body]);
+    const before = group.children.filter((child) => !authored.has(child)).length;
+
+    // The melt is a uniform write, not a rebuild: nothing is torn down or
+    // reconstructed when it opens, unlike the pool and the interior field.
+    expect(() => engine.vfx.setHeadConfig({ melt: { amount: 1 } })).not.toThrow();
+    expect(engine.vfx.headConfig.melt.amount).toBe(1);
+    expect(group.children.filter((child) => !authored.has(child))).toHaveLength(before);
+
+    engine.dispose();
+  });
+});
+
+describe('skin pass ownership (dec.liquid-glass-melt)', () => {
+  /**
+   * The occlusion mask moved out of the core and into `buildSkinMaterial`,
+   * because it has to carry the same displacement the visible passes do. Its
+   * dispose moved with it. These are the two ways the move can go wrong: a
+   * pass never disposed, or a pass disposed twice while its uniform set is
+   * still live.
+   */
+  function bodyAvatar(): { group: THREE.Group; body: THREE.Mesh } {
+    const body = new THREE.Mesh(new THREE.BufferGeometry(), { name: 'bust' } as THREE.Material);
+    body.morphTargetDictionary = { jaw_open: 0 };
+    body.morphTargetInfluences = [0];
+    const group = new THREE.Group();
+    group.add(body);
+    return { group, body };
+  }
+
+  function useAvatar(group: THREE.Group, body: THREE.Mesh): void {
+    h.avatarOverride = {
+      root: group,
+      morphMeshes: [body],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+  }
+
+  it('disposes all three passes exactly once when the engine is torn down', async () => {
+    const { group, body } = bodyAvatar();
+    useAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const set = h.registry.vfx.at(-1)?.skinPassSets.at(-1);
+    expect(set, 'a skin pass set was built').toBeDefined();
+    expect(set?.disposals).toEqual({ front: 0, interior: 0, mask: 0 });
+
+    engine.dispose();
+    expect(set?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+
+    // Repeated teardown must not dispose a second time.
+    engine.dispose();
+    expect(set?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+  });
+
+  it('detaches the overlay meshes before disposing the passes they draw with', async () => {
+    const { group, body } = bodyAvatar();
+    useAvatar(group, body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const overlays = group.children.filter((child) => child !== body);
+    expect(overlays.length, 'mask and interior overlays are in the tree').toBe(2);
+
+    engine.dispose();
+    // Detach is the overlay teardown's only job now; the materials are the
+    // skin lifecycle's. A mesh left parented would keep its geometry reachable.
+    for (const overlay of overlays) expect(overlay.parent).toBeNull();
+  });
+
+  it('retires the outgoing passes when the avatar is replaced, and only those', async () => {
+    const first = bodyAvatar();
+    useAvatar(first.group, first.body);
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    const host = document.createElement('div');
+    await engine.mount(document.createElement('canvas'), host);
+
+    const vfx = h.registry.vfx.at(-1);
+    const outgoing = vfx?.skinPassSets.at(-1);
+    expect(outgoing?.disposals).toEqual({ front: 0, interior: 0, mask: 0 });
+
+    // A second mount runs `replaceAvatar`, which is the only path to it.
+    const second = bodyAvatar();
+    useAvatar(second.group, second.body);
+    await engine.mount(document.createElement('canvas'), host);
+
+    const incoming = vfx?.skinPassSets.at(-1);
+    expect(incoming, 'a fresh pass set was built for the new body').not.toBe(outgoing);
+    // All three of the old set go, together, once. The new set is untouched:
+    // retiring it here would leave the live head without scroll or config.
+    expect(outgoing?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+    expect(incoming?.disposals).toEqual({ front: 0, interior: 0, mask: 0 });
+
+    engine.dispose();
+    expect(incoming?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
+    expect(outgoing?.disposals).toEqual({ front: 1, interior: 1, mask: 1 });
   });
 });

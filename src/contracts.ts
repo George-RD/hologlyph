@@ -494,6 +494,44 @@ export interface HeadFluidConfig {
 }
 
 /**
+ * The melt (`dec.liquid-glass-melt`): the head collapsing to a puddle and
+ * rising back. A displacement on the real bust, a function of bind-space
+ * height alone, so the rig, the authored visemes, the glyphs and the glass all
+ * survive it and it runs on WebGL2.
+ *
+ * This supersedes `fluid` as the liquid direction. Tier 3's modal solver was
+ * judged on 2026-07-27 and read as a gravity bulge rather than as liquid
+ * (`src.owner-look-2026-07-27`); a shape change is what was actually wanted.
+ *
+ * `amount` is a hard gate, not a fade: at 0 the map is an exact identity, the
+ * shading normal stays on the shipped chain, and the approved configuration is
+ * reproduced bit for bit rather than approximated.
+ *
+ * The melt runs in BIND space, so a head that is yawed carries its puddle
+ * round with it. That is a known limit of the spike, not a bug to work around
+ * in a host (`dec.liquid-glass-melt`, Consequences).
+ */
+export interface HeadMeltConfig {
+  /** Master gate; 0 is the shipped head, bit for bit. */
+  readonly amount: number;
+  /**
+   * Radial spread at the crown when fully melted, as a multiple of the bind
+   * radius. Not volume conserving: this is a look control tuned by eye.
+   */
+  readonly spread: number;
+  /**
+   * Puddle thickness as a fraction of the bust's bind height: the height above
+   * the base of the plane the fully melted body collapses onto.
+   */
+  readonly floor: number;
+  /**
+   * How far the crown lags the base. 0 melts every height together, which
+   * reads as the head shrinking rather than pooling.
+   */
+  readonly lag: number;
+}
+
+/**
  * Stage participants (`dec.liquid-glass-participants`): the opt-in contract
  * that lets the fluid touch the page. A host marks elements it already owns
  * with `data-hologlyph-obstacle` (the fluid is squeezed by it) or
@@ -702,6 +740,7 @@ export interface HeadConfig {
   readonly interior: HeadInteriorConfig;
   readonly lens: HeadLensConfig;
   readonly fluid: HeadFluidConfig;
+  readonly melt: HeadMeltConfig;
   readonly stage: HeadStageConfig;
   readonly compositor: HeadCompositorConfig;
 }
@@ -720,6 +759,7 @@ export type HeadConfigOverrides = {
   interior?: Partial<HeadInteriorConfig>;
   lens?: Partial<HeadLensConfig>;
   fluid?: Partial<HeadFluidConfig>;
+  melt?: Partial<HeadMeltConfig>;
   stage?: Partial<HeadStageConfig>;
   compositor?: Partial<HeadCompositorConfig>;
 };
@@ -827,6 +867,20 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
     crisp: 2,
     reach: 0.6,
   }),
+  // The liquid direction (dec.liquid-glass-melt), and gated exactly as the
+  // others are: at `amount: 0` the map is an exact identity, so this block
+  // moves nothing until an owner ruling says it should. The rest are lab
+  // starting points tuned by eye, not physical constants.
+  //
+  // Literals, not the `MELT_*` constants: this file is the contract spine and
+  // may not import from a runtime module. `test/shaders-melt.test.ts` pins the
+  // two against each other so they cannot drift apart silently.
+  melt: Object.freeze({
+    amount: 0,
+    spread: 1.6,
+    floor: 0.06,
+    lag: 0.55,
+  }),
   // Marked participants are the gate, so these are live the moment a host
   // writes `data-hologlyph-obstacle` on something, and inert on every page
   // that does not (dec.liquid-glass-participants).
@@ -861,6 +915,13 @@ export const DEFAULT_HEAD_CONFIG: HeadConfig = Object.freeze({
 export interface SkinMaterials {
   readonly front: THREE.Material;
   readonly interior: THREE.Material;
+  /**
+   * Depth-only occlusion mask for the body. Built alongside the two visible
+   * passes because it must carry the same vertex displacement they do: a rigid
+   * mask behind a melting body would show the mouth cavity and the eyeballs
+   * through the puddle (`dec.liquid-glass-melt`).
+   */
+  readonly mask: THREE.Material;
 }
 
 export interface VFXEngine extends Disposable {
@@ -914,6 +975,17 @@ export interface VFXEngine extends Disposable {
    * past the collider count are 0.
    */
   readonly stageFlow: Float32Array;
+  /**
+   * Bind-space vertical extent of the loaded body, for the melt map
+   * (`dec.liquid-glass-melt`). The melt is a function of normalised height, and
+   * the shader cannot derive the bust's extent: there is no spare vertex
+   * attribute for it and both interleaved buffers are full. So the core
+   * measures it once at avatar load and pushes it here.
+   *
+   * A replacement avatar is measured on its own terms rather than inheriting
+   * the shipped bust's numbers. A degenerate extent leaves the melt inert.
+   */
+  setBodyExtent(minY: number, maxY: number): void;
   update(dt: number): void;
   /** Shorten or snap emergence ramps when reduced motion is requested. */
   setReducedMotion(reduced: boolean): void;

@@ -70,3 +70,19 @@ byte-comparable to today. At 1 the head visibly flows, sags, and wobbles. Speech
 runs at every setting with visemes unaffected, verified against the existing
 viseme e2e fixture. Glyphs stay welded to the skin throughout. `bun run eval`
 overall pass at `f = 0`.
+
+## MISSED 2026-07-27
+
+**MISSED 2026-07-27**. Judged in `demo/fluid-lab.html` and ruled against by the
+owner (`src.owner-look-2026-07-27`):
+
+> "i turn on liquid, and its just like a gravity effect? and it all bulges"
+
+`fluid.amount` stays 0. The melt in `dec.liquid-glass-melt` supersedes tier 3 as
+the liquid direction: the owner wants the head to collapse to a puddle and rise
+back, which a damped modal perturbation of the rig cannot produce at any
+setting.
+
+Nothing here is deleted. The per-zone mask, the normal-gate pattern, and the
+displacement seam in `src/shaders/materials.ts` are exactly what the melt
+composes onto.

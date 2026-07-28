@@ -53,3 +53,17 @@ extra capability is an attribute on markup the host already controls.
 Acceptance: with two or three participants declared, the pool and head visibly
 collide with and flow around them while scrolling; with none declared, no
 measurable cost and no behaviour change; no layout thrash in the profiler.
+
+## MISSED 2026-07-27
+
+**MISSED 2026-07-27**. Judged in `demo/stage-lab.html` and ruled against by the
+owner (`src.owner-look-2026-07-27`):
+
+> "the bumping into objects is a bit weird, and doesnt hit the mark"
+
+`stage.amount` stays 0. The melt in `dec.liquid-glass-melt` supersedes tier 3,
+and with it this item's coupling, as the liquid direction.
+
+The collider plumbing is kept deliberately. The owner's second ask, "make the
+head squeeze and move between things", is the melt driven by these same
+colliders, and it is built once the melt itself is approved.
