@@ -186,3 +186,9 @@
 - scan: nodes=16, findings=5, errors=0
 - scan: nodes=16, findings=5, errors=0
 - scan: nodes=16, findings=7, errors=0
+- scan: nodes=16, findings=7, errors=0
+- archive: liquid-head-melt merged; no operations
+- scan: nodes=16, findings=6, errors=0
+- archive: head-studio merged; no operations
+- scan: nodes=16, findings=5, errors=0
+- archive: demo-consolidation merged; no operations
