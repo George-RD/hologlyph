@@ -164,32 +164,37 @@ function resolveInteriorBody(mesh: THREE.Mesh, avatar: LoadedAvatar): InteriorBo
 }
 
 /**
- * Read a body's bind-space positions and its baked thickness into flat
- * arrays, for one sampling pass.
+ * Read a body's bind-space positions, its triangle index and its baked
+ * thickness into flat arrays, for one sampling pass.
  *
- * Through `getX/getY/getZ`, never off `.array`, for the reason
+ * Positions come through `getX/getY/getZ`, never off `.array`, for the reason
  * `poolRadialProfile`'s caller states: a meshopt-compressed GLB hands back an
  * interleaved, quantised attribute whose raw buffer is neither a flat XYZ
- * stream nor in model units. Both arrays are dropped as soon as the sites are
- * sampled, so nothing here is retained for a field that is switched off.
+ * stream nor in model units. The index has no such problem and is read
+ * directly. All three are dropped as soon as the sites are sampled, so nothing
+ * here is retained for a field that is switched off.
  */
 function readInteriorGeometry(mesh: THREE.Mesh): {
   positions: Float32Array;
+  indices: ArrayLike<number> | null;
   thickness: Float32Array | null;
 } {
   const position = mesh.geometry.attributes.position;
-  if (!position) return { positions: new Float32Array(0), thickness: null };
+  if (!position) return { positions: new Float32Array(0), indices: null, thickness: null };
   const positions = new Float32Array(position.count * 3);
   for (let i = 0; i < position.count; i++) {
     positions[i * 3] = position.getX(i);
     positions[i * 3 + 1] = position.getY(i);
     positions[i * 3 + 2] = position.getZ(i);
   }
+  // Null for a non-indexed geometry, whose positions are already triangle soup
+  // and need no index to be read as triangles.
+  const indices = mesh.geometry.index?.array ?? null;
   const baked = mesh.geometry.attributes.aThickness;
-  if (!baked || baked.count !== position.count) return { positions, thickness: null };
+  if (!baked || baked.count !== position.count) return { positions, indices, thickness: null };
   const thickness = new Float32Array(baked.count);
   for (let i = 0; i < baked.count; i++) thickness[i] = baked.getX(i);
-  return { positions, thickness };
+  return { positions, indices, thickness };
 }
 
 const DEFAULT_TEXT =
@@ -1351,10 +1356,11 @@ class EngineImpl implements Engine {
       return;
     }
     if (!this.interiorGlyphs) {
-      const { positions, thickness } = readInteriorGeometry(body.mesh);
+      const { positions, indices, thickness } = readInteriorGeometry(body.mesh);
       const skinned = body.mesh as THREE.SkinnedMesh;
       this.interiorGlyphs = createInteriorGlyphField({
         positions,
+        indices,
         thickness,
         // Sites are sampled in the geometry's bind space; `bindMatrix` is the
         // first factor of three's own skinning chain, and `interiorFrame`

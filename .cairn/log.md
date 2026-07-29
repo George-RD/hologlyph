@@ -192,3 +192,7 @@
 - archive: head-studio merged; no operations
 - scan: nodes=16, findings=5, errors=0
 - archive: demo-consolidation merged; no operations
+- scan: nodes=16, findings=6, errors=0
+- scan: nodes=16, findings=5, errors=0
+- scan: nodes=16, findings=5, errors=0
+- scan: nodes=16, findings=5, errors=0

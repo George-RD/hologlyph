@@ -35,6 +35,7 @@ System Library "Web-native text-skinned talking-head library" id "hologlyph" {
             path "./test/shaders-glass.test.ts"
             path "./test/shaders-pool.test.ts"
             path "./test/shaders-interior.test.ts"
+            path "./test/shaders-interior-field.test.ts"
             path "./test/shaders-fluid.test.ts"
             path "./test/shaders-melt.test.ts"
             contract "meta/contracts/shaders.md"
