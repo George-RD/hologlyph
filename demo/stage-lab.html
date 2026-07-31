@@ -372,9 +372,7 @@
       // leaves the top of the viewport for the copy and puts the shoulders,
       // the widest part of the profile and so the hardest to squeeze past,
       // where a scrolling card can reach them.
-      const camera = engine.sysRenderer.camera;
-      camera.position.set(0, 0.22, 2.5);
-      camera.rotation.set(0, 0, 0);
+      engine.setView({ height: 0.22, distance: 2.5, lookAt: 0.22 });
 
       // --- config ---------------------------------------------------------
       // `fluid.amount` is the gate on the whole feature and `stage.*` is the

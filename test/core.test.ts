@@ -107,6 +107,9 @@ interface FakeRenderer extends RendererHost {
   backend: 'webgpu' | 'webgl2' | 'uninitialized';
   gpuRenderer: unknown;
   setSizeCalls: Array<{ width: number; height: number; pixelRatio?: number }>;
+  renderCameraStates: Array<{ position: THREE.Vector3; fov: number }>;
+
+
 }
 interface FakeAsset extends AssetLoader {
   disposeCount: number;
@@ -554,11 +557,19 @@ vi.mock('../src/renderer', () => ({
       },
       setSize(width: number, height: number, pixelRatio?: number) {
         this.setSizeCalls.push({ width, height, pixelRatio });
+        this.camera.aspect = width / Math.max(1, height);
+        this.camera.updateProjectionMatrix();
       },
+      renderCameraStates: [],
+
+
       setClippingPlane() {},
       renderCount: 0,
       render() {
         this.renderCount++;
+        this.renderCameraStates.push({ position: this.camera.position.clone(), fov: this.camera.fov });
+
+
         // Both real backends refresh the scene graph and the camera's inverse
         // world matrix at the top of `render`. Anything the engine does after
         // the render reads those, so a fake that skips it would let an
@@ -981,6 +992,166 @@ describe('engine resize', () => {
     const renderer = h.registry.renderer.at(-1)!;
     engine.resize(800, 450);
     expect(renderer.setSizeCalls).toEqual([{ width: 800, height: 450, pixelRatio: undefined }]);
+    engine.dispose();
+  });
+});
+
+describe('public camera pose', () => {
+  it('resolves the default pose to the shipped camera position, target, and field of view', () => {
+    const engine = createEngine();
+    const renderer = h.registry.renderer.at(-1)!;
+    const direction = new THREE.Vector3();
+    renderer.camera.updateMatrixWorld();
+
+    renderer.camera.getWorldDirection(direction);
+
+    expect(engine.view).toEqual({ yaw: 0, height: 0.05, distance: 2.4, lookAt: 0, fov: 35 });
+    expect(renderer.camera.position.toArray()).toEqual([0, 0.05, 2.4]);
+    expect(direction.x).toBeCloseTo(0, 12);
+    expect(direction.y).toBeCloseTo(-0.05 / Math.hypot(0, 0.05, 2.4), 12);
+    expect(direction.z).toBeCloseTo(-2.4 / Math.hypot(0, 0.05, 2.4), 12);
+    expect(renderer.camera.fov).toBe(35);
+    engine.dispose();
+  });
+
+  it('merges partial view patches into the live pose', () => {
+    const engine = createEngine();
+
+    engine.setView({ yaw: 0.3 });
+    engine.setView({ distance: 3 });
+
+    expect(engine.view).toEqual({ yaw: 0.3, height: 0.05, distance: 3, lookAt: 0, fov: 35 });
+    engine.dispose();
+  });
+
+  it('refreshes the projection matrix when a view patch changes field of view', () => {
+    const engine = createEngine();
+    const renderer = h.registry.renderer.at(-1)!;
+    const updateProjectionMatrix = vi.spyOn(renderer.camera, 'updateProjectionMatrix');
+
+    engine.setView({ fov: 40 });
+
+    expect(renderer.camera.fov).toBe(40);
+    expect(updateProjectionMatrix).toHaveBeenCalledOnce();
+    engine.dispose();
+  });
+
+  it('positions the camera before aiming it for every changed view', () => {
+    const engine = createEngine();
+    const renderer = h.registry.renderer.at(-1)!;
+    const setPosition = vi.spyOn(renderer.camera.position, 'set');
+    const lookAt = vi.spyOn(renderer.camera, 'lookAt');
+
+    engine.setView({ yaw: 0.3 });
+
+    expect(setPosition).toHaveBeenCalledOnce();
+    expect(lookAt).toHaveBeenCalledOnce();
+    const positionOrder = setPosition.mock.invocationCallOrder[0];
+    const lookAtOrder = lookAt.mock.invocationCallOrder[0];
+    if (positionOrder === undefined || lookAtOrder === undefined) {
+      throw new Error('camera pose calls were not recorded');
+    }
+    expect(positionOrder).toBeLessThan(lookAtOrder);
+    engine.dispose();
+  });
+
+  it('preserves view identity and does not touch the camera for a no-op patch', () => {
+    const engine = createEngine();
+    const renderer = h.registry.renderer.at(-1)!;
+    const previous = engine.view;
+    const setPosition = vi.spyOn(renderer.camera.position, 'set');
+    const lookAt = vi.spyOn(renderer.camera, 'lookAt');
+    const updateProjectionMatrix = vi.spyOn(renderer.camera, 'updateProjectionMatrix');
+
+    engine.setView({ yaw: 0, height: 0.05 });
+
+    expect(engine.view).toBe(previous);
+    expect(setPosition).not.toHaveBeenCalled();
+    expect(lookAt).not.toHaveBeenCalled();
+    expect(updateProjectionMatrix).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('clamps every bounded view value at both ends', () => {
+    const engine = createEngine();
+
+    engine.setView({ distance: -1, height: -3, lookAt: -3, fov: 1 });
+    expect(engine.view).toEqual({ yaw: 0, height: -2, distance: 0.6, lookAt: -2, fov: 10 });
+
+    engine.setView({ distance: 13, height: 4, lookAt: 4, fov: 81 });
+    expect(engine.view).toEqual({ yaw: 0, height: 3, distance: 12, lookAt: 3, fov: 80 });
+    engine.dispose();
+  });
+
+  it('rejects whole mixed patches containing NaN, Infinity, or negative Infinity', () => {
+    const engine = createEngine();
+    const previous = { yaw: 0.3, height: 0.2, distance: 3, lookAt: 0.1, fov: 40 };
+
+    engine.setView(previous);
+    engine.setView({ distance: 6, yaw: Number.NaN });
+    expect(engine.view).toEqual(previous);
+    engine.setView({ distance: 7, height: Number.POSITIVE_INFINITY });
+    expect(engine.view).toEqual(previous);
+    engine.setView({ distance: 8, lookAt: Number.NEGATIVE_INFINITY });
+
+    expect(engine.view).toEqual(previous);
+    engine.dispose();
+  });
+
+  it('wraps yaw across PI into the documented interval', () => {
+    const engine = createEngine();
+
+    engine.setView({ yaw: Math.PI * 3 });
+    expect(engine.view.yaw).toBe(Math.PI);
+    engine.setView({ yaw: -Math.PI });
+    expect(engine.view.yaw).toBe(Math.PI);
+    engine.dispose();
+  });
+
+  it('retains its pose through resize while updating the camera aspect', async () => {
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    const renderer = h.registry.renderer.at(-1)!;
+
+    engine.setView({ yaw: 0.3, distance: 3 });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    engine.resize(800, 450);
+
+    expect(engine.view).toMatchObject({ yaw: 0.3, distance: 3 });
+    expect(renderer.camera.aspect).toBe(800 / 450);
+    expect(renderer.camera.position.x).toBeCloseTo(Math.sin(0.3) * 3);
+    engine.dispose();
+  });
+
+  it('retains its pose through an avatar replacement', async () => {
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    const renderer = h.registry.renderer.at(-1)!;
+    const firstCanvas = document.createElement('canvas');
+    const secondCanvas = document.createElement('canvas');
+    const host = document.createElement('div');
+
+    engine.setView({ yaw: 0.3, height: 0.2, distance: 3, lookAt: 0.1, fov: 40 });
+    await engine.mount(firstCanvas, host);
+    await engine.mount(secondCanvas, host);
+
+    expect(engine.view).toEqual({ yaw: 0.3, height: 0.2, distance: 3, lookAt: 0.1, fov: 40 });
+    expect(renderer.camera.position.x).toBeCloseTo(Math.sin(0.3) * 3);
+    expect(renderer.camera.fov).toBe(40);
+    engine.dispose();
+  });
+
+  it('applies the initial view before the first render', async () => {
+    const engine = createEngine({ avatarUrl: 'fake.glb', view: { height: 0.2, distance: 3, fov: 40 } });
+    const renderer = h.registry.renderer.at(-1)!;
+
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    expect(renderer.renderCount).toBe(0);
+    rafCb?.(16);
+
+    expect(renderer.renderCameraStates).toEqual([
+      { position: new THREE.Vector3(0, 0.2, 3), fov: 40 },
+    ]);
+    expect(engine.view).toEqual({ yaw: 0, height: 0.2, distance: 3, lookAt: 0, fov: 40 });
     engine.dispose();
   });
 });
