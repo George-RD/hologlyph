@@ -22,6 +22,12 @@ engine.on('error', (err) => {
 });
 
 void engine.mount(canvas, host);
+const resize = (): void => {
+  engine.resize(Math.max(1, canvas.clientWidth), Math.max(1, canvas.clientHeight));
+};
+const resizeObserver = new ResizeObserver(resize);
+resizeObserver.observe(canvas);
+resize();
 // Expose the live engine for headless eval harnesses (tools/evals). This is a
 // demo-only debug hook; the production library never sets window globals.
 if (typeof window !== 'undefined') {

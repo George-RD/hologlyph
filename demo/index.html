@@ -26,8 +26,19 @@
         background: #05070d;
       }
 
-      #stage { position: fixed; inset: 0; }
-      #holo { width: 100%; height: 100%; display: block; }
+      /* Render only the usable stage, otherwise the head centres beneath the rail. */
+      #stage {
+        position: fixed;
+        inset: 0;
+        transition: left 0.22s ease;
+      }
+      body.rail-visible #stage { left: var(--rail); }
+      #holo {
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+      }
 
       /* --- rail ------------------------------------------------------- */
       #rail {
@@ -39,12 +50,12 @@
         display: flex;
         flex-direction: column;
         border-right: 1px solid var(--line);
-        background: color-mix(in srgb, var(--panel) 88%, transparent);
-        backdrop-filter: blur(10px);
+        background: var(--panel);
         transition: transform 0.22s ease;
         z-index: 3;
       }
-      body.focus #rail { transform: translateX(calc(-1 * var(--rail))); }
+      #rail { transform: translateX(calc(-1 * var(--rail))); }
+      body.rail-visible #rail { transform: none; }
 
       #railHead { padding: 0.85rem 1rem 0.6rem; border-bottom: 1px solid var(--line); }
       #railHead h1 { font-size: 0.95rem; margin: 0; }
@@ -153,6 +164,7 @@
         color: var(--fg);
         cursor: pointer;
       }
+      .swatches button.active { outline: 2px solid var(--accent); outline-offset: 2px; }
       button:hover { border-color: var(--accent); }
       button.on { border-color: var(--accent); background: rgba(108, 198, 255, 0.16); }
 
@@ -179,7 +191,58 @@
         color: #e6ecff;
         backdrop-filter: blur(6px);
       }
-      body.focus #focus { left: 0.6rem; }
+      body:not(.rail-visible) #focus { left: 0.6rem; }
+      #saybar {
+        position: fixed;
+        top: 3.35rem;
+        left: calc(var(--rail) + 0.6rem);
+        z-index: 4;
+        display: flex;
+        max-width: min(26rem, calc(100vw - 1.2rem));
+        transition: left 0.22s ease;
+      }
+      #saybar input {
+        min-width: 0;
+        flex: 1;
+        padding: 0.28rem 0.55rem;
+        border: 1px solid rgba(230, 236, 255, 0.28);
+        border-radius: 0.3rem 0 0 0.3rem;
+        background: rgba(8, 13, 24, 0.82);
+        color: #e6ecff;
+        font: inherit;
+      }
+      #saybar button {
+        border-radius: 0 0.3rem 0.3rem 0;
+        background: rgba(8, 13, 24, 0.9);
+      }
+      #saybar.speaking button { border-color: var(--accent); }
+      body:not(.rail-visible) #saybar { left: 0.6rem; }
+      #stageHint {
+        position: fixed;
+        top: 6.1rem;
+        left: calc(var(--rail) + 0.6rem);
+        z-index: 4;
+        color: var(--dim);
+        font-size: 0.72rem;
+        transition: left 0.22s ease, opacity 0.15s ease;
+        pointer-events: none;
+      }
+      #stageHint.used { opacity: 0; }
+      body:not(.rail-visible) #stageHint { left: 0.6rem; }
+      .srOnly {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      body.measuring #focus,
+      body.measuring #saybar,
+      body.measuring #stageHint { visibility: hidden; }
 
       /* Same reasoning as the focus chip: it sits over the stage, and the
          stage colour is now user-chosen. */
@@ -206,6 +269,13 @@
       focus
     </button>
 
+    <form id="saybar" aria-label="Make the head speak">
+      <label class="srOnly" for="say">Text to speak</label>
+      <input id="say" name="say" type="text" maxlength="240" aria-label="Text to speak" autocomplete="off" placeholder="Say something…" />
+      <button id="speak" type="submit" aria-pressed="false">Speak</button>
+    </form>
+    <div id="stageHint">Drag to orbit · wheel to frame · double-click to reset</div>
+
     <div id="rail">
       <div id="railHead">
         <h1>hologlyph studio</h1>
@@ -227,9 +297,13 @@
       await engine.mount(canvas, stage);
       engine.setScrollProgress(1);
 
-      const resize = () => engine.resize(stage.clientWidth, stage.clientHeight);
-      window.addEventListener('resize', resize);
-      resize();
+const resizeStage = () => {
+  const { width, height } = stage.getBoundingClientRect();
+  engine.resize(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+};
+const stageResize = new ResizeObserver(resizeStage);
+stageResize.observe(stage);
+resizeStage();
 
       // ================================================================
       // Control schema.
@@ -253,6 +327,12 @@
           tier: 'live',
           groups: [
             {
+              title: 'Framing',
+              open: true,
+              note: 'camera pose',
+              controls: [{ kind: 'view' }],
+            },
+            {
               title: 'Backdrop',
               open: true,
               note: 'what you judge glass against',
@@ -262,17 +342,17 @@
               ],
             },
             {
-              title: 'Glass',
+              title: 'Look',
               open: true,
               controls: [
                 { path: 'skin.glass.amount', label: 'glass', min: 0, max: 1, step: 0.01 },
                 { path: 'skin.glass.tint', label: 'tint', kind: 'color' },
                 { path: 'skin.opacity.base', label: 'presence', min: 0, max: 1, step: 0.005 },
+                { path: 'eyes.irisColor', label: 'iris', kind: 'color' },
               ],
             },
             {
               title: 'Ink and tone',
-              open: true,
               controls: [
                 { path: 'skin.tone.balance', label: 'balance', min: 0, max: 1, step: 0.01 },
                 { path: 'skin.tone.skinWarmth', label: 'warmth', min: 0, max: 1, step: 0.01 },
@@ -289,18 +369,18 @@
             {
               title: 'Eyes',
               controls: [
-                { path: 'eyes.irisColor', label: 'iris', kind: 'color' },
                 { path: 'eyes.scleraColor', label: 'sclera', kind: 'color' },
                 { path: 'eyes.irisSize', label: 'iris size', min: 0.1, max: 0.9, step: 0.01 },
                 { path: 'eyes.presence', label: 'presence', min: 0, max: 1, step: 0.01 },
               ],
             },
-            { title: 'Motion', controls: [{ kind: 'motion' }] },
+            { title: 'Expression', open: true, controls: [{ kind: 'expression' }] },
+            { title: 'Motion', open: true, controls: [{ kind: 'motion' }] },
           ],
         },
         {
           tier: 'advanced',
-          label: 'Advanced',
+          label: 'Fine tune',
           note: 'Per-region trims and shading internals. These were how the approved look was found; they are not day-to-day controls.',
           groups: [
             {
@@ -381,7 +461,7 @@
         },
         {
           tier: 'legacy',
-          label: 'Superseded',
+          label: 'Archive',
           note: 'Cut or missed on 2026-07-27 (src.owner-look-2026-07-27). All gated off. Nothing here is a direction; they are here to A/B against the melt.',
           groups: [
             {
@@ -420,7 +500,7 @@
           // used to be a separate outcomes page. One environment: a ruling you
           // have to open a second URL to read is a ruling nobody reads.
           tier: 'notes',
-          label: 'What was decided, and when',
+          label: 'Rulings and notes',
           groups: [
             {
               title: 'The look session, 2026-07-27',
@@ -456,7 +536,7 @@
               controls: [
                 {
                   kind: 'note',
-                  text: 'No camera framing. It needs EngineImpl.sysRenderer.camera, which is private and not on the Engine contract, so this page goes without rather than widening the contract as a side effect of a demo. todo.public-camera-pose is the prerequisite, and the presentation overhaul in todo.studio-showcase-overhaul depends on it.',
+text: 'Camera framing is available on the public Engine view pose: orbit, height, distance, look-at and field of view persist through resize and avatar replacement. The studio uses Engine.setView and never accesses renderer internals.',
                 },
               ],
             },
@@ -518,14 +598,42 @@
           value: at(engine.vfx.headConfig, spec.path) ?? '#ffffff',
         });
         input.addEventListener('input', () => push(spec.path, input.value));
-        host.append(el('div', { className: 'row' }, [el('label', { textContent: spec.label }), input, el('output')]));
+        host.append(el('div', { className: 'row' }, [
+          el('label', { textContent: spec.label }), input, el('output'),
+        ]));
       }
 
-      // --- the backdrop, which is two writes, not one ------------------
-      // `skin.backdrop` only retunes the ink and glow so the glyphs stay legible
-      // (`adaptToBackdrop`). It does not paint anything. And `auto: true` makes
-      // the engine read the colour off the host at mount, which would overwrite
-      // whatever is set here. So: paint the page, push the colour, and turn
+      const VIEW_SPECS = [
+        { path: 'yaw', label: 'orbit', min: -Math.PI, max: Math.PI, step: 0.01 },
+        { path: 'height', label: 'height', min: -2, max: 3, step: 0.01 },
+        { path: 'distance', label: 'distance', min: 0.6, max: 12, step: 0.01 },
+        { path: 'lookAt', label: 'look-at', min: -2, max: 3, step: 0.01 },
+        { path: 'fov', label: 'field of view', min: 10, max: 80, step: 1 },
+      ];
+      const viewInputs = new Map();
+      function syncViewInputs() {
+        for (const [path, entry] of viewInputs) {
+          const value = engine.view[path];
+          entry.input.value = String(value);
+          entry.out.textContent = fmt(value, entry.spec.step);
+        }
+      }
+      function addView(host) {
+        for (const spec of VIEW_SPECS) {
+          const input = el('input', {
+            type: 'range', min: String(spec.min), max: String(spec.max),
+            step: String(spec.step), value: String(engine.view[spec.path]),
+          });
+          const out = el('output', { textContent: fmt(engine.view[spec.path], spec.step) });
+          input.addEventListener('input', () => {
+            engine.setView({ [spec.path]: Number(input.value) });
+            syncViewInputs();
+          });
+          viewInputs.set(spec.path, { input, out, spec });
+          host.append(el('div', { className: 'row' }, [el('label', { textContent: spec.label }), input, out]));
+        }
+      }
+
       // `auto` off so the push sticks.
       function setBackdrop(color) {
         document.body.style.background = color;
@@ -543,26 +651,30 @@
       }
 
       function addSwatches(host) {
+        const names = {
+          '#05070d': 'midnight', '#101826': 'navy', '#1b2430': 'slate',
+          '#2b1d33': 'plum', '#0e2a2a': 'teal', '#f4f1ea': 'cream', '#ffffff': 'white',
+        };
         const wrap = el('div', { className: 'swatches' });
+        const buttons = [];
         for (const color of BACKDROPS) {
-          const b = el('button', { type: 'button', title: color });
+          const b = el('button', { type: 'button', title: names[color], ariaLabel: `${names[color]} backdrop` });
           b.style.background = color;
           b.addEventListener('click', () => {
             setBackdrop(color);
             const input = host._backdropInput;
             if (input) input.value = color;
+            for (const button of buttons) button.classList.toggle('active', button === b);
           });
+          if (color === D.skin.backdrop.color) b.classList.add('active');
+          buttons.push(b);
           wrap.append(b);
         }
         host.append(wrap);
       }
 
-      // No camera controls. Framing would need `engine.sysRenderer.camera`,
-      // which is an `EngineImpl` private and not on the `Engine` contract. The
-      // five one-off lab pages reach for it because they are throwaway; this
-      // page is meant to be deployable, so it stays on the public surface.
-      // A public camera-pose method is a contract change with its own decision:
-      // `todo.public-camera-pose`.
+// Camera framing is driven exclusively through the public Engine view pose.
+// This deployable page never accesses renderer internals.
 
       // --- motion ------------------------------------------------------
       let frozen = false;
@@ -574,11 +686,27 @@
           host.append(row);
           return cb;
         };
-        mk('freeze pose', 'The melt runs in bind space, so freezing keeps a puddle from following head yaw', (on) => {
+        mk('freeze head motion', 'Freeze the rig for a still capture', (on) => {
           frozen = on;
           engine.setMotionFrozen(on);
         });
-        mk('reduced motion', 'Damps nods, disables saccades, shortens ramps', (on) => engine.vfx.setReducedMotion(on));
+        mk('reduce motion', 'Damps nods, disables saccades, shortens ramps', (on) => engine.vfx.setReducedMotion(on));
+      }
+
+      function addExpression(host) {
+        const wrap = el('div', { className: 'btns' });
+        const buttons = [];
+        for (const expression of ['neutral', 'friendly', 'thinking', 'happy', 'listening']) {
+          const button = el('button', { type: 'button', textContent: expression });
+          button.addEventListener('click', () => {
+            engine.setEmotion(expression);
+            for (const item of buttons) item.classList.toggle('on', item === button);
+          });
+          if (expression === 'neutral') button.classList.add('on');
+          buttons.push(button);
+          wrap.append(button);
+        }
+        host.append(wrap);
       }
 
       // --- melt actions ------------------------------------------------
@@ -643,6 +771,8 @@
             else if (c.kind === 'backdrop') addBackdrop(body, c);
             else if (c.kind === 'swatches') addSwatches(body);
             else if (c.kind === 'motion') addMotion(body);
+            else if (c.kind === 'expression') addExpression(body);
+            else if (c.kind === 'view') addView(body);
             else if (c.kind === 'melt-actions') cycleBtn = addMeltActions(body);
             else if (c.kind === 'note') body.append(el('p', { className: 'noteText', textContent: c.text }));
             else addRange(body, c);
@@ -650,20 +780,125 @@
         }
       }
 
-      // --- focus mode --------------------------------------------------
-      const focusBtn = document.getElementById('focus');
-      function setFocus(on) {
-        document.body.classList.toggle('focus', on);
-        focusBtn.textContent = on ? 'controls' : 'focus';
-        focusBtn.classList.toggle('on', on);
-        // The canvas is fixed to the viewport, so nothing needs resizing: the
-        // rail floats over it. Kept explicit so it stays true if that changes.
-        resize();
+      // --- speech ------------------------------------------------------
+      const saybar = document.getElementById('saybar');
+      const say = document.getElementById('say');
+      const speak = document.getElementById('speak');
+      let speechGeneration = 0;
+      let speaking = false;
+      function renderSpeechState() {
+        speak.textContent = speaking ? 'Stop' : 'Speak';
+        speak.setAttribute('aria-pressed', String(speaking));
+        saybar.classList.toggle('speaking', speaking);
       }
-      focusBtn.addEventListener('click', () => setFocus(!document.body.classList.contains('focus')));
+      async function beginSpeech() {
+        const generation = ++speechGeneration;
+        if (speaking || engine.speech.speaking) {
+          engine.speech.cancel();
+          speaking = false;
+          renderSpeechState();
+          return;
+        }
+        const text = say.value.trim() || 'Hologlyph is a text-skinned talking head.';
+        speaking = true;
+        renderSpeechState();
+        try {
+          await engine.speak(text);
+        } finally {
+          if (generation === speechGeneration) {
+            speaking = false;
+            renderSpeechState();
+          }
+        }
+      }
+      saybar.addEventListener('submit', (event) => { event.preventDefault(); void beginSpeech(); });
+      engine.on('speechstart', () => { speaking = true; renderSpeechState(); });
+      engine.on('speechend', () => { speaking = false; renderSpeechState(); });
+
+      // --- camera and gaze ---------------------------------------------
+      const DEFAULT_VIEW = { yaw: 0, height: 0.05, distance: 2.4, lookAt: 0, fov: 35 };
+      const stageHint = document.getElementById('stageHint');
+      let dragPointer = null;
+      let dragStart = null;
+      let gazeFrame = 0;
+      let gazeTarget = null;
+      const markGesture = () => stageHint.classList.add('used');
+      function setView(patch) {
+        engine.setView(patch);
+        syncViewInputs();
+      }
+      stage.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || event.target !== canvas) return;
+        dragPointer = event.pointerId;
+        dragStart = { x: event.clientX, y: event.clientY, view: engine.view, moved: false };
+        stage.setPointerCapture(event.pointerId);
+        engine.motion.clearGazeFollow();
+      });
+      stage.addEventListener('pointermove', (event) => {
+        if (event.pointerId === dragPointer && dragStart) {
+          const dx = event.clientX - dragStart.x;
+          const dy = event.clientY - dragStart.y;
+          dragStart.moved ||= Math.abs(dx) + Math.abs(dy) > 3;
+          if (dragStart.moved) markGesture();
+          setView({ yaw: dragStart.view.yaw + dx * 0.006, height: dragStart.view.height - dy * 0.006 });
+          return;
+        }
+        const rect = stage.getBoundingClientRect();
+        gazeTarget = {
+          x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        };
+        if (!gazeFrame) gazeFrame = requestAnimationFrame(() => {
+          gazeFrame = 0;
+          if (gazeTarget) engine.motion.setGazeTarget(gazeTarget.x, gazeTarget.y);
+        });
+      });
+      const endCameraDrag = (event) => {
+        if (event.pointerId !== dragPointer) return;
+        if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+        dragPointer = null;
+        dragStart = null;
+      };
+      stage.addEventListener('pointerup', endCameraDrag);
+      stage.addEventListener('pointercancel', endCameraDrag);
+      stage.addEventListener('lostpointercapture', endCameraDrag);
+      stage.addEventListener('pointerleave', () => {
+        gazeTarget = null;
+        engine.motion.clearGazeFollow();
+      });
+      stage.addEventListener('wheel', (event) => {
+        if (event.target !== canvas) return;
+        event.preventDefault();
+        markGesture();
+        setView({ distance: engine.view.distance + event.deltaY * 0.0015 });
+      }, { passive: false });
+      stage.addEventListener('dblclick', (event) => {
+        if (event.target !== canvas && event.target !== stage) return;
+        setView(DEFAULT_VIEW);
+        stageHint.classList.remove('used');
+      });
+
+      // One class has one meaning at every width: whether the rail is visible.
+      const focusBtn = document.getElementById('focus');
+      const narrowRail = matchMedia('(max-width: 760px)');
+      function renderRailControl() {
+        const visible = document.body.classList.contains('rail-visible');
+        focusBtn.textContent = narrowRail.matches
+          ? (visible ? 'close controls' : 'controls')
+          : (visible ? 'focus' : 'controls');
+        focusBtn.classList.toggle('on', !visible);
+      }
+      function setRailVisible(visible) {
+        document.body.classList.toggle('rail-visible', visible);
+        renderRailControl();
+      }
+      // A fixed rail leaves too little room for the bust below this width.
+      setRailVisible(!narrowRail.matches);
+      narrowRail.addEventListener('change', renderRailControl);
+      focusBtn.addEventListener('click', () => setRailVisible(!document.body.classList.contains('rail-visible')));
       window.addEventListener('keydown', (e) => {
         if (e.key === 'f' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName ?? '')) {
-          setFocus(!document.body.classList.contains('focus'));
+          setRailVisible(!document.body.classList.contains('rail-visible'));
         }
       });
 
