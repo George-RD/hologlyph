@@ -14,14 +14,10 @@
  * clipped cross-section reading as a hollow shell. Both are gated by
  * `pool.amount`, and both collapse to an exact identity at 0.
  *
- * Tier 1 boundary, stated so the next reader does not think it was missed:
- * only the materials the library builds fade. The authored `mouth_interior`
- * and `eye_trim` materials in the engine's `KEEP_MATERIALS`, and the eyeball
- * material, still terminate at the hard clip plane. Softening them means
- * replacing authored glTF materials with node-material clones, which silently
- * drops whatever maps and emissive the asset carried, and buys very little:
- * they are small, dark and only cross the waterline during emergence. It is
- * deferred rather than done badly.
+ * The waterline fade remains limited to library-built skin passes. The
+ * authored `mouth_interior` and `eye_trim` materials retain their standard
+ * material state through an exhaustive node-material conversion so they can
+ * share the shell's melt map without reauthoring their fragment paths.
  */
 
 import {
@@ -337,6 +333,26 @@ export interface EyeUniforms {
   irisSize: { value: number };
   irisColor: { value: THREE.Color };
   scleraColor: { value: THREE.Color };
+  meltAmount: { value: number };
+  meltSpread: { value: number };
+  meltFloor: { value: number };
+  meltLag: { value: number };
+  meltMinY: { value: number };
+  meltExtent: { value: number };
+}
+
+export interface MeltUniforms {
+  meltAmount: { value: number };
+  meltSpread: { value: number };
+  meltFloor: { value: number };
+  meltLag: { value: number };
+  meltMinY: { value: number };
+  meltExtent: { value: number };
+}
+
+export interface BuiltMeltedStandardMaterial {
+  material: THREE.Material;
+  uniforms: MeltUniforms;
 }
 
 export interface BuiltEyeballMaterial {
@@ -624,6 +640,95 @@ export function lensPlaceholderTexture(): THREE.DataTexture {
     lensPlaceholder.needsUpdate = true;
   }
   return lensPlaceholder;
+}
+
+interface MeltPositionBindings {
+  readonly amount: ReturnType<typeof uniform>;
+  readonly spread: ReturnType<typeof uniform>;
+  readonly floor: ReturnType<typeof uniform>;
+  readonly lag: ReturnType<typeof uniform>;
+  readonly minY: ReturnType<typeof uniform>;
+  readonly extent: ReturnType<typeof uniform>;
+}
+
+/**
+ * Applies the bind-height melt map to a local-space position.
+ *
+ * The extent gate makes an unmeasured body an exact identity transform.
+ */
+function buildMeltPosition(
+  position: ReturnType<typeof positionLocal.add>,
+  bindings: MeltPositionBindings,
+): ReturnType<typeof vec3> {
+  const extentSafe = bindings.extent.max(1e-4);
+  const gate = smoothstep(0, 1e-4, bindings.extent);
+  const amount = bindings.amount.mul(gate);
+  const height = saturate(position.y.sub(bindings.minY).div(extentSafe));
+  const raw = amount.mul(bindings.lag.add(1)).sub(bindings.lag.mul(height));
+  const progress = saturate(raw);
+  const target = bindings.minY.add(bindings.floor.mul(bindings.extent));
+  const scale = float(1).add(bindings.spread.mul(progress).mul(height));
+
+  return vec3(
+    position.x.mul(scale),
+    position.y.add(progress.mul(target.sub(position.y))),
+    position.z.mul(scale),
+  );
+}
+
+/**
+ * Creates a node-material equivalent of an authored standard material.
+ *
+ * This deliberately mirrors Three's NodeLibrary conversion by retaining every
+ * enumerable property, including PBR and texture fields omitted by
+ * NodeMaterial.copy().
+ */
+export function createStandardNodeMaterial(
+  material: THREE.MeshStandardMaterial,
+): MeshStandardNodeMaterial {
+  const nodeMaterial = new MeshStandardNodeMaterial();
+  const source = material as unknown as Record<string, unknown>;
+  const target = nodeMaterial as unknown as Record<string, unknown>;
+
+  for (const key in source) {
+    target[key] = source[key];
+  }
+
+  return nodeMaterial;
+}
+
+export function buildMeltedStandardMaterial(
+  source: THREE.MeshStandardMaterial,
+  config: HeadConfig = DEFAULT_HEAD_CONFIG,
+): BuiltMeltedStandardMaterial {
+  const material = createStandardNodeMaterial(source);
+  const uMeltAmount = uniform(config.melt.amount);
+  const uMeltSpread = uniform(config.melt.spread);
+  const uMeltFloor = uniform(config.melt.floor);
+  const uMeltLag = uniform(config.melt.lag);
+  const uMeltMinY = uniform(0);
+  const uMeltExtent = uniform(0);
+
+  material.positionNode = buildMeltPosition(positionLocal as ReturnType<typeof positionLocal.add>, {
+    amount: uMeltAmount,
+    spread: uMeltSpread,
+    floor: uMeltFloor,
+    lag: uMeltLag,
+    minY: uMeltMinY,
+    extent: uMeltExtent,
+  });
+
+  return {
+    material: material as unknown as THREE.Material,
+    uniforms: {
+      meltAmount: uMeltAmount as unknown as { value: number },
+      meltSpread: uMeltSpread as unknown as { value: number },
+      meltFloor: uMeltFloor as unknown as { value: number },
+      meltLag: uMeltLag as unknown as { value: number },
+      meltMinY: uMeltMinY as unknown as { value: number },
+      meltExtent: uMeltExtent as unknown as { value: number },
+    },
+  };
 }
 
 export function buildSkinMaterial(
@@ -1026,11 +1131,14 @@ export function buildSkinMaterial(
   const meltMi = saturate(meltRaw);
   const meltTarget = uMeltMinY.add(uMeltFloor.mul(uMeltExtent));
   const meltScale = float(1).add(uMeltSpread.mul(meltMi).mul(meltH));
-  const meltPosition = vec3(
-    surfacePosition.x.mul(meltScale),
-    surfacePosition.y.add(meltMi.mul(meltTarget.sub(surfacePosition.y))),
-    surfacePosition.z.mul(meltScale),
-  );
+  const meltPosition = buildMeltPosition(surfacePosition, {
+    amount: uMeltAmount,
+    spread: uMeltSpread,
+    floor: uMeltFloor,
+    lag: uMeltLag,
+    minY: uMeltMinY,
+    extent: uMeltExtent,
+  });
 
   // `mi` is a clamp, so its slope is the interior one inside the band and zero
   // on either shoulder. Exact strict comparisons, matching `melt.ts`'s
@@ -1316,6 +1424,13 @@ export function buildEyeballMaterial(
   const uIrisSize = uniform(config.eyes.irisSize);
   const uIrisColor = uniform(new Color(config.eyes.irisColor));
   const uScleraColor = uniform(new Color(config.eyes.scleraColor));
+  const uMeltAmount = uniform(config.melt.amount);
+  const uMeltSpread = uniform(config.melt.spread);
+  const uMeltFloor = uniform(config.melt.floor);
+  const uMeltLag = uniform(config.melt.lag);
+  const uMeltMinY = uniform(0);
+  const uMeltExtent = uniform(0);
+
 
   const uniforms: EyeUniforms = {
     scroll: uScroll as unknown as ScrollUniform,
@@ -1328,6 +1443,12 @@ export function buildEyeballMaterial(
     irisSize: uIrisSize as unknown as { value: number },
     irisColor: uIrisColor as unknown as { value: THREE.Color },
     scleraColor: uScleraColor as unknown as { value: THREE.Color },
+    meltAmount: uMeltAmount as unknown as { value: number },
+    meltSpread: uMeltSpread as unknown as { value: number },
+    meltFloor: uMeltFloor as unknown as { value: number },
+    meltLag: uMeltLag as unknown as { value: number },
+    meltMinY: uMeltMinY as unknown as { value: number },
+    meltExtent: uMeltExtent as unknown as { value: number },
   };
 
   const px = positionGeometry.x.abs().sub(c.cx);
@@ -1374,6 +1495,14 @@ export function buildEyeballMaterial(
   const sclera = scleraLit.mul(outsideIris);
 
   material.colorNode = iris.add(sclera).mul(uEyePresence).add(vec3(0.004, 0.005, 0.008));
+  material.positionNode = buildMeltPosition(positionLocal as ReturnType<typeof positionLocal.add>, {
+    amount: uMeltAmount,
+    spread: uMeltSpread,
+    floor: uMeltFloor,
+    lag: uMeltLag,
+    minY: uMeltMinY,
+    extent: uMeltExtent,
+  });
 
   return {
     material: material as unknown as THREE.Material,

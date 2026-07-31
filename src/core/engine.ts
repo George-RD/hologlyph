@@ -13,7 +13,7 @@
  * giving core the viseme stream it needs.
  */
 import type * as THREE from 'three';
-import { FrontSide, Matrix4, Mesh, NoBlending, SkinnedMesh, Vector3 } from 'three';
+import { FrontSide, Matrix4, Mesh, MeshStandardMaterial, NoBlending, SkinnedMesh, Vector3 } from 'three';
 import { clamp01 } from '../contracts.js';
 import type {
   AssetLoader,
@@ -90,11 +90,12 @@ import {
   type Stage,
 } from './participants.js';
  
-// Materials the engine must not replace with the text skin. The mouth cavity
-// and the eye trim (caruncle-corner blend shell + lacrimal fluid) keep their
-// authored dark materials. All other morph meshes receive the glyph grid,
-// including any teeth-named or unnamed placeholder material.
-const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior', 'eye_trim']);
+// Authored standard materials which retain their glTF look while sharing the
+// shell's melt displacement.
+const MELTED_AUTHORED_MATERIALS: Readonly<Record<string, true>> = {
+  mouth_interior: true,
+  eye_trim: true,
+};
 function isEyeMesh(mesh: THREE.Mesh): boolean {
   if (mesh.parent?.name === 'eyes' || mesh.name.startsWith('eyes_') || mesh.name.startsWith('eye_')) {
     return true;
@@ -345,6 +346,12 @@ class EngineImpl implements Engine {
   private occlusionMaskMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
   private interiorMesh: THREE.Mesh | THREE.SkinnedMesh | null = null;
   private readonly displacedMaterials = new Set<THREE.Material>();
+  /**
+   * Authored sources replaced with node materials. Their texture references
+   * remain owned by the live replacement in the scene, so teardown disposes
+   * only these material objects and never their shared textures.
+   */
+  private readonly convertedSourceMaterials = new Set<THREE.Material>();
   /**
    * The occlusion mask plus the authored internals that were opaque as
    * loaded. They only join the transparent render list while the interior
@@ -1116,6 +1123,7 @@ class EngineImpl implements Engine {
     this.skinMaterial = headMat;
     this.skinMaterials = skinMats;
     this.displacedMaterials.clear();
+    this.convertedSourceMaterials.clear();
     const allMeshes = new Set<THREE.Mesh>(this.avatar.morphMeshes);
     this.avatar.root.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) allMeshes.add(obj as THREE.Mesh);
@@ -1154,7 +1162,17 @@ class EngineImpl implements Engine {
         mat.depthWrite = true;
         continue;
       }
-      if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
+      if (name !== undefined && MELTED_AUTHORED_MATERIALS[name]) {
+        if (
+          original &&
+          !Array.isArray(original) &&
+          (original as unknown as Record<string, unknown>).isMeshStandardMaterial === true
+        ) {
+          this.convertedSourceMaterials.add(original);
+          mesh.material = this.sysVfx.createMeltedStandardMaterial(original as MeshStandardMaterial);
+        }
+        continue;
+      }
       if (Array.isArray(original)) {
         for (const material of original) {
           if (material && material !== this.skinMaterial && material !== eyeballMat) {
@@ -1634,6 +1652,12 @@ class EngineImpl implements Engine {
       }
     }
     this.displacedMaterials.clear();
+    for (const material of this.convertedSourceMaterials) {
+      if (typeof material.dispose === 'function') {
+        material.dispose();
+      }
+    }
+    this.convertedSourceMaterials.clear();
   }
 
   // --- Internals ------------------------------------------------------------

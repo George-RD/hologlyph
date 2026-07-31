@@ -173,10 +173,11 @@ const mouthPixelsChanged = mouthMotion(before, during);
 await browser.close();
 console.log(JSON.stringify({ results, residualReduced, residualFrozen, breakpointRail, poseBefore, poseAfterDrag, yawSlider, poseAfterWheel, distanceSlider, poseAfterReset, gazeCallsBeforeDrag, gazeCallsAtDragStart, gazeCallsAfterDrag, speechEvents, mouthPixelsChanged, speakingBeforeCancel, speakingAfterCancel, afterCancel, errors }, null, 2));
 const failures = [];
-// The faint shell is symmetric, while brighter right-side glyphs bias the default mask.
+// The threshold-55 centroid is a brightness diagnostic: glyph and lighting
+// mass bias it camera-right by resolution-dependent amounts. Shell centroid
+// and silhouette bounds are the position assertions.
 for (const result of results) {
   if (!Number.isFinite(result.shellOffset) || Math.abs(result.shellOffset) > 2) failures.push(`${result.name}: shell-centroid offset ${result.shellOffset}`);
-  if (!Number.isFinite(result.offset) || Math.abs(result.offset) > 8) failures.push(`${result.name}: rendered-centroid offset ${result.offset}`);
   if (!Number.isFinite(result.bboxOffset) || Math.abs(result.bboxOffset) > 2) failures.push(`${result.name}: silhouette bounds offset ${result.bboxOffset}`);
 }
 if (poseAfterDrag.yaw === poseBefore.yaw || Math.abs(yawSlider - poseAfterDrag.yaw) > 0.011) failures.push('drag did not update public pose and matching orbit slider');

@@ -8,6 +8,7 @@ informed_by:
   - src.owner-look-2026-07-27
   - src.owner-vision-2026-07-25
   - src.owner-consolidation-2026-07-28
+  - res.melt-internals-material-audit
 ---
 # The liquid direction is a vertex melt on the real bust
 

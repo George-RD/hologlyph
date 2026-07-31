@@ -34,11 +34,13 @@ import {
 } from './fluid';
 import {
   buildEyeballMaterial,
+  buildMeltedStandardMaterial,
   buildSkinMaterial,
   lensPlaceholderTexture,
   normaliseHeadConfig,
   type EyeUniforms,
   type HeadUniforms,
+  type MeltUniforms,
   type ScrollUniform,
 } from './materials';
 import { adaptToBackdrop } from './glass';
@@ -61,6 +63,10 @@ interface EyeBinding {
   skin: TextSkinEngine;
   scroll: ScrollUniform;
   uniforms: EyeUniforms;
+}
+
+interface MeltBinding {
+  uniforms: MeltUniforms;
 }
 
 export { BUST_HEIGHT, RAMP_TAU } from './emergence';
@@ -193,6 +199,7 @@ export function createVFXEngine(): VFXEngine {
   const plane = new Plane(new Vector3(0, 1, 0), 0);
   const skinBindings: SkinBinding[] = [];
   const eyeBindings: EyeBinding[] = [];
+  const meltedStandardBindings: MeltBinding[] = [];
 
   let activeConfig: HeadConfig = DEFAULT_HEAD_CONFIG;
   let target = 0;
@@ -351,6 +358,17 @@ export function createVFXEngine(): VFXEngine {
       u.irisSize.value = config.eyes.irisSize;
       u.irisColor.value.set(config.eyes.irisColor);
       u.scleraColor.value.set(config.eyes.scleraColor);
+      u.meltAmount.value = config.melt.amount;
+      u.meltSpread.value = config.melt.spread;
+      u.meltFloor.value = config.melt.floor;
+      u.meltLag.value = config.melt.lag;
+    }
+    for (const binding of meltedStandardBindings) {
+      const u = binding.uniforms;
+      u.meltAmount.value = config.melt.amount;
+      u.meltSpread.value = config.melt.spread;
+      u.meltFloor.value = config.melt.floor;
+      u.meltLag.value = config.melt.lag;
     }
   }
 
@@ -424,6 +442,8 @@ export function createVFXEngine(): VFXEngine {
       const built = buildEyeballMaterial(eyeSkin, frame, activeConfig);
       const binding = { skin: eyeSkin, scroll: built.uniforms.scroll, uniforms: built.uniforms };
       eyeBindings.push(binding);
+      built.uniforms.meltMinY.value = bodyMinY;
+      built.uniforms.meltExtent.value = bodyExtent;
       built.material.addEventListener('dispose', () => {
         const index = eyeBindings.indexOf(binding);
         if (index >= 0) eyeBindings.splice(index, 1);
@@ -434,6 +454,20 @@ export function createVFXEngine(): VFXEngine {
     setHeadConfig(overrides: HeadConfigOverrides): void {
       activeConfig = normaliseHeadConfig(overrides, activeConfig);
       applyConfigToBindings(activeConfig);
+    },
+
+    createMeltedStandardMaterial(source: THREE.MeshStandardMaterial): THREE.Material {
+      if (disposed) throw new Error('VFXEngine: createMeltedStandardMaterial after dispose');
+      const built = buildMeltedStandardMaterial(source, activeConfig);
+      const binding = { uniforms: built.uniforms };
+      meltedStandardBindings.push(binding);
+      built.uniforms.meltMinY.value = bodyMinY;
+      built.uniforms.meltExtent.value = bodyExtent;
+      built.material.addEventListener('dispose', () => {
+        const index = meltedStandardBindings.indexOf(binding);
+        if (index >= 0) meltedStandardBindings.splice(index, 1);
+      });
+      return built.material;
     },
 
     get headConfig(): HeadConfig {
@@ -496,6 +530,14 @@ export function createVFXEngine(): VFXEngine {
       bodyMinY = usable ? minY : 0;
       bodyExtent = usable ? span : 0;
       for (const binding of skinBindings) {
+        binding.uniforms.meltMinY.value = bodyMinY;
+        binding.uniforms.meltExtent.value = bodyExtent;
+      }
+      for (const binding of eyeBindings) {
+        binding.uniforms.meltMinY.value = bodyMinY;
+        binding.uniforms.meltExtent.value = bodyExtent;
+      }
+      for (const binding of meltedStandardBindings) {
         binding.uniforms.meltMinY.value = bodyMinY;
         binding.uniforms.meltExtent.value = bodyExtent;
       }
