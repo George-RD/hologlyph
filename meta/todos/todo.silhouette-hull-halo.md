@@ -1,6 +1,6 @@
 ---
 node: hologlyph.runtime.shaders
-status: open
+status: blocked
 created: 2026-07-27
 ---
 
@@ -23,26 +23,25 @@ in area than the silhouette's own convex hull. That surplus is the halo the
 owner saw: a band of frost outside the head, aligned to nothing, which is why it
 reads as a patch behind the head rather than as the head.
 
-## The fix
+## Landed tightening
 
-`DIRECTION_COUNT` in `tools/asset-pipeline/silhouette-hull.ts:51` is currently
-18. Raising it tightens the polygon on a known curve, measured in that same
-implementation-notes: 60 points for 1.21x, 252 for 1.05x.
+`DIRECTION_COUNT` is now 32, producing 60 baked hull points and reducing the
+resting convex-area ratio from 1.29x to 1.21x. In the pinned neutral compositor
+comparison, the projected clip grows from 12 to 15 screen-space vertices.
+`test/asset-bust.test.ts` proves the rebaked GLB stays inside the 1.5 MiB
+budget and regenerates byte-for-byte from the pinned source.
 
-Two things this is gated on, and neither is optional:
+## Why this remains blocked
 
-1. A decision superseding the point budget in
-   `todo.liquid-glass-silhouette-hull`. That budget was chosen against a
-   per-frame `clip-path` cost, so raising it is an accepted trade, not an
-   oversight to correct silently.
-2. An asset rebake. The hull is baked into the GLB, so this moves the shipped
-   asset and its hash, and `test/asset-bust.test.ts` guards regen-from-source
-   byte equality and the 1.5 MiB budget.
+The acceptance is an owner judgement: whether the frost edge stops reading as a
+separate patch in `demo/compositor-lab.html`. The tightened crown and upper
+sides track better, but the recorded comparison still has a conspicuous pale
+wedge left of the jaw and shoulder. Engineering is landed; this item waits on
+the owner's eye.
 
-Note that the convex hull is itself a floor: the bust's silhouette is not
-convex, so even 252 points cannot reach 1.00x. If 1.05x still reads as a halo,
-the answer is a concave outline rather than more points on a convex one, which
-is a larger change.
+The convex hull is itself a floor: the bust's silhouette is not convex, so even
+252 points cannot reach 1.00x. If the owner still reads a halo at 1.21x, the
+recorded escalation is a concave outline, not more points on a convex hull.
 
 ## Acceptance
 

@@ -43,18 +43,17 @@ export const SILHOUETTE_HULL_VERSION = 1;
 export const SILHOUETTE_HULL_KEY = 'hologlyphSilhouetteHull';
 
 /**
- * Support directions for the joint carrying most of the mesh. Eighteen
- * directions yield a 32-vertex polytope, inside the 20 to 40 vertex budget the
- * hull was scoped against, and the vertex count grows as roughly 2n-4 from
- * here.
+ * Support directions for the joint carrying most of the mesh. Thirty-two
+ * directions yield a 60-vertex polytope, which tightens the compositor clip
+ * toward the silhouette while staying within its measured per-frame budget.
  */
-export const DIRECTION_COUNT = 18;
+export const DIRECTION_COUNT = 32;
 
 /** Support directions for any further joint that needs its own polytope. */
 export const SECONDARY_DIRECTION_COUNT = 8;
 
 /** Hard ceiling on baked points; the bake fails rather than blow the budget. */
-export const MAX_HULL_POINTS = 40;
+export const MAX_HULL_POINTS = 60;
 
 /** Coordinates are rounded to this many decimals so the bake is byte-stable. */
 const ROUND_DECIMALS = 6;

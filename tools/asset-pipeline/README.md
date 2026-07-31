@@ -20,22 +20,28 @@ automatically to the gitignored `tools/asset-pipeline/.cache/` directory and
 sha256-verified against `tools/asset-pipeline/ict-source-manifest.json`. A copy
 of the MIT licence lives at `tools/asset-pipeline/ICT-FaceKit-LICENSE`.
 
-## Build the shipped bust (two steps)
+## Build the shipped bust (two stages)
+
+Run the stages in order. The build stage writes the raw, unoptimised GLB to
+`tools/asset-pipeline/.build/hologlyph-bust.raw.glb`; only the optimise stage
+writes the shipped `assets/hologlyph-bust.glb`.
 
 ```bash
 # Step 1: assemble the 30-target bust from ICT-FaceKit sources and the
-# Blender-authored sparse tongue corrections.
-bun tools/asset-pipeline/build-bust.ts tools/asset-pipeline/.build/hologlyph-bust.raw.glb
+# Blender-authored sparse tongue corrections into the raw intermediate.
+bun run build-asset
 
-# Step 2: optimise (Meshopt + KTX2) toward the delivery budget
-bun tools/asset-pipeline/optimize.ts tools/asset-pipeline/.build/hologlyph-bust.raw.glb assets/hologlyph-bust.glb --simplify 0.5
+# Step 2: optimise (Meshopt + KTX2) toward the delivery budget into the
+# shipped asset.
+bun run optimize-asset -- tools/asset-pipeline/.build/hologlyph-bust.raw.glb assets/hologlyph-bust.glb --simplify 0.5
 ```
 
-Or via the package scripts:
+The underlying commands accept explicit paths, for example in an isolated
+verification directory:
 
 ```bash
-bun run build-asset
-bun run optimize-asset -- tools/asset-pipeline/.build/hologlyph-bust.raw.glb assets/hologlyph-bust.glb --simplify 0.5
+bun tools/asset-pipeline/build-bust.ts /tmp/hologlyph-bust.raw.glb
+bun tools/asset-pipeline/optimize.ts /tmp/hologlyph-bust.raw.glb /tmp/hologlyph-bust.glb --simplify 0.5
 ```
 
 ### Re-author tongue correctives

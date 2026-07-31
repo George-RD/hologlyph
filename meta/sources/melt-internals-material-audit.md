@@ -2,7 +2,7 @@
 id: src.melt-internals-material-audit
 file: ./assets/hologlyph-bust.glb
 verification: verified
-sha256: c08365a15f5295caeb0cada89a0a60102481877a21535a32b71459d66f4ec145
+sha256: 1f28c3b4cec2a53bef53255b3bf1cf50fb737ec399f4d7d68af99dded028d0e8
 type: Shipped GLB material-state audit input
 date: 2026-07-31
 ---
@@ -16,6 +16,11 @@ This records the exact shipped GLB inspected by
 `MeshoptDecoder` as `meshopt.decoder`. It enumerated `mouth_interior` and
 `eye_trim` material factors, texture slots, alpha fields, sidedness, and the
 semantics of their primitives from `assets/hologlyph-bust.glb`.
+
+After the 2026-07-31 silhouette-hull rebake, this audit was run again against
+the new GLB rather than reusing prior results: `mouth_interior` and `eye_trim`
+retain every recorded material property, and `eye_trim` remains a 46-vertex,
+168-index, 56-triangle primitive with the recorded semantics.
 
 ```js
 import { NodeIO } from '@gltf-transform/core';

@@ -544,6 +544,7 @@ describe('shipped bust silhouette hull', { timeout: 60_000 }, () => {
     if (!hull) return;
     expect(hull.version).toBe(1);
     const points = hull.groups.reduce((n, g) => n + g.points.length / 3, 0);
+    expect(points).toBe(60);
     expect(points).toBeGreaterThanOrEqual(20);
     expect(points).toBeLessThanOrEqual(MAX_HULL_POINTS);
     // Every skinned vertex of the bust rides the head bone; the eyeballs rotate
