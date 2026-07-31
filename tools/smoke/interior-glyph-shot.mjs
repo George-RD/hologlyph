@@ -144,10 +144,21 @@ const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 /**
  * Wait until the field stops moving, and report how long that took.
  *
- * Two consecutive samples `SETTLE_WINDOW_MS` apart that differ by less than
- * `SETTLE_TOLERANCE` count as settled. That is a direct measurement of the
- * claim, and unlike a fixed sleep it does not silently become a measurement
- * of the host's frame rate.
+ * A quiet window is only a CANDIDATE. What the caller checks is the residual
+ * over the second AFTER this returns, so that is what is confirmed here: on a
+ * quiet window, wait the caller's own span and re-measure, and accept only if
+ * the field held. Otherwise carry on polling from where it got to.
+ *
+ * Checking the past instead does not work. Two consecutive quiet windows say
+ * nothing the triangle inequality did not already give, and this spring
+ * converges exponentially at `inertia: 0.9`, so its tail is repeatedly quiet
+ * across 500 ms while still drifting a multiple of that across the next second.
+ * Confirming forward is what makes a pass mean what the caller then measures,
+ * and the caller's own window after that moves less again, because the tail
+ * decays.
+ *
+ * A direct measurement of the claim, and unlike a fixed sleep it does not
+ * silently become a measurement of the host's frame rate.
  */
 async function settleField(page) {
   const started = Date.now();
@@ -156,7 +167,13 @@ async function settleField(page) {
     await page.waitForTimeout(SETTLE_WINDOW_MS);
     const current = await centroid(page);
     if (distance(previous, current) < SETTLE_TOLERANCE) {
-      return { position: current, seconds: (Date.now() - started) / 1000 };
+      await page.waitForTimeout(SETTLE_WINDOW_MS * 2);
+      const confirmed = await centroid(page);
+      if (distance(current, confirmed) < SETTLE_TOLERANCE * 2) {
+        return { position: confirmed, seconds: (Date.now() - started) / 1000 };
+      }
+      previous = confirmed;
+      continue;
     }
     previous = current;
   }
@@ -316,7 +333,9 @@ if (travel < SETTLE_TOLERANCE * 20) {
     `the head yaw moved the field only ${travel.toFixed(5)}: the lag leg is not exercising it`,
   );
 }
-if (lag < travel * 0.5) throw new Error('the field kept up with the head: there is no lag to see');
+// The absolute claims can be made here; the one about the lag itself waits for
+// the rigid control below, because what "there is a lag" means is now a
+// comparison against a field that has none.
 // Settling once could be a stall; it has to STAY settled. Sampled over two
 // windows, so the budget is two windows' worth of the per-window tolerance.
 if (residual > SETTLE_TOLERANCE * 2) {
@@ -335,6 +354,30 @@ const rigidLag = distance(rigid, settledA);
 manifest.legs.lag.rigidLag = rigidLag;
 console.log(`at inertia 0 the same step lands within ${rigidLag.toFixed(5)} immediately`);
 if (rigidLag > travel * 0.2) throw new Error('inertia 0 did not track the head');
+
+// The lag is BOUNDED by each glyph's own clearance since
+// `dec.interior-glyph-containment`: a glyph may not leave the room it has, so a
+// yaw step can no longer drag the field the whole way. On the shipped bust it
+// measures 0.10 to 0.20 of the travel, against 0.98 before containment, and the
+// owner accepted that trade on 2026-07-29 rather than let the glyphs leave the
+// head.
+//
+// A fixed fraction of the travel is the wrong oracle for a bounded lag. This leg
+// runs at `drift: 0`, so the spread across runs is not the drift phase: it is
+// which sites the seeding drew, and so how much room each glyph has, together
+// with the frame the step happens to land in. That spread is a large share of
+// the measurement. What has to hold is the DISTINCTION: the spring must lag by
+// more than the settle noise, and by clearly more than the same step at
+// inertia 0, which is the same field with no lag at all.
+if (lag < SETTLE_TOLERANCE * 10) {
+  throw new Error(`the lag is inside the settle noise: ${lag.toFixed(5)}`);
+}
+if (lag < rigidLag * 3) {
+  throw new Error(
+    `the field kept up with the head: it lagged ${lag.toFixed(5)} where a rigid ` +
+      `field lagged ${rigidLag.toFixed(5)}`,
+  );
+}
 
 await setInterior(page, { count: 0 });
 await page.close();

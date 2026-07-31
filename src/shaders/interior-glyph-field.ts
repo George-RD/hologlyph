@@ -32,7 +32,9 @@ import type { Disposable, HeadInteriorConfig } from '../contracts';
 import {
   INTERIOR_GLYPH_MAX,
   INTERIOR_REDUCED_DRIFT,
+  interiorContain,
   interiorDepthDim,
+  interiorDriftBudgets,
   interiorDriftTargets,
   interiorIntegrate,
   interiorSpring,
@@ -78,6 +80,12 @@ interface FieldUniforms {
 export interface InteriorGlyphFieldOptions {
   /** Flat XYZ bind-space positions of the body the glyphs are suspended in. */
   readonly positions: ArrayLike<number>;
+  /**
+   * The body's triangle index, or null when the geometry is not indexed and
+   * its positions are already triangle soup. Needed to measure how much room
+   * each glyph has before it reaches the skin.
+   */
+  readonly indices: ArrayLike<number> | null;
   /** Per-vertex baked `aThickness`, or null when the rig has no bake. */
   readonly thickness: ArrayLike<number> | null;
   /**
@@ -123,6 +131,7 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
   const rng = options.rng ?? Math.random;
   const sites = sampleInteriorSites(
     options.positions,
+    options.indices,
     options.thickness,
     INTERIOR_GLYPH_MAX,
     Math.max(1, cols * rows),
@@ -143,11 +152,23 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
     rest[g * 3 + 2] = point.z;
   }
 
+  // Clearances were measured in bind space, and the rest positions they bound
+  // have just been carried into the frame, so they carry with them. The
+  // SMALLEST of the matrix's three scales, because a clearance measured along
+  // one axis and spent along another would otherwise overstate the room.
+  const bindScale = new Vector3().setFromMatrixScale(options.bindToFrame);
+  const clearanceScale = Math.min(bindScale.x, bindScale.y, bindScale.z);
+  const clearances = new Float32Array(max);
+  for (let g = 0; g < max; g++) clearances[g] = (sites.clearances[g] ?? 0) * clearanceScale;
+
   // World-space integration state. The spring chases a target the head's frame
   // carries, which is what turns a head turn into a drag and a settle.
   const world = new Float32Array(max * 3);
   const velocity = new Float32Array(max * 3);
   const targets = new Float32Array(max * 3);
+  // The carried rest positions, in world space, recomputed each frame: the
+  // centre of the ball each glyph is held inside.
+  const restWorld = new Float32Array(max * 3);
   const depths = new Float32Array(max);
   const order: number[] = [];
 
@@ -255,6 +276,38 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
   const cameraUp = new Vector3();
   const cameraForward = new Vector3();
   const cameraPos = new Vector3();
+  const frameScale = new Vector3();
+
+  /**
+   * The frame scales and sprite extent the budgets were last built for. NaN
+   * forces the first update to build them, and any later change of avatar scale
+   * or sprite size rebuilds: a bigger sprite has less room, so a stale budget
+   * would let the enlarged corners leak.
+   */
+  let budgetScaleMin = Number.NaN;
+  let budgetScaleMax = Number.NaN;
+  let budgetExtent = Number.NaN;
+  /** World-space drift radius per glyph, which is what containment uses. */
+  const budgetsWorld = new Float32Array(max);
+  /** The same radii in frame units, which is where the drift is authored. */
+  const budgetsFrame = new Float32Array(max);
+
+  /**
+   * Two scales, used in opposite directions. A clearance is turned into world
+   * units by the SMALLEST of the frame's scales, because a clearance measured
+   * along one axis and spent along another must assume the least generous one.
+   * The world budget is turned back into frame units by the LARGEST, because a
+   * frame-space offset lying on the most stretched axis is the one that reaches
+   * furthest in world space.
+   */
+  function rebuildBudgets(minScale: number, maxScale: number, extent: number): void {
+    budgetScaleMin = minScale;
+    budgetScaleMax = maxScale;
+    budgetExtent = extent;
+    interiorDriftBudgets(budgetsWorld, clearances, max, extent, minScale);
+    const inv = maxScale > 0 ? 1 / maxScale : 0;
+    for (let g = 0; g < max; g++) budgetsFrame[g] = (budgetsWorld[g] ?? 0) * inv;
+  }
 
   /** Place glyphs `[from, to)` on their targets with no velocity. */
   function snapRange(from: number, to: number): void {
@@ -312,10 +365,19 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
 
     // Back to front, so a nearer glyph covers a farther one and the field
     // reads as a volume rather than as a flat scatter.
-    order.length = count;
-    for (let g = 0; g < count; g++) order[g] = g;
+    //
+    // A glyph with no budget is culled here rather than drawn still: a budget of
+    // 0 means the sprite is wider than the room its site has, so the quad pokes
+    // out of the silhouette at rest, before any drift. Dropping it from the
+    // index is how it stops being drawn without disturbing the seeding, and it
+    // follows a later change of `interior.size` for free.
+    order.length = 0;
+    for (let g = 0; g < count; g++) {
+      if ((budgetsWorld[g] ?? 0) > 0) order.push(g);
+    }
     order.sort((a, b) => (depths[b] ?? 0) - (depths[a] ?? 0));
-    for (let k = 0; k < count; k++) {
+    const drawn = order.length;
+    for (let k = 0; k < drawn; k++) {
       const g = order[k] ?? 0;
       const vertex = g * 4;
       const slot = k * 6;
@@ -330,7 +392,7 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
     positionAttr.needsUpdate = true;
     dimAttr.needsUpdate = true;
     indexAttr.needsUpdate = true;
-    geometry.setDrawRange(0, count * 6);
+    geometry.setDrawRange(0, drawn * 6);
   }
 
   return {
@@ -350,11 +412,26 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
         return;
       }
 
+      // The frame's scale decides how a bind-space clearance and a world-space
+      // sprite compare, and it can change under a scaled or swapped avatar, so
+      // it is read every frame and the budgets follow it. `config.size` is the
+      // sprite's HALF-size along both billboard axes, so its furthest corner is
+      // that times root two.
+      frameScale.setFromMatrixScale(state.frameMatrix);
+      const minScale = Math.min(frameScale.x, frameScale.y, frameScale.z);
+      const maxScale = Math.max(frameScale.x, frameScale.y, frameScale.z);
+      const extent = config.size * Math.SQRT2;
+      if (minScale !== budgetScaleMin || maxScale !== budgetScaleMax || extent !== budgetExtent) {
+        rebuildBudgets(minScale, maxScale, extent);
+      }
+
       const drift = state.reduced ? config.drift * INTERIOR_REDUCED_DRIFT : config.drift;
       time += Math.max(0, dt) * (state.reduced ? INTERIOR_REDUCED_DRIFT : 1);
-      interiorDriftTargets(targets, rest, sites.phases, count, time, drift);
+      interiorDriftTargets(targets, rest, sites.phases, budgetsFrame, count, time, drift);
 
-      // Frame-local targets to world, in place.
+      // Frame-local targets and rest positions to world. The rest positions are
+      // the centres containment holds the glyphs around, so they travel with
+      // the head exactly as the targets do.
       const m = state.frameMatrix.elements;
       for (let g = 0; g < count; g++) {
         const x = targets[g * 3] ?? 0;
@@ -363,6 +440,12 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
         targets[g * 3] = (m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z + (m[12] ?? 0);
         targets[g * 3 + 1] = (m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z + (m[13] ?? 0);
         targets[g * 3 + 2] = (m[2] ?? 0) * x + (m[6] ?? 0) * y + (m[10] ?? 0) * z + (m[14] ?? 0);
+        const rx = rest[g * 3] ?? 0;
+        const ry = rest[g * 3 + 1] ?? 0;
+        const rz = rest[g * 3 + 2] ?? 0;
+        restWorld[g * 3] = (m[0] ?? 0) * rx + (m[4] ?? 0) * ry + (m[8] ?? 0) * rz + (m[12] ?? 0);
+        restWorld[g * 3 + 1] = (m[1] ?? 0) * rx + (m[5] ?? 0) * ry + (m[9] ?? 0) * rz + (m[13] ?? 0);
+        restWorld[g * 3 + 2] = (m[2] ?? 0) * rx + (m[6] ?? 0) * ry + (m[10] ?? 0) * rz + (m[14] ?? 0);
       }
 
       // Reduced motion removes the lag, because the lag IS the shake response.
@@ -375,6 +458,10 @@ export function createInteriorGlyphField(options: InteriorGlyphFieldOptions): In
         const spring = interiorSpring(config.inertia);
         interiorIntegrate(world, velocity, targets, count, spring.stiffness, spring.damping, dt);
       }
+      // The last word on where a glyph may be, after both paths: a bounded
+      // target is not a bounded glyph, because the spring is under-damped and
+      // the head keeps moving while it chases.
+      interiorContain(world, velocity, restWorld, budgetsWorld, count);
       // Follows `count` in BOTH directions. Dropping the count and raising it
       // again must re-seed the slots it exposes, or they come back holding a
       // world position from whatever pose the head was in when they were last

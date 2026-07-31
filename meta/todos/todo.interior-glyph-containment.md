@@ -1,7 +1,8 @@
 ---
 node: hologlyph.runtime.shaders
-status: open
+status: done
 created: 2026-07-27
+satisfies: 2026-07-29-interior-glyph-containment
 ---
 
 # Interior glyphs leak out of the head at high drift
