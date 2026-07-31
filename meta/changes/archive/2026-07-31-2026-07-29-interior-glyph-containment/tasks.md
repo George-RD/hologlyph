@@ -28,4 +28,4 @@
       owner-session transcripts and none is referenced into existence by it.
       `hologlyph.runtime.shaders` gained one path claim, paired with
       `dec.interior-glyph-containment`.
-- [ ] Land into `glass` by squash-merged PR.
+- [x] Land into `glass` by squash-merged PR.

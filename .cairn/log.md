@@ -196,3 +196,7 @@
 - scan: nodes=16, findings=5, errors=0
 - scan: nodes=16, findings=5, errors=0
 - scan: nodes=16, findings=5, errors=0
+- scan: nodes=16, findings=47, errors=0
+- scan: nodes=16, findings=47, errors=0
+- archive: 2026-07-29-interior-glyph-containment merged; no operations
+- scan: nodes=16, findings=47, errors=0
