@@ -234,3 +234,5 @@ submersion.
   text stays welded to the skin.
 - `dec.renderer-posture` deferred surface tension and compute shaders to a later
   phase. Tier 1 opens that phase; tiers 3 and 4 will need it amended.
+- The public-camera-pose seam is closed by `dec.public-camera-pose`: hosts frame
+  the head through `Engine.setView` without accessing renderer internals.

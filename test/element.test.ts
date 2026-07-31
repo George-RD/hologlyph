@@ -17,6 +17,9 @@ import type {
   LensSourceOptions,
   TextSkinSource,
   TTSAdapter,
+  ViewPose,
+
+
 } from '../src/contracts';
 import { HologlyphHeadElement, defineHologlyphHead } from '../src/element';
 
@@ -36,6 +39,9 @@ class FakeEngine implements Engine {
   voiceAdapterCalls: TTSAdapter[] = [];
   resizeCalls: Array<{ width: number; height: number }> = [];
   motionCalls: boolean[] = [];
+
+  private _view: Required<ViewPose> = { yaw: 0, height: 0.05, distance: 2.4, lookAt: 0, fov: 35 };
+
 
   private listeners = new Map<keyof EngineEvents, Set<(p: unknown) => void>>();
 
@@ -163,6 +169,14 @@ class FakeEngine implements Engine {
   setVoiceAdapter(adapter: TTSAdapter): void {
     this.voiceAdapterCalls.push(adapter);
   }
+  setView(pose: ViewPose): void {
+    this._view = { ...this._view, ...pose };
+  }
+
+  get view(): Required<ViewPose> {
+    return this._view;
+  }
+
 
   lensSourceCalls: Array<{ element: Element | null; options?: LensSourceOptions }> = [];
   captureLensCalls = 0;

@@ -39,6 +39,9 @@ import type {
   TTSAdapter,
   VFXEngine,
   VisemeFrame,
+  ViewPose,
+
+
 } from '../contracts.js';
 import { createAssetLoader } from '../asset';
 import { bakeThickness, createThicknessBudget } from '../asset/rig.js';
@@ -203,6 +206,58 @@ const DEFAULT_TEXT =
 /** Handed to the compositor layer when there is no outline to show. */
 const EMPTY_OUTLINE = new Float32Array(0);
 
+const DEFAULT_VIEW_POSE: Required<ViewPose> = Object.freeze({
+  yaw: 0,
+  height: 0.05,
+  distance: 2.4,
+  lookAt: 0,
+  fov: 35,
+});
+
+function wrapYaw(yaw: number): number {
+  if (yaw > -Math.PI && yaw <= Math.PI) return yaw;
+  const wrapped = ((yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  return wrapped <= -Math.PI ? Math.PI : wrapped;
+}
+
+function normaliseViewPose(
+  overrides: ViewPose | undefined,
+  base: Required<ViewPose> = DEFAULT_VIEW_POSE,
+): Required<ViewPose> {
+  if (!overrides) return base;
+  const { yaw, height, distance, lookAt, fov } = overrides;
+  if (
+    (yaw !== undefined && !Number.isFinite(yaw)) ||
+    (height !== undefined && !Number.isFinite(height)) ||
+    (distance !== undefined && !Number.isFinite(distance)) ||
+    (lookAt !== undefined && !Number.isFinite(lookAt)) ||
+    (fov !== undefined && !Number.isFinite(fov))
+  ) {
+    return base;
+  }
+  const resolvedYaw = yaw === undefined ? base.yaw : wrapYaw(yaw);
+  const resolvedHeight = height === undefined ? base.height : Math.min(Math.max(height, -2), 3);
+  const resolvedDistance = distance === undefined ? base.distance : Math.min(Math.max(distance, 0.6), 12);
+  const resolvedLookAt = lookAt === undefined ? base.lookAt : Math.min(Math.max(lookAt, -2), 3);
+  const resolvedFov = fov === undefined ? base.fov : Math.min(Math.max(fov, 10), 80);
+  if (
+    resolvedYaw === base.yaw &&
+    resolvedHeight === base.height &&
+    resolvedDistance === base.distance &&
+    resolvedLookAt === base.lookAt &&
+    resolvedFov === base.fov
+  ) {
+    return base;
+  }
+  return Object.freeze({
+    yaw: resolvedYaw,
+    height: resolvedHeight,
+    distance: resolvedDistance,
+    lookAt: resolvedLookAt,
+    fov: resolvedFov,
+  });
+}
+
 /**
  * Wrap a TTSAdapter so its utterance `viseme` / `energy` events flow into a
  * motion sink. Returns a TTSAdapter whose `speak` forwards the underlying
@@ -274,6 +329,9 @@ class EngineImpl implements Engine {
   private ownsBaseAdapter: boolean;
 
   private readonly options: EngineOptions;
+  private _view: Required<ViewPose>;
+
+
 
   private avatar: LoadedAvatar | null = null;
   private skinMaterial: THREE.Material | null = null;
@@ -390,6 +448,7 @@ class EngineImpl implements Engine {
    */
   private compositor: CompositorGlass | null = null;
   private appliedCompositorConfig: HeadCompositorConfig | null = null;
+
   private hullProjector: SilhouetteProjector | null = null;
   /**
    * Set once the layer has been asked for and refused, which means this engine
@@ -402,6 +461,10 @@ class EngineImpl implements Engine {
     this.options = options;
 
     this.sysRenderer = createRendererHost();
+    this._view = normaliseViewPose(options.view);
+    this.applyView();
+
+
     this.sysBehavior = createBehaviorMachine();
     this.sysMotion = createMotionEngine();
     this.sysAudio = createAudioEngine();
@@ -459,6 +522,11 @@ class EngineImpl implements Engine {
   off<K extends keyof EngineEvents>(event: K, fn: (payload: EngineEvents[K]) => void): void {
     this.emitter.off(event, fn);
   }
+  get view(): Required<ViewPose> {
+    return this._view;
+  }
+
+
 
   emit<K extends keyof EngineEvents>(event: K, payload: EngineEvents[K]): void {
     this.emitter.emit(event, payload);
@@ -493,6 +561,8 @@ class EngineImpl implements Engine {
 
   async mount(canvas: HTMLCanvasElement, host: Element): Promise<void> {
     const generation = ++this.mountGeneration;
+
+
     const next = this.mountSerial.then(
       () => this.doMount(canvas, host, generation),
       () => this.doMount(canvas, host, generation),
@@ -515,6 +585,14 @@ class EngineImpl implements Engine {
     if (this.disposed) return;
     this.sysRenderer.setSize(width, height);
   }
+  setView(pose: ViewPose): void {
+    const next = normaliseViewPose(pose, this._view);
+    if (next === this._view) return;
+    this._view = next;
+    this.applyView();
+  }
+
+
 
   setMotionFrozen(frozen: boolean): void {
     this.motionFrozen = frozen;
@@ -833,6 +911,15 @@ class EngineImpl implements Engine {
     this.hullProjector = null;
   }
 
+  private applyView(): void {
+    const camera = this.sysRenderer.camera;
+    const { yaw, height, distance, lookAt, fov } = this._view;
+    camera.position.set(Math.sin(yaw) * distance, height, Math.cos(yaw) * distance);
+    camera.lookAt(0, lookAt, 0);
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -842,6 +929,7 @@ class EngineImpl implements Engine {
     this.reducedMotionMql?.removeEventListener?.('change', this.onReducedMotion);
 
     this.sysBehavior.dispose();
+
     this.sysMotion.dispose();
     this.sysSpeech.dispose();
     this.sysTextSkin.dispose();

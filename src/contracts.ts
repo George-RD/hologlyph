@@ -1012,11 +1012,28 @@ export interface RendererHost extends Disposable {
 // Engine (dec.api-emphasis): imperative advanced surface
 // ---------------------------------------------------------------------------
 
+export interface ViewPose {
+  /**
+   * Orbit about the world Y axis, radians. 0 is straight on, positive turns
+   * the camera to the head's left. Wrapped to (-PI, PI].
+   */
+  readonly yaw?: number;
+  /** Camera eye height above the origin plane, world units. */
+  readonly height?: number;
+  /** Camera distance from the head on its own view axis, world units. */
+  readonly distance?: number;
+  /** Height of the point the camera aims at, world units. */
+  readonly lookAt?: number;
+  /** Vertical field of view, degrees. */
+  readonly fov?: number;
+}
+
 export interface EngineOptions {
   avatarUrl?: string;
   textSource?: TextSkinSource;
   ttsAdapter?: TTSAdapter;
   headConfig?: HeadConfigOverrides;
+  view?: ViewPose;
   reducedMotion?: boolean;
 }
 
@@ -1047,6 +1064,10 @@ export interface Engine extends Emitter<EngineEvents>, Disposable {
   setEmotion(expression: Expression): void;
   setScrollProgress(progress: number): void;
   setTextSkinSource(source: TextSkinSource): void;
+  /** Merge a declarative camera pose into the live resolved view. */
+  setView(pose: ViewPose): void;
+  /** Live, validated camera pose. */
+  readonly view: Required<ViewPose>;
   setVoiceAdapter(adapter: TTSAdapter): void;
   /**
    * Name a subtree for the head to refract, or `null` to stop refracting

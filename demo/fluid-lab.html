@@ -152,12 +152,10 @@
       // --- camera ------------------------------------------------------
       // Same eye as the pool lab: above the waterline, so the flowing band at
       // the base of the bust is actually visible rather than edge on.
-      const camera = engine.sysRenderer.camera;
       const cam = { y: 0.55, z: 2.6, yaw: 0 };
       const LOOK_Y = 0.6;
       function applyCamera() {
-        camera.position.set(cam.z * Math.sin(cam.yaw), cam.y, cam.z * Math.cos(cam.yaw));
-        camera.lookAt(0, LOOK_Y, 0);
+        engine.setView({ yaw: cam.yaw, height: cam.y, distance: cam.z, lookAt: LOOK_Y });
       }
       applyCamera();
 
