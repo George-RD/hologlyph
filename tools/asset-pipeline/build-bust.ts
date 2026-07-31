@@ -47,7 +47,7 @@ declare const process: {
 };
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
  import { Document, type Primitive, WebIO } from '@gltf-transform/core';
@@ -55,8 +55,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE = join(HERE, '.cache');
 const MANIFEST_PATH = join(HERE, 'ict-source-manifest.json');
-const REPO_ROOT = resolve(HERE, '..', '..');
-const DEFAULT_OUT = join(REPO_ROOT, 'assets', 'hologlyph-bust.glb');
+const DEFAULT_OUT = join(HERE, '.build', 'hologlyph-bust.raw.glb');
 const INTERMEDIATE_OUT = join(HERE, '.build', 'hologlyph-bust.intermediate.glb');
 const TONGUE_MANIFEST_PATH = join(HERE, 'tongue-morphs.json');
 
@@ -1023,6 +1022,7 @@ async function main(): Promise<void> {
   const shippedGeo = build(neutral, deltas, null);
   const shippedDoc = toGltf(shippedGeo, CANONICAL_ORDER);
   const shippedBytes = await io.writeBinary(shippedDoc);
+  mkdirSync(dirname(out), { recursive: true });
   await Bun.write(out, shippedBytes);
   console.log(
     `[build-bust] wrote shipped bust ${out}: ${(shippedBytes.byteLength / 1024 / 1024).toFixed(2)} MB, ${CANONICAL_ORDER.length} targets`,

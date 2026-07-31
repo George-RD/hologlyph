@@ -42,7 +42,8 @@ cannot be relied on to carry classic PBR and map state into a blank
 
 Inspected asset: `assets/hologlyph-bust.glb`.
 
-SHA-256 at inspection: `c08365a15f5295caeb0cada89a0a60102481877a21535a32b71459d66f4ec145`.
+SHA-256 after the 2026-07-31 silhouette-hull rebake:
+`1f28c3b4cec2a53bef53255b3bf1cf50fb737ec399f4d7d68af99dded028d0e8`.
 
 The GLB was opened with `@gltf-transform/core` `NodeIO`, registering
 `EXTMeshoptCompression`, `KHRMeshQuantization`, and the installed
@@ -103,6 +104,11 @@ For each primitive using either material, `primitive.listSemantics()` returned
 | --- | --- | ---: | ---: | --- | --- | --- | --- |
 | `mouth_interior` | `[0.04, 0.03, 0.035, 1]` | 1 | 0.9 | `[0, 0, 0]` / none | none / none / none / none / none | `OPAQUE` / 0.5 | false |
 | `eye_trim` | `[0.09, 0.08, 0.09, 1]` | 1 | 0.8 | `[0, 0, 0]` / none | none / none / none / none / none | `OPAQUE` / 0.5 | false |
+
+After the silhouette-hull rebake, the complete inspection above was rerun
+against the new GLB, not merely re-hashed. Both rows still have exactly the
+recorded material values and slots. `eye_trim` remains a `bust` primitive with
+46 vertices, 168 indices, 56 triangles, and the five semantics listed above.
 
 Therefore neither material has texture, emissive, vertex-colour, alpha, or
 backface state that a node conversion could lose. The todo's premise was
