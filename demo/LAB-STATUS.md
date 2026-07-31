@@ -1,4 +1,43 @@
-# Next unit of work
+# Current handover
+
+Updated 2026-07-31, seventh pass. Four implementation units landed today:
+
+- **#88, public camera pose:** `Engine.setView`, resolved `Engine.view`, and
+  `EngineOptions.view` provide clamped declarative framing without exposing the
+  renderer camera. Five labs migrated off private camera access.
+- **#89, studio showcase overhaul:** the visible-stage framing fix, public
+  camera orbit, gaze interaction, and engine-owned speak/viseme flow landed
+  with browser smoke coverage.
+- **#90, melt internals:** eyeballs, mouth interior, and eye trim share the
+  melt displacement; authored internal material state is preserved through
+  owned node-material conversion.
+- **#91, silhouette hull tightening:** 32 directions bake 60 hull points,
+  reducing the resting convex-area ratio from 1.29x to 1.21x. The compositor
+  remains gated at `amount: 0`, so no shipped feature changes today.
+
+## One open item
+
+`todo.silhouette-hull-halo` is **blocked** on the owner's eye in
+`demo/compositor-lab.html`. The tighter crown and upper sides still leave a
+conspicuous wedge left of the jaw and shoulder. If it still reads as a halo,
+the recorded escalation is a concave outline, not more points on a convex hull.
+
+## Landing and maintenance
+
+Merging `glass` into `main` remains the owner's call: pushing to `main`
+redeploys the live demo. The Cairn 0.9 filename migration is deliberately
+deferred; it flags the repository's established `dec.`/`res.`/`src.` artefact
+names and has no rename-and-reference-rewrite migration command.
+
+Two traps found today are worth preserving:
+
+- `build-bust.ts` used to default to the shipped GLB, so a bare build could
+  overwrite the optimised asset while a following optimise step consumed stale
+  raw data. It now defaults to the `.build` raw intermediate.
+- A smoke script aimed at a non-existent page can pass against Vite's dev
+  history fallback. Smoke scripts must assert their resolved pathname.
+
+Everything below this line is the sixth pass, kept for the reasoning.
 
 Updated 2026-07-28, sixth pass. **There is one page now.**
 
