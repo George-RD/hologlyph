@@ -1,6 +1,6 @@
 ---
 node: hologlyph.adapter.web-component
-status: open
+status: done
 created: 2026-07-28
 ---
 
