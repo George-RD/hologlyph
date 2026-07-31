@@ -33,6 +33,12 @@
         transition: left 0.22s ease;
       }
       body.rail-visible #stage { left: var(--rail); }
+      /* Desktop begins with the rail geometry before module boot. Narrow
+         layouts remain collapsed until the rail controller has initialised. */
+      @media (max-width: 760px) {
+        body.rail-visible:not(.rail-ready) #stage { left: 0; }
+        body.rail-visible:not(.rail-ready) #rail { transform: translateX(calc(-1 * var(--rail))); }
+      }
       #holo {
         width: 100%;
         height: 100%;
@@ -262,7 +268,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="rail-visible">
     <div id="stage"><canvas id="holo"></canvas></div>
 
     <button id="focus" type="button" title="Hide the rail and give the head the whole viewport (F)">
@@ -527,7 +533,7 @@ resizeStage();
               controls: [
                 {
                   kind: 'note',
-                  text: 'Promoted 2026-07-28 from experimental spike to the approved liquid direction (dec.liquid-glass-melt). Active development, not ready. A vertex melt on the real bust rather than a particle field: neither the puddle morph nor the squeeze changes topology, so the rig, the authored visemes, the glyphs and the glass all survive and it runs on WebGL2. The escalation criterion did not fire, and at full melt the rim is a smooth ellipse with no facial features on it. Two things are known missing, both inside mesh displacement rather than arguments against it: the eyeballs and mouth cavity do not melt with the shell (todo.melt-internals), and the puddle has no thickness at exactly 1. The second half of the ask, squeezing between page elements, is this same melt driven by the stage colliders and is not built.',
+                  text: 'Promoted 2026-07-28 from experimental spike to the approved liquid direction (dec.liquid-glass-melt). Active development, not ready. A vertex melt on the real bust rather than a particle field: neither the puddle morph nor the squeeze changes topology, so the rig, the authored visemes, the glyphs and the glass all survive and it runs on WebGL2. The escalation criterion did not fire, and at full melt the rim is a smooth ellipse with no facial features on it. As of 2026-07-31, the eyeballs, mouth cavity and eye trim melt with the shell. The puddle still has no thickness at exactly 1. The second half of the ask, squeezing between page elements, is not built.',
                 },
               ],
             },
@@ -536,7 +542,7 @@ resizeStage();
               controls: [
                 {
                   kind: 'note',
-text: 'Camera framing is available on the public Engine view pose: orbit, height, distance, look-at and field of view persist through resize and avatar replacement. The studio uses Engine.setView and never accesses renderer internals.',
+                  text: 'Camera framing is available on the public Engine view pose: orbit, height, distance, look-at and field of view persist through resize and avatar replacement. The studio uses Engine.setView and never accesses renderer internals.',
                 },
               ],
             },
@@ -738,7 +744,7 @@ text: 'Camera framing is available on the public Engine view pose: orbit, height
           el('p', {
             className: 'tierNote',
             textContent:
-              'Known: the eyeballs and mouth cavity do not melt with the shell (todo.melt-internals), and the puddle has no thickness at exactly 1. Judge the shell, not those.',
+              'Known: internals melt with the shell as of 2026-07-31. The puddle still has no thickness at exactly 1, so judge the shell rather than a solid volume.',
           }),
         );
         return cycle;
@@ -894,6 +900,7 @@ text: 'Camera framing is available on the public Engine view pose: orbit, height
       }
       // A fixed rail leaves too little room for the bust below this width.
       setRailVisible(!narrowRail.matches);
+      document.body.classList.add('rail-ready');
       narrowRail.addEventListener('change', renderRailControl);
       focusBtn.addEventListener('click', () => setRailVisible(!document.body.classList.contains('rail-visible')));
       window.addEventListener('keydown', (e) => {

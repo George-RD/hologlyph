@@ -99,6 +99,7 @@ interface FakeVfx extends Omit<VFXEngine, 'rootOffsetY'> {
     passes: { front: THREE.Material; interior: THREE.Material; mask: THREE.Material };
     disposals: { front: number; interior: number; mask: number };
   }>;
+  meltedStandardSources: THREE.MeshStandardMaterial[];
   setReducedMotion(reduce: boolean): void;
 }
 interface FakeRenderer extends RendererHost {
@@ -386,6 +387,7 @@ vi.mock('../src/shaders', async () => ({
       },
       rootOffsetY: 0,
       clippingPlane: new THREE.Plane(),
+      meltedStandardSources: [],
       skinPassSets: [],
       createSkinMaterial() {
         // Disposal is the point of this fake, not just the shape: the mask
@@ -426,6 +428,10 @@ vi.mock('../src/shaders', async () => ({
       },
       createEyeballMaterial() {
         return { isEyeball: true, dispose() {} } as unknown as THREE.Material;
+      },
+      createMeltedStandardMaterial(material: THREE.MeshStandardMaterial) {
+        this.meltedStandardSources.push(material);
+        return { name: material.name, map: material.map, dispose() {} } as unknown as THREE.Material;
       },
       setHeadConfig(config: HeadConfigOverrides) {
         this.headConfigCalls.push(config);
@@ -1294,45 +1300,49 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
   });
 });
  
- describe('text-skin material application (mouth interior)', () => {
-   it('keeps mouth material but skins teeth, ordinary, and unnamed meshes', async () => {
-     const keepMaterials = { isKept: true } as unknown as THREE.Material;
-     const teethMaterials = { isTeeth: true } as unknown as THREE.Material;
-     const skinnedMaterial = { isSkin: false } as unknown as THREE.Material;
-     const unnamedMaterial = { isUnnamed: true } as unknown as THREE.Material;
-     const keptMesh = new THREE.Mesh(new THREE.BufferGeometry(), keepMaterials);
-     const teethMesh = new THREE.Mesh(new THREE.BufferGeometry(), teethMaterials);
-     const ordinaryMesh = new THREE.Mesh(new THREE.BufferGeometry(), skinnedMaterial);
-     const unnamedMesh = new THREE.Mesh(new THREE.BufferGeometry(), unnamedMaterial);
-     const skinMeshMaterial = { name: 'skin', dispose() {} } as unknown as THREE.Material;
-     h.skinMaterialOverride = skinMeshMaterial;
- 
-     h.avatarOverride = {
-       root: new THREE.Group(),
-       morphMeshes: [keptMesh, teethMesh, ordinaryMesh, unnamedMesh],
-       bones: {},
-       animations: [],
-       setMorph() {},
-       getMorph() {
-         return 0;
-       },
-       dispose() {},
-     };
-     (keptMesh.material as THREE.Material).name = 'mouth_interior';
-     (teethMesh.material as THREE.Material).name = 'teeth';
-     (ordinaryMesh.material as THREE.Material).name = 'bust';
- 
-     const engine = createEngine({ avatarUrl: 'fake.glb' });
-     await engine.mount(document.createElement('canvas'), document.createElement('div'));
- 
-     expect(keptMesh.material).toBe(keepMaterials);
-     expect((keptMesh.material as THREE.Material).name).toBe('mouth_interior');
-     expect(teethMesh.material).toBe(skinMeshMaterial);
-     expect(ordinaryMesh.material).toBe(skinMeshMaterial);
-     expect(unnamedMesh.material).toBe(skinMeshMaterial);
-     engine.dispose();
-   });
- });
+describe('text-skin material application (authored internals)', () => {
+  it('converts authored internals but skins teeth, ordinary, and unnamed meshes', async () => {
+    const mouthMaterial = new THREE.MeshStandardMaterial({ name: 'mouth_interior' });
+    const trimMaterial = new THREE.MeshStandardMaterial({ name: 'eye_trim' });
+    const teethMaterials = { isTeeth: true } as unknown as THREE.Material;
+    const skinnedMaterial = { isSkin: false } as unknown as THREE.Material;
+    const unnamedMaterial = { isUnnamed: true } as unknown as THREE.Material;
+    const mouthMesh = new THREE.Mesh(new THREE.BufferGeometry(), mouthMaterial);
+    const trimMesh = new THREE.Mesh(new THREE.BufferGeometry(), trimMaterial);
+    const teethMesh = new THREE.Mesh(new THREE.BufferGeometry(), teethMaterials);
+    const ordinaryMesh = new THREE.Mesh(new THREE.BufferGeometry(), skinnedMaterial);
+    const unnamedMesh = new THREE.Mesh(new THREE.BufferGeometry(), unnamedMaterial);
+    const skinMeshMaterial = { name: 'skin', dispose() {} } as unknown as THREE.Material;
+    h.skinMaterialOverride = skinMeshMaterial;
+    h.avatarOverride = {
+      root: new THREE.Group(),
+      morphMeshes: [mouthMesh, trimMesh, teethMesh, ordinaryMesh, unnamedMesh],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {},
+    };
+    (teethMesh.material as THREE.Material).name = 'teeth';
+    (ordinaryMesh.material as THREE.Material).name = 'bust';
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+
+    const vfx = h.registry.vfx.at(-1);
+    expect(vfx?.meltedStandardSources).toEqual([mouthMaterial, trimMaterial]);
+    expect(mouthMesh.material).not.toBe(mouthMaterial);
+    expect(trimMesh.material).not.toBe(trimMaterial);
+    expect((mouthMesh.material as THREE.Material).name).toBe('mouth_interior');
+    expect((trimMesh.material as THREE.Material).name).toBe('eye_trim');
+    expect(teethMesh.material).toBe(skinMeshMaterial);
+    expect(ordinaryMesh.material).toBe(skinMeshMaterial);
+    expect(unnamedMesh.material).toBe(skinMeshMaterial);
+    engine.dispose();
+  });
+});
 describe('displaced materials', () => {
   it('disposes displaced authored materials and their textures once on teardown', async () => {
     const texture = { isTexture: true, dispose: vi.fn() } as unknown as THREE.Texture;
@@ -1369,6 +1379,36 @@ describe('displaced materials', () => {
     engine.dispose();
 
     expect(sharedMaterialDispose).toHaveBeenCalledTimes(1);
+    expect(texture.dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('converted authored material disposal', () => {
+  it('leaves shared textures owned by the live converted material', async () => {
+    const texture = { isTexture: true, dispose: vi.fn() } as unknown as THREE.Texture;
+    const source = new THREE.MeshStandardMaterial({ map: texture });
+    source.name = 'mouth_interior';
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), source);
+    h.avatarOverride = {
+      root: new THREE.Group(),
+      morphMeshes: [mesh],
+      bones: {},
+      animations: [],
+      setMorph() {},
+      getMorph() {
+        return 0;
+      },
+      dispose() {
+        const material = mesh.material as unknown as { map?: THREE.Texture };
+        material.map?.dispose();
+      },
+    };
+
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    engine.dispose();
+    engine.dispose();
+
     expect(texture.dispose).toHaveBeenCalledTimes(1);
   });
 });

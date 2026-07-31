@@ -11,7 +11,10 @@ import {
 import { MELT_FLOOR, MELT_LAG, MELT_SPREAD } from '../src/shaders/melt';
 import {
   blendedProjectionUV,
+  buildEyeballMaterial,
+  buildMeltedStandardMaterial,
   buildSkinMaterial,
+  createStandardNodeMaterial,
   normaliseHeadConfig,
   PLANAR_DENSITY,
   planarUV,
@@ -46,7 +49,8 @@ interface NodeMaterialShape {
 }
 
 /** True when `target` appears anywhere in `root`'s node graph. */
-function reachesNode(root: TslNode, target: unknown): boolean {
+function reachesNode(root: TslNode | null | undefined, target: unknown): boolean {
+  if (root === null || root === undefined) return false;
   let found = false;
   root.traverse((node) => {
     if (node === target) found = true;
@@ -578,6 +582,67 @@ describe('skin shading constants (pure)', () => {
     expect(SHADE_AMBIENT).toBeLessThan(SHADE_FLOOR);
     expect(SHADE_FLOOR).toBeGreaterThan(0);
     expect(SHADE_FLOOR).toBeLessThan(1);
+  });
+});
+
+describe('createStandardNodeMaterial', () => {
+  it('preserves every representative authored standard-material property', () => {
+    const map = new THREE.Texture();
+    const normalMap = new THREE.Texture();
+    const emissiveMap = new THREE.Texture();
+    const source = new THREE.MeshStandardMaterial({
+      map,
+      normalMap,
+      emissive: new THREE.Color(0.2, 0.3, 0.4),
+      emissiveMap,
+      transparent: true,
+      opacity: 0.6,
+      alphaTest: 0.25,
+      side: THREE.DoubleSide,
+      vertexColors: true,
+    });
+
+    const converted = createStandardNodeMaterial(source);
+
+    expect(converted.map).toBe(map);
+    expect(converted.normalMap).toBe(normalMap);
+    expect(converted.emissive).toBe(source.emissive);
+    expect(converted.emissiveMap).toBe(emissiveMap);
+    expect(converted.transparent).toBe(true);
+    expect(converted.opacity).toBe(0.6);
+    expect(converted.alphaTest).toBe(0.25);
+    expect(converted.side).toBe(THREE.DoubleSide);
+    expect(converted.vertexColors).toBe(true);
+
+    const sourceProperties = source as unknown as Record<string, unknown>;
+    const convertedProperties = converted as unknown as Record<string, unknown>;
+    for (const key of Object.keys(sourceProperties)) {
+      // These identify the source's class and remain fixed by the node class.
+      if (key === 'type' || key === 'isMeshStandardMaterial') continue;
+      expect(convertedProperties[key]).toBe(sourceProperties[key]);
+    }
+  });
+});
+
+describe('internal melt displacement', () => {
+  it('routes melt amount and extent into the eyeball position', () => {
+    const eyeSkin = { texture: new THREE.CanvasTexture() } as unknown as TextSkinEngine;
+    const eye = buildEyeballMaterial(eyeSkin, { cx: 0, cy: 0, cz: 0 }, DEFAULT_HEAD_CONFIG);
+    const material = eye.material as unknown as NodeMaterialShape;
+
+    expect(reachesNode(material.positionNode, eye.uniforms.meltAmount), 'eyeball positionNode must reach meltAmount').toBe(true);
+    expect(reachesNode(material.positionNode, eye.uniforms.meltExtent), 'eyeball positionNode must reach meltExtent').toBe(true);
+  });
+
+  it('routes melt amount and extent into the converted authored position', () => {
+    const authored = buildMeltedStandardMaterial(
+      new THREE.MeshStandardMaterial(),
+      DEFAULT_HEAD_CONFIG,
+    );
+    const material = authored.material as unknown as NodeMaterialShape;
+
+    expect(reachesNode(material.positionNode, authored.uniforms.meltAmount), 'authored positionNode must reach meltAmount').toBe(true);
+    expect(reachesNode(material.positionNode, authored.uniforms.meltExtent), 'authored positionNode must reach meltExtent').toBe(true);
   });
 });
 describe('buildSkinMaterial (no GPU objects)', () => {

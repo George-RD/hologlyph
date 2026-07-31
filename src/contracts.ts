@@ -929,6 +929,8 @@ export interface VFXEngine extends Disposable {
   createSkinMaterial(skin: TextSkinEngine): SkinMaterials;
   /** Build the TSL eyeball material for the sclera cap. */
   createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material;
+  /** Convert an authored standard material and bind the shared melt map. */
+  createMeltedStandardMaterial(material: THREE.MeshStandardMaterial): THREE.Material;
   /** Live look controls. */
   setHeadConfig(config: HeadConfigOverrides): void;
   readonly headConfig: HeadConfig;
