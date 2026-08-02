@@ -16,6 +16,7 @@ page.on('pageerror', (error) => errors.push(error.message));
 page.on('console', (message) => {
   if (['error', 'warning'].includes(message.type())) errors.push(`${message.type()}: ${message.text()}`);
 });
+try {
 
 async function gotoStudio() {
   const response = await page.goto(`${BASE}index.html`, { waitUntil: 'load' });
@@ -32,20 +33,75 @@ async function gotoStudio() {
   });
 }
 
+function largestComponentBounds(mask, width, height) {
+  const visited = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  let largest = null;
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || visited[start]) continue;
+    let read = 0; let write = 1; let count = 0;
+    let minX = width; let maxX = -1; let minY = height; let maxY = -1;
+    queue[0] = start;
+    visited[start] = 1;
+    while (read < write) {
+      const index = queue[read++];
+      const x = index % width;
+      const y = Math.floor(index / width);
+      count++;
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx; const ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const next = ny * width + nx;
+        if (!mask[next] || visited[next]) continue;
+        visited[next] = 1;
+        queue[write++] = next;
+      }
+    }
+    if (!largest || count > largest.count) largest = { minX, maxX, minY, maxY, count };
+  }
+  return largest;
+}
+
+// Regression: one bright edge pixel must not expand the centred subject bounds.
+{
+  const mask = new Uint8Array(9 * 5);
+  for (let y = 1; y <= 3; y++) for (let x = 3; x <= 5; x++) mask[y * 9 + x] = 1;
+  mask[8] = 1;
+  const bounds = largestComponentBounds(mask, 9, 5);
+  if (!bounds || bounds.minX !== 3 || bounds.maxX !== 5 || bounds.count !== 9) {
+    throw new Error('largest-component bounds include an isolated foreground outlier');
+  }
+}
+
 function centroid(path, threshold = 55) {
   const { data, width, height, channels } = decodePng(path);
-  let count = 0; let sumX = 0; let minX = width; let maxX = -1;
+  let count = 0; let sumX = 0;
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const i = (y * width + x) * channels;
     if (Math.abs(data[i] - 5) + Math.abs(data[i + 1] - 7) + Math.abs(data[i + 2] - 13) < threshold) continue;
-    count++; sumX += x; minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    count++; sumX += x;
   }
-  return { x: sumX / count, bboxCentre: (minX + maxX) / 2, count };
+  return { x: sumX / count, count };
+}
+
+function largestForegroundBounds(path, threshold = 55) {
+  const { data, width, height, channels } = decodePng(path);
+  const mask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const index = y * width + x;
+    const i = index * channels;
+    if (Math.abs(data[i] - 5) + Math.abs(data[i + 1] - 7) + Math.abs(data[i + 2] - 13) >= threshold) mask[index] = 1;
+  }
+  const bounds = largestComponentBounds(mask, width, height);
+  return { width, bounds };
 }
 
 function residualOffset(path) {
-  const { width } = decodePng(path);
   const sample = centroid(path);
+  const { width, bounds } = largestForegroundBounds(path);
   const thresholds = Object.fromEntries([30, 55, 80, 110].map((threshold) => {
     const value = centroid(path, threshold);
     return [threshold, value.x - width / 2];
@@ -53,7 +109,7 @@ function residualOffset(path) {
   return {
     width,
     centroidOffset: sample.x - width / 2,
-    bboxOffset: sample.bboxCentre - width / 2,
+    bboxOffset: bounds ? (bounds.minX + bounds.maxX) / 2 - width / 2 : Number.NaN,
     thresholds,
     count: sample.count,
   };
@@ -87,15 +143,17 @@ for (const [name, width, height, focus] of cases) {
   await page.evaluate(() => document.body.classList.remove('measuring'));
   const head = centroid(path);
   const shell = centroid(path, 30);
+  const { bounds } = largestForegroundBounds(path);
+  const bboxCentre = bounds ? (bounds.minX + bounds.maxX) / 2 : Number.NaN;
   results.push({
     name,
     centroid: head.x + stage.x,
     shellCentroid: shell.x + stage.x,
-    bboxCentre: head.bboxCentre + stage.x,
+    bboxCentre: bboxCentre + stage.x,
     stageCentre: stage.x + stage.width / 2,
     offset: head.x - stage.width / 2,
     shellOffset: shell.x - stage.width / 2,
-    bboxOffset: head.bboxCentre - stage.width / 2,
+    bboxOffset: bboxCentre - stage.width / 2,
     pixels: head.count,
   });
 }
@@ -170,7 +228,6 @@ const speakingAfterCancel = await page.evaluate(() => window.__hologlyphEngine.s
 const afterCancel = await page.locator('#speak').textContent();
 const speechEvents = await page.evaluate(() => window.__studioSpeechEvents);
 const mouthPixelsChanged = mouthMotion(before, during);
-await browser.close();
 console.log(JSON.stringify({ results, residualReduced, residualFrozen, breakpointRail, poseBefore, poseAfterDrag, yawSlider, poseAfterWheel, distanceSlider, poseAfterReset, gazeCallsBeforeDrag, gazeCallsAtDragStart, gazeCallsAfterDrag, speechEvents, mouthPixelsChanged, speakingBeforeCancel, speakingAfterCancel, afterCancel, errors }, null, 2));
 const failures = [];
 // The threshold-55 centroid is a brightness diagnostic: glyph and lighting
@@ -189,3 +246,6 @@ if (!speechEvents.includes('start') || !speechEvents.includes('end') || mouthPix
 if (errors.length) failures.push(`console/page errors: ${errors.join('; ')}`);
 if (failures.length) throw new Error(`STUDIO SHOWCASE SMOKE FAILED\n${failures.join('\n')}`);
 console.log('STUDIO SHOWCASE SMOKE PASSED');
+} finally {
+  await browser.close();
+}
