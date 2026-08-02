@@ -246,9 +246,11 @@
         white-space: nowrap;
         border: 0;
       }
+      /* Element screenshots can include clipped DOM overlays, so mask all stage chrome. */
       body.measuring #focus,
       body.measuring #saybar,
-      body.measuring #stageHint { visibility: hidden; }
+      body.measuring #stageHint,
+      body.measuring #hud { visibility: hidden; }
 
       /* Same reasoning as the focus chip: it sits over the stage, and the
          stage colour is now user-chosen. */
