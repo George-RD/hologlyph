@@ -2,698 +2,176 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>hologlyph studio</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --panel: #080d18;
-        --line: #1d2740;
-        --fg: #e6ecff;
-        --dim: #8c9ab8;
-        --accent: #6cc6ff;
-        --warn: #ffd479;
-        --bad: #ff8f9c;
-        --rail: 23rem;
-      }
-      * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; overflow: hidden; }
-      body {
-        color: var(--fg);
-        font: 13px/1.55 system-ui, sans-serif;
-        /* The stage colour is the page colour: the head is transparent, so a
-           backdrop is not decoration, it is what you judge the glass against. */
-        background: #05070d;
-      }
-
-      #stage { position: fixed; inset: 0; }
-      #holo { width: 100%; height: 100%; display: block; }
-
-      /* --- rail ------------------------------------------------------- */
-      #rail {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: var(--rail);
-        display: flex;
-        flex-direction: column;
-        border-right: 1px solid var(--line);
-        background: color-mix(in srgb, var(--panel) 88%, transparent);
-        backdrop-filter: blur(10px);
-        transition: transform 0.22s ease;
-        z-index: 3;
-      }
-      body.focus #rail { transform: translateX(calc(-1 * var(--rail))); }
-
-      #railHead { padding: 0.85rem 1rem 0.6rem; border-bottom: 1px solid var(--line); }
-      #railHead h1 { font-size: 0.95rem; margin: 0; }
-      #railHead p { margin: 0.1rem 0 0; font-size: 0.72rem; color: var(--dim); }
-      #railBody { flex: 1; overflow-y: auto; padding: 0.5rem 0.75rem 3rem; }
-
-      /* --- progressive disclosure -------------------------------------- */
-      details.group {
-        border: 1px solid var(--line);
-        border-radius: 0.45rem;
-        margin-bottom: 0.45rem;
-        background: rgba(255, 255, 255, 0.015);
-      }
-      details.group > summary {
-        cursor: pointer;
-        padding: 0.45rem 0.65rem;
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        list-style: none;
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-      }
-      details.group > summary::-webkit-details-marker { display: none; }
-      details.group > summary::before {
-        content: '▸';
-        color: var(--dim);
-        font-size: 0.7rem;
-        transition: transform 0.15s;
-      }
-      details.group[open] > summary::before { transform: rotate(90deg); }
-      details.group > summary .note {
-        margin-left: auto;
-        font-weight: 400;
-        font-size: 0.68rem;
-        color: var(--dim);
-      }
-      details.group > .body { padding: 0.1rem 0.65rem 0.6rem; }
-
-      details.tier { border-color: transparent; background: none; margin-bottom: 0.2rem; }
-      details.tier > summary {
-        color: var(--dim);
-        text-transform: uppercase;
-        font-size: 0.68rem;
-        letter-spacing: 0.09em;
-        padding: 0.7rem 0.3rem 0.3rem;
-      }
-      details.tier > .body { padding: 0 0 0.4rem; }
-      details.tier.dev > summary { color: var(--warn); }
-      details.tier.legacy > summary { color: var(--bad); }
-      details.tier.notes > summary { color: var(--accent); }
-      /* Prose, not a control. Wider measure than a slider row and left aligned
-         with the group body rather than the label column. */
-      .noteText {
-        font-size: 0.74rem;
-        color: var(--dim);
-        margin: 0.15rem 0 0.35rem;
-      }
-
-      .tierNote {
-        font-size: 0.7rem;
-        color: var(--dim);
-        margin: 0 0.3rem 0.5rem;
-        padding-left: 0.55rem;
-        border-left: 2px solid var(--line);
-      }
-
-      /* --- controls ---------------------------------------------------- */
-      .row {
-        display: grid;
-        grid-template-columns: 1fr 2fr auto;
-        gap: 0.4rem;
-        align-items: center;
-        margin: 0.18rem 0;
-      }
-      .row > label { font-size: 0.76rem; color: var(--fg); }
-      .row > label.off { color: var(--dim); }
-      .row output {
-        font-variant-numeric: tabular-nums;
-        font-size: 0.7rem;
-        color: var(--dim);
-        min-width: 3rem;
-        text-align: right;
-      }
-      input[type='range'] { width: 100%; accent-color: var(--accent); }
-      input[type='color'] {
-        width: 100%;
-        height: 1.35rem;
-        padding: 0;
-        border: 1px solid var(--line);
-        border-radius: 0.25rem;
-        background: none;
-      }
-      .row.check { grid-template-columns: auto 1fr; }
-      .row.check input { accent-color: var(--accent); }
-
-      .btns { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.4rem 0 0.1rem; }
-      button {
-        font: inherit;
-        font-size: 0.74rem;
-        padding: 0.28rem 0.55rem;
-        border-radius: 0.3rem;
-        border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.04);
-        color: var(--fg);
-        cursor: pointer;
-      }
-      button:hover { border-color: var(--accent); }
-      button.on { border-color: var(--accent); background: rgba(108, 198, 255, 0.16); }
-
-      .swatches { display: flex; gap: 0.25rem; flex-wrap: wrap; margin: 0.35rem 0 0.15rem; }
-      .swatches button {
-        width: 1.5rem;
-        height: 1.5rem;
-        padding: 0;
-        border-radius: 0.25rem;
-      }
-
-      /* --- focus toggle ------------------------------------------------ */
-      /* This chip floats over the stage, so it cannot inherit the rail's
-         contrast: on a light backdrop a near-white button on near-white page
-         disappears. It carries its own dark ground. */
-      #focus {
-        position: fixed;
-        top: 0.6rem;
-        left: calc(var(--rail) + 0.6rem);
-        z-index: 4;
-        transition: left 0.22s ease;
-        background: rgba(8, 13, 24, 0.82);
-        border-color: rgba(230, 236, 255, 0.28);
-        color: #e6ecff;
-        backdrop-filter: blur(6px);
-      }
-      body.focus #focus { left: 0.6rem; }
-
-      /* Same reasoning as the focus chip: it sits over the stage, and the
-         stage colour is now user-chosen. */
-      #hud {
-        position: fixed;
-        right: 0.7rem;
-        bottom: 0.7rem;
-        z-index: 3;
-        font-size: 0.7rem;
-        color: #e6ecff;
-        background: rgba(8, 13, 24, 0.72);
-        padding: 0.15rem 0.45rem;
-        border-radius: 0.3rem;
-        font-variant-numeric: tabular-nums;
-        text-align: right;
-        pointer-events: none;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#05070d" />
+    <title>hologlyph</title>
+    <link rel="stylesheet" href="./showcase.css" />
   </head>
   <body>
-    <div id="stage"><canvas id="holo"></canvas></div>
+    <main id="stage" aria-label="Interactive Hologlyph head">
+      <canvas id="holo"></canvas>
+    </main>
 
-    <button id="focus" type="button" title="Hide the rail and give the head the whole viewport (F)">
-      focus
-    </button>
-
-    <div id="rail">
-      <div id="railHead">
-        <h1>hologlyph studio</h1>
-        <p>One surface over the library engine. Key looks live, the rest folded away.</p>
+    <header class="chrome top-chrome">
+      <div class="wordmark" aria-label="Hologlyph">
+        <strong>hologlyph</strong>
+        <span>talking head playground</span>
       </div>
-      <div id="railBody"></div>
+      <button
+        id="settingsTrigger"
+        class="icon-button"
+        type="button"
+        aria-label="Open studio controls"
+        aria-controls="settingsPanel"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Z" />
+          <path d="M19.2 13.1c.05-.36.05-.74 0-1.1l2.02-1.58-1.9-3.28-2.38.96a8.1 8.1 0 0 0-.95-.55L15.64 5h-3.79l-.36 2.55c-.33.16-.65.34-.95.55l-2.38-.96-1.9 3.28L8.28 12c-.05.36-.05.74 0 1.1l-2.02 1.58 1.9 3.28 2.38-.96c.3.21.62.39.95.55l.36 2.55h3.79l.35-2.55c.34-.16.66-.34.96-.55l2.38.96 1.9-3.28-2.03-1.58Z" />
+        </svg>
+      </button>
+    </header>
+
+    <p id="interactionHint" class="interaction-hint">Drag to turn the head</p>
+
+    <div id="captionBubble" class="caption-bubble" aria-live="polite" aria-atomic="true">
+      <span id="captionText"></span>
     </div>
 
-    <div id="hud"></div>
+    <div id="expressionMenu" class="expression-menu" role="group" aria-label="Choose an expression"></div>
 
-    <script type="module">
-      import { createEngine } from '../src/index.ts';
+    <section
+      id="captionPanel"
+      class="caption-panel"
+      aria-label="Choose something for Hologlyph to say"
+      aria-hidden="true"
+    >
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">sample speech</p>
+          <h2>Choose a line</h2>
+        </div>
+        <button id="closeCaptions" class="small-close" type="button" aria-label="Close sample speech">×</button>
+      </div>
+      <div id="captionList" class="caption-list"></div>
+    </section>
 
-      const canvas = document.getElementById('holo');
-      const stage = document.getElementById('stage');
-      const engine = createEngine();
-      window.__hologlyphEngine = engine;
-      engine.on('error', (err) => console.error('[hologlyph]', err));
-      await engine.mount(canvas, stage);
-      engine.setScrollProgress(1);
+    <nav class="chrome command-dock" aria-label="Hologlyph controls">
+      <button
+        id="expressionTrigger"
+        class="dock-button"
+        type="button"
+        aria-label="Choose expression"
+        aria-controls="expressionMenu"
+        aria-expanded="false"
+        data-expression="friendly"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.25" />
+          <path d="M8.6 10h.01M15.4 10h.01M8.5 14.1c1.85 1.55 5.15 1.55 7 0" />
+        </svg>
+        <span>mood</span>
+      </button>
 
-      const resize = () => engine.resize(stage.clientWidth, stage.clientHeight);
-      window.addEventListener('resize', resize);
-      resize();
+      <button id="speakTrigger" class="dock-button primary" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5.5 10.25v3.5M9.25 7.75v8.5M13 5.5v13M16.75 8v8M20.5 10.25v3.5" />
+        </svg>
+        <span>say</span>
+      </button>
 
-      // ================================================================
-      // Control schema.
-      //
-      // Three tiers, which is the whole point of this page:
-      //   live    - what someone dressing the head actually reaches for
-      //   advanced- real knobs, but per-region trims nobody needs day to day
-      //   dev     - work in progress, and superseded features kept for reference
-      //
-      // `path` addresses HeadConfig. Everything is driven through
-      // `engine.vfx.setHeadConfig`, so this page exercises the shipped surface
-      // rather than a parallel one.
-      // ================================================================
-      // The engine's own live config, not `DEFAULT_HEAD_CONFIG`: that is a value
-      // and `src/index.ts` re-exports only types, so it is not on the public
-      // surface. `headConfig` is, and at boot it IS the defaults.
-      const D = engine.vfx.headConfig;
+      <button
+        id="captionTrigger"
+        class="dock-button"
+        type="button"
+        aria-label="Choose sample speech"
+        aria-controls="captionPanel"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5.25 5.75h13.5v9.5H11l-4.75 3v-3h-1V5.75Z" />
+          <path d="M8.25 9.2h7.5M8.25 12h5" />
+        </svg>
+        <span>lines</span>
+      </button>
+    </nav>
 
-      const SCHEMA = [
-        {
-          tier: 'live',
-          groups: [
-            {
-              title: 'Backdrop',
-              open: true,
-              note: 'what you judge glass against',
-              controls: [
-                { kind: 'backdrop', label: 'page colour' },
-                { kind: 'swatches', label: 'presets' },
-              ],
-            },
-            {
-              title: 'Glass',
-              open: true,
-              controls: [
-                { path: 'skin.glass.amount', label: 'glass', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.glass.tint', label: 'tint', kind: 'color' },
-                { path: 'skin.opacity.base', label: 'presence', min: 0, max: 1, step: 0.005 },
-              ],
-            },
-            {
-              title: 'Ink and tone',
-              open: true,
-              controls: [
-                { path: 'skin.tone.balance', label: 'balance', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.tone.skinWarmth', label: 'warmth', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.tone.rim', label: 'rim', min: 0, max: 0.5, step: 0.005 },
-              ],
-            },
-            {
-              title: 'Glyphs',
-              controls: [
-                { path: 'skin.glyph.scale', label: 'size', min: 0.2, max: 2, step: 0.01 },
-                { path: 'skin.glyph.sharpness', label: 'sharpness', min: 0.5, max: 12, step: 0.1 },
-              ],
-            },
-            {
-              title: 'Eyes',
-              controls: [
-                { path: 'eyes.irisColor', label: 'iris', kind: 'color' },
-                { path: 'eyes.scleraColor', label: 'sclera', kind: 'color' },
-                { path: 'eyes.irisSize', label: 'iris size', min: 0.1, max: 0.9, step: 0.01 },
-                { path: 'eyes.presence', label: 'presence', min: 0, max: 1, step: 0.01 },
-              ],
-            },
-            { title: 'Motion', controls: [{ kind: 'motion' }] },
-          ],
-        },
-        {
-          tier: 'advanced',
-          label: 'Advanced',
-          note: 'Per-region trims and shading internals. These were how the approved look was found; they are not day-to-day controls.',
-          groups: [
-            {
-              title: 'Region opacity',
-              note: 'was the whole panel once',
-              controls: [
-                { path: 'skin.opacity.lips', label: 'lips', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.opacity.nose', label: 'nose', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.opacity.jaw', label: 'jaw', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.opacity.orbit', label: 'orbit', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.opacity.brow', label: 'brow', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.opacity.socketMask', label: 'socket mask', min: 0, max: 1, step: 0.01 },
-              ],
-            },
-            {
-              title: 'Feature shading',
-              controls: [
-                { path: 'skin.shading.socketShadow', label: 'socket', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.shading.socketSize', label: 'socket size', min: 0, max: 3, step: 0.01 },
-                { path: 'skin.shading.cavity', label: 'cavity', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.shading.lipDark', label: 'lip dark', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.shading.lipHue', label: 'lip hue', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.shading.lipGate', label: 'lip gate', min: 0, max: 4, step: 0.05 },
-                { path: 'skin.shading.eyelid', label: 'eyelid', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.shading.brow', label: 'brow', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.shading.browGate', label: 'brow gate', min: 0, max: 4, step: 0.05 },
-              ],
-            },
-            {
-              title: 'Glass response',
-              controls: [
-                { path: 'skin.glass.fresnel', label: 'fresnel', min: 0, max: 2, step: 0.01 },
-                { path: 'skin.glass.fresnelPower', label: 'fresnel pow', min: 0.5, max: 8, step: 0.05 },
-                { path: 'skin.glass.specular', label: 'specular', min: 0, max: 2, step: 0.01 },
-                { path: 'skin.glass.sheen', label: 'sheen', min: 0, max: 120, step: 1 },
-                { path: 'skin.glass.refraction', label: 'refraction', min: 0, max: 0.2, step: 0.002 },
-              ],
-            },
-            {
-              title: 'Glyph grid',
-              controls: [
-                { path: 'skin.glyph.horizontalDensity', label: 'h density', min: 0.5, max: 6, step: 0.05 },
-                { path: 'skin.glyph.verticalDensity', label: 'v density', min: 0.5, max: 6, step: 0.05 },
-                { path: 'skin.tone.amount', label: 'tone amount', min: 0, max: 1, step: 0.01 },
-                { path: 'skin.tone.glowGain', label: 'glow gain', min: 0, max: 2, step: 0.01 },
-              ],
-            },
-            {
-              title: 'Eye internals',
-              controls: [
-                { path: 'eyes.density', label: 'density', min: 50, max: 600, step: 5 },
-                { path: 'eyes.scleraGlow', label: 'sclera glow', min: 0, max: 2, step: 0.01 },
-                { path: 'eyes.irisGlow', label: 'iris glow', min: 0, max: 4, step: 0.01 },
-                { path: 'eyes.pupil', label: 'pupil', min: 0, max: 0.8, step: 0.01 },
-                { path: 'skin.backdrop.adapt', label: 'backdrop adapt', min: 0, max: 1, step: 0.01 },
-              ],
-            },
-          ],
-        },
-        {
-          tier: 'dev',
-          label: 'Developer, work in progress',
-          note: 'The melt is the live liquid direction (dec.liquid-glass-melt) and needs judging. Everything under Superseded was ruled against on 2026-07-27 and is kept only so it can be compared against.',
-          groups: [
-            {
-              title: 'Melt',
-              open: true,
-              note: 'WIP',
-              controls: [
-                { path: 'melt.amount', label: 'amount', min: 0, max: 1, step: 0.005 },
-                { path: 'melt.spread', label: 'spread', min: 0, max: 4, step: 0.05 },
-                { path: 'melt.floor', label: 'floor', min: 0, max: 0.4, step: 0.005 },
-                { path: 'melt.lag', label: 'lag', min: 0, max: 2, step: 0.01 },
-                { kind: 'melt-actions' },
-              ],
-            },
-          ],
-        },
-        {
-          tier: 'legacy',
-          label: 'Superseded',
-          note: 'Cut or missed on 2026-07-27 (src.owner-look-2026-07-27). All gated off. Nothing here is a direction; they are here to A/B against the melt.',
-          groups: [
-            {
-              title: 'Pool',
-              note: 'CUT',
-              controls: [{ path: 'pool.amount', label: 'amount', min: 0, max: 1, step: 0.01 }],
-            },
-            {
-              title: 'Modal fluid',
-              note: 'MISSED',
-              controls: [
-                { path: 'fluid.amount', label: 'amount', min: 0, max: 1, step: 0.01 },
-                { path: 'stage.amount', label: 'stage', min: 0, max: 1, step: 0.01 },
-              ],
-            },
-            {
-              title: 'Backdrop rungs',
-              note: 'lens preferred',
-              controls: [
-                { path: 'lens.amount', label: 'lens', min: 0, max: 1, step: 0.01 },
-                { path: 'compositor.amount', label: 'frost', min: 0, max: 1, step: 0.01 },
-              ],
-            },
-            {
-              title: 'Interior glyphs',
-              note: 'experimental',
-              controls: [
-                { path: 'interior.count', label: 'count', min: 0, max: 400, step: 1 },
-                { path: 'interior.drift', label: 'drift', min: 0, max: 0.05, step: 0.001 },
-              ],
-            },
-          ],
-        },
-        {
-          // The 2026-07-27 rulings and the melt's status, folded in from what
-          // used to be a separate outcomes page. One environment: a ruling you
-          // have to open a second URL to read is a ruling nobody reads.
-          tier: 'notes',
-          label: 'What was decided, and when',
-          groups: [
-            {
-              title: 'The look session, 2026-07-27',
-              controls: [
-                {
-                  kind: 'note',
-                  text: 'Six gated features walked in one sitting, most ruled against. Pool: CUT, "thats not at all what i was getting at". Modal fluid: MISSED, "its just like a gravity effect? and it all bulges". Stage participants: MISSED, "a bit weird, and doesnt hit the mark". Compositor frost: rejected on the shape of its clip, not its content. Interior glyphs: kept, experimental, default off. Of the two backdrop rungs the lens wins. Verbatim in src.owner-look-2026-07-27.',
-                },
-              ],
-            },
-            {
-              title: 'Glass is the default now',
-              open: true,
-              controls: [
-                {
-                  kind: 'note',
-                  text: 'Approved, and no longer a lab feature: skin.glass.amount ships at 1 and this page is the one environment it is shown in. Above 0 it is a live uniform you can dial freely. At exactly 0 it is a mode switch, because applyGlassLayering drops the interior wall, flips transparency across the layered set and recompiles. So treat 0 as off rather than as the bottom of the dial.',
-                },
-              ],
-            },
-            {
-              title: 'The melt is active development',
-              open: true,
-              controls: [
-                {
-                  kind: 'note',
-                  text: 'Promoted 2026-07-28 from experimental spike to the approved liquid direction (dec.liquid-glass-melt). Active development, not ready. A vertex melt on the real bust rather than a particle field: neither the puddle morph nor the squeeze changes topology, so the rig, the authored visemes, the glyphs and the glass all survive and it runs on WebGL2. The escalation criterion did not fire, and at full melt the rim is a smooth ellipse with no facial features on it. Two things are known missing, both inside mesh displacement rather than arguments against it: the eyeballs and mouth cavity do not melt with the shell (todo.melt-internals), and the puddle has no thickness at exactly 1. The second half of the ask, squeezing between page elements, is this same melt driven by the stage colliders and is not built.',
-                },
-              ],
-            },
-            {
-              title: 'Known gaps in this page',
-              controls: [
-                {
-                  kind: 'note',
-                  text: 'No camera framing. It needs EngineImpl.sysRenderer.camera, which is private and not on the Engine contract, so this page goes without rather than widening the contract as a side effect of a demo. todo.public-camera-pose is the prerequisite, and the presentation overhaul in todo.studio-showcase-overhaul depends on it.',
-                },
-              ],
-            },
-          ],
-        },
-      ];
+    <button id="settingsScrim" class="settings-scrim" type="button" tabindex="-1" aria-label="Close studio controls"></button>
 
-      // ================================================================
-      // Plumbing
-      // ================================================================
-      const at = (obj, path) => path.split('.').reduce((o, k) => o?.[k], obj);
+    <aside id="settingsPanel" class="settings-panel" aria-hidden="true" aria-label="Studio controls">
+      <div class="settings-heading">
+        <div>
+          <p class="eyebrow">hologlyph studio</p>
+          <h2>Live look</h2>
+        </div>
+        <button id="closeSettings" class="small-close" type="button" aria-label="Close studio controls">×</button>
+      </div>
 
-      /** A single-key-deep patch object for `setHeadConfig`, from a dotted path. */
-      function patch(path, value) {
-        const keys = path.split('.');
-        const out = {};
-        let node = out;
-        for (let i = 0; i < keys.length - 1; i++) node = node[keys[i]] = {};
-        node[keys[keys.length - 1]] = value;
-        return out;
-      }
+      <div class="settings-body">
+        <section class="settings-group">
+          <div class="settings-label">
+            <span>Backdrop</span>
+            <output id="backdropValue">#05070d</output>
+          </div>
+          <div id="backdropSwatches" class="swatches" aria-label="Backdrop presets"></div>
+        </section>
 
-      const push = (path, value) => engine.vfx.setHeadConfig(patch(path, value));
+        <section class="settings-group">
+          <label class="settings-label" for="glassAmount">
+            <span>Glass</span>
+            <output id="glassAmountValue" for="glassAmount"></output>
+          </label>
+          <input id="glassAmount" type="range" min="0" max="1" step="0.01" />
 
-      const el = (tag, props = {}, kids = []) => {
-        const node = Object.assign(document.createElement(tag), props);
-        for (const kid of kids) node.append(kid);
-        return node;
-      };
+          <label class="settings-label" for="presence">
+            <span>Presence</span>
+            <output id="presenceValue" for="presence"></output>
+          </label>
+          <input id="presence" type="range" min="0" max="1" step="0.005" />
 
-      const railBody = document.getElementById('railBody');
-      const rangeInputs = new Map();
+          <label class="colour-control" for="glassTint">
+            <span>Glass tint</span>
+            <input id="glassTint" type="color" />
+          </label>
+        </section>
 
-      function addRange(host, spec) {
-        const current = at(engine.vfx.headConfig, spec.path) ?? 0;
-        const input = el('input', {
-          type: 'range',
-          min: String(spec.min),
-          max: String(spec.max),
-          step: String(spec.step),
-          value: String(current),
-        });
-        const out = el('output', { textContent: fmt(current, spec.step) });
-        const label = el('label', { textContent: spec.label });
-        input.addEventListener('input', () => {
-          const v = Number(input.value);
-          out.textContent = fmt(v, spec.step);
-          push(spec.path, v);
-        });
-        rangeInputs.set(spec.path, { input, out, spec });
-        host.append(el('div', { className: 'row' }, [label, input, out]));
-      }
+        <section class="settings-group">
+          <label class="settings-label" for="toneBalance">
+            <span>Ink balance</span>
+            <output id="toneBalanceValue" for="toneBalance"></output>
+          </label>
+          <input id="toneBalance" type="range" min="0" max="1" step="0.01" />
 
-      const fmt = (v, step) => v.toFixed(step >= 1 ? 0 : step >= 0.05 ? 2 : 3);
+          <label class="settings-label" for="warmth">
+            <span>Warmth</span>
+            <output id="warmthValue" for="warmth"></output>
+          </label>
+          <input id="warmth" type="range" min="0" max="1" step="0.01" />
 
-      function addColor(host, spec) {
-        const input = el('input', {
-          type: 'color',
-          value: at(engine.vfx.headConfig, spec.path) ?? '#ffffff',
-        });
-        input.addEventListener('input', () => push(spec.path, input.value));
-        host.append(el('div', { className: 'row' }, [el('label', { textContent: spec.label }), input, el('output')]));
-      }
+          <label class="settings-label" for="rim">
+            <span>Rim</span>
+            <output id="rimValue" for="rim"></output>
+          </label>
+          <input id="rim" type="range" min="0" max="0.5" step="0.005" />
+        </section>
 
-      // --- the backdrop, which is two writes, not one ------------------
-      // `skin.backdrop` only retunes the ink and glow so the glyphs stay legible
-      // (`adaptToBackdrop`). It does not paint anything. And `auto: true` makes
-      // the engine read the colour off the host at mount, which would overwrite
-      // whatever is set here. So: paint the page, push the colour, and turn
-      // `auto` off so the push sticks.
-      function setBackdrop(color) {
-        document.body.style.background = color;
-        engine.vfx.setHeadConfig({ skin: { backdrop: { color, auto: false } } });
-      }
+        <label class="toggle-row" for="reducedMotion">
+          <span>
+            <strong>Reduced motion</strong>
+            <small>Damps nods and disables saccades</small>
+          </span>
+          <input id="reducedMotion" type="checkbox" />
+        </label>
+      </div>
 
-      const BACKDROPS = ['#05070d', '#101826', '#1b2430', '#2b1d33', '#0e2a2a', '#f4f1ea', '#ffffff'];
+      <div class="settings-footer">
+        <a href="./studio.html">Open all studio controls</a>
+        <a href="https://github.com/George-RD/hologlyph">GitHub</a>
+      </div>
+    </aside>
 
-      function addBackdrop(host, spec) {
-        const input = el('input', { type: 'color', value: D.skin.backdrop.color });
-        input.addEventListener('input', () => setBackdrop(input.value));
-        host.append(el('div', { className: 'row' }, [el('label', { textContent: spec.label }), input, el('output')]));
-        host.dataset.backdropInput = '1';
-        host._backdropInput = input;
-      }
+    <div id="statusToast" class="status-toast" role="status" aria-live="polite"></div>
 
-      function addSwatches(host) {
-        const wrap = el('div', { className: 'swatches' });
-        for (const color of BACKDROPS) {
-          const b = el('button', { type: 'button', title: color });
-          b.style.background = color;
-          b.addEventListener('click', () => {
-            setBackdrop(color);
-            const input = host._backdropInput;
-            if (input) input.value = color;
-          });
-          wrap.append(b);
-        }
-        host.append(wrap);
-      }
-
-      // No camera controls. Framing would need `engine.sysRenderer.camera`,
-      // which is an `EngineImpl` private and not on the `Engine` contract. The
-      // five one-off lab pages reach for it because they are throwaway; this
-      // page is meant to be deployable, so it stays on the public surface.
-      // A public camera-pose method is a contract change with its own decision:
-      // `todo.public-camera-pose`.
-
-      // --- motion ------------------------------------------------------
-      let frozen = false;
-      function addMotion(host) {
-        const mk = (label, title, onChange) => {
-          const cb = el('input', { type: 'checkbox' });
-          cb.addEventListener('change', () => onChange(cb.checked));
-          const row = el('div', { className: 'row check' }, [cb, el('label', { textContent: label, title })]);
-          host.append(row);
-          return cb;
-        };
-        mk('freeze pose', 'The melt runs in bind space, so freezing keeps a puddle from following head yaw', (on) => {
-          frozen = on;
-          engine.setMotionFrozen(on);
-        });
-        mk('reduced motion', 'Damps nods, disables saccades, shortens ramps', (on) => engine.vfx.setReducedMotion(on));
-      }
-
-      // --- melt actions ------------------------------------------------
-      const CYCLE_MS = 6000;
-      let cycleStart = 0;
-      function setMelt(v) {
-        const entry = rangeInputs.get('melt.amount');
-        if (!entry) return;
-        entry.input.value = String(v);
-        entry.out.textContent = fmt(v, entry.spec.step);
-        push('melt.amount', v);
-      }
-
-      function addMeltActions(host) {
-        const btns = el('div', { className: 'btns' });
-        const head = el('button', { type: 'button', textContent: 'head' });
-        const puddle = el('button', { type: 'button', textContent: 'puddle' });
-        const cycle = el('button', { type: 'button', textContent: 'cycle' });
-        head.addEventListener('click', () => { cycleStart = 0; setMelt(0); });
-        puddle.addEventListener('click', () => { cycleStart = 0; setMelt(1); });
-        cycle.addEventListener('click', () => {
-          // A hand-dragged slider does not show a morph. The sweep does.
-          cycleStart = performance.now();
-          cycle.classList.add('on');
-        });
-        host.append(btns);
-        btns.append(head, puddle, cycle);
-        host.append(
-          el('p', {
-            className: 'tierNote',
-            textContent:
-              'Known: the eyeballs and mouth cavity do not melt with the shell (todo.melt-internals), and the puddle has no thickness at exactly 1. Judge the shell, not those.',
-          }),
-        );
-        return cycle;
-      }
-      let cycleBtn = null;
-
-      // --- build -------------------------------------------------------
-      for (const tier of SCHEMA) {
-        let host = railBody;
-        if (tier.tier !== 'live') {
-          const body = el('div', { className: 'body' });
-          const summary = el('summary', { textContent: tier.label });
-          const details = el('details', { className: `tier ${tier.tier}` }, [summary, body]);
-          railBody.append(details);
-          if (tier.note) body.append(el('p', { className: 'tierNote', textContent: tier.note }));
-          host = body;
-        }
-
-        for (const group of tier.groups) {
-          const body = el('div', { className: 'body' });
-          const summary = el('summary');
-          summary.append(document.createTextNode(group.title));
-          if (group.note) summary.append(el('span', { className: 'note', textContent: group.note }));
-          const details = el('details', { className: 'group' }, [summary, body]);
-          if (group.open) details.open = true;
-          host.append(details);
-
-          for (const c of group.controls) {
-            if (c.kind === 'color') addColor(body, c);
-            else if (c.kind === 'backdrop') addBackdrop(body, c);
-            else if (c.kind === 'swatches') addSwatches(body);
-            else if (c.kind === 'motion') addMotion(body);
-            else if (c.kind === 'melt-actions') cycleBtn = addMeltActions(body);
-            else if (c.kind === 'note') body.append(el('p', { className: 'noteText', textContent: c.text }));
-            else addRange(body, c);
-          }
-        }
-      }
-
-      // --- focus mode --------------------------------------------------
-      const focusBtn = document.getElementById('focus');
-      function setFocus(on) {
-        document.body.classList.toggle('focus', on);
-        focusBtn.textContent = on ? 'controls' : 'focus';
-        focusBtn.classList.toggle('on', on);
-        // The canvas is fixed to the viewport, so nothing needs resizing: the
-        // rail floats over it. Kept explicit so it stays true if that changes.
-        resize();
-      }
-      focusBtn.addEventListener('click', () => setFocus(!document.body.classList.contains('focus')));
-      window.addEventListener('keydown', (e) => {
-        if (e.key === 'f' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName ?? '')) {
-          setFocus(!document.body.classList.contains('focus'));
-        }
-      });
-
-      // --- hud ---------------------------------------------------------
-      const hud = document.getElementById('hud');
-      let last = 0;
-      const frames = [];
-      function tick(now) {
-        if (cycleStart) {
-          const t = (now - cycleStart) / CYCLE_MS;
-          if (t >= 1) {
-            cycleStart = 0;
-            cycleBtn?.classList.remove('on');
-            setMelt(0);
-          } else {
-            setMelt(Math.round((1 - Math.abs(1 - t * 2)) * 200) / 200);
-          }
-        }
-        if (last) {
-          frames.push(now - last);
-          if (frames.length > 120) frames.shift();
-        }
-        last = now;
-        if (frames.length === 120 && now % 500 < 20) {
-          const mean = frames.reduce((a, b) => a + b, 0) / frames.length;
-          hud.textContent = `${mean.toFixed(1)} ms  ${(1000 / mean).toFixed(0)} fps${frozen ? '  frozen' : ''}`;
-        }
-        requestAnimationFrame(tick);
-      }
-      requestAnimationFrame(tick);
-    </script>
+    <script type="module" src="./showcase.ts"></script>
   </body>
 </html>
