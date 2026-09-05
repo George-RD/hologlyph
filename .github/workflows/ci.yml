@@ -38,6 +38,7 @@ jobs:
             curl -sf http://localhost:5173/hologlyph/engine.html >/dev/null && break
             sleep 1
           done
+      - run: bun tools/smoke/mobile-demo-smoke.mjs http://localhost:5173
       - run: bun tools/evals/capture.mjs http://localhost:5173/hologlyph/engine.html
       - run: bun tools/evals/score.mjs
       - name: Negative control (harness must catch smear)
