@@ -12,8 +12,8 @@
       <canvas id="holo"></canvas>
     </main>
 
-    <header class="chrome top-chrome">
-      <div class="wordmark" aria-label="Hologlyph">
+    <header id="topChrome" class="chrome top-chrome">
+      <div class="wordmark">
         <strong>hologlyph</strong>
         <span>talking head playground</span>
       </div>
@@ -38,13 +38,14 @@
       <span id="captionText"></span>
     </div>
 
-    <div id="expressionMenu" class="expression-menu" role="group" aria-label="Choose an expression"></div>
+    <section id="expressionMenu" class="expression-menu" aria-label="Choose an expression" aria-hidden="true" inert></section>
 
     <section
       id="captionPanel"
       class="caption-panel"
       aria-label="Choose something for Hologlyph to say"
       aria-hidden="true"
+      inert
     >
       <div class="panel-heading">
         <div>
@@ -56,7 +57,7 @@
       <div id="captionList" class="caption-list"></div>
     </section>
 
-    <nav class="chrome command-dock" aria-label="Hologlyph controls">
+    <nav id="commandDock" class="chrome command-dock" aria-label="Hologlyph controls">
       <button
         id="expressionTrigger"
         class="dock-button"
@@ -65,6 +66,7 @@
         aria-controls="expressionMenu"
         aria-expanded="false"
         data-expression="friendly"
+        disabled
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="12" cy="12" r="8.25" />
@@ -73,7 +75,7 @@
         <span>mood</span>
       </button>
 
-      <button id="speakTrigger" class="dock-button primary" type="button" aria-pressed="false">
+      <button id="speakTrigger" class="dock-button primary" type="button" aria-pressed="false" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M5.5 10.25v3.5M9.25 7.75v8.5M13 5.5v13M16.75 8v8M20.5 10.25v3.5" />
         </svg>
@@ -87,6 +89,7 @@
         aria-label="Choose sample speech"
         aria-controls="captionPanel"
         aria-expanded="false"
+        disabled
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M5.25 5.75h13.5v9.5H11l-4.75 3v-3h-1V5.75Z" />
@@ -96,9 +99,7 @@
       </button>
     </nav>
 
-    <button id="settingsScrim" class="settings-scrim" type="button" tabindex="-1" aria-label="Close studio controls"></button>
-
-    <aside id="settingsPanel" class="settings-panel" aria-hidden="true" aria-label="Studio controls">
+    <dialog id="settingsPanel" class="settings-panel" aria-hidden="true" aria-label="Studio controls" inert>
       <div class="settings-heading">
         <div>
           <p class="eyebrow">hologlyph studio</p>
@@ -113,7 +114,7 @@
             <span>Backdrop</span>
             <output id="backdropValue">#05070d</output>
           </div>
-          <div id="backdropSwatches" class="swatches" aria-label="Backdrop presets"></div>
+          <div id="backdropSwatches" class="swatches"></div>
         </section>
 
         <section class="settings-group">
@@ -168,7 +169,7 @@
         <a href="./studio.html">Open all studio controls</a>
         <a href="https://github.com/George-RD/hologlyph">GitHub</a>
       </div>
-    </aside>
+    </dialog>
 
     <div id="statusToast" class="status-toast" role="status" aria-live="polite"></div>
 

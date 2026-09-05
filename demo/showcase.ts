@@ -66,6 +66,8 @@ if (!(canvasNode instanceof HTMLCanvasElement)) throw new Error('Missing #holo c
 const canvas = canvasNode;
 
 const stage = requiredElement<HTMLElement>('stage');
+const topChrome = requiredElement<HTMLElement>('topChrome');
+const commandDock = requiredElement<HTMLElement>('commandDock');
 const expressionTrigger = requiredElement<HTMLButtonElement>('expressionTrigger');
 const speakTrigger = requiredElement<HTMLButtonElement>('speakTrigger');
 const captionTrigger = requiredElement<HTMLButtonElement>('captionTrigger');
@@ -75,8 +77,7 @@ const captionList = requiredElement<HTMLElement>('captionList');
 const captionText = requiredElement<HTMLElement>('captionText');
 const closeCaptions = requiredElement<HTMLButtonElement>('closeCaptions');
 const settingsTrigger = requiredElement<HTMLButtonElement>('settingsTrigger');
-const settingsPanel = requiredElement<HTMLElement>('settingsPanel');
-const settingsScrim = requiredElement<HTMLButtonElement>('settingsScrim');
+const settingsPanel = requiredElement<HTMLDialogElement>('settingsPanel');
 const closeSettings = requiredElement<HTMLButtonElement>('closeSettings');
 const statusToast = requiredElement<HTMLElement>('statusToast');
 
@@ -139,38 +140,50 @@ async function speakCurrent(): Promise<void> {
   setSpeaking(true);
   try {
     await engine.speak(currentCaption.text);
+  } catch (error) {
+    console.warn('[hologlyph] Speech failed', error);
+    if (run === speechRun) showToast('Speech is unavailable in this browser', 2600);
   } finally {
     if (run === speechRun) setSpeaking(false);
   }
 }
 
+/** Keep the whole fan inside the safe area without clamping buttons onto each other. */
 function positionExpressionMenu(): void {
   const triggerRect = expressionTrigger.getBoundingClientRect();
-  const anchorX = triggerRect.left + triggerRect.width / 2;
-  const anchorY = triggerRect.top + triggerRect.height / 2;
-  expressionMenu.style.left = `${anchorX}px`;
-  expressionMenu.style.top = `${anchorY}px`;
-
+  const safeRect = topChrome.getBoundingClientRect();
+  const dockRect = commandDock.getBoundingClientRect();
   const buttons = Array.from(expressionMenu.querySelectorAll<HTMLButtonElement>('.expression-option'));
-  const radius = Math.max(84, Math.min(108, window.innerWidth * 0.27));
-  const start = 202;
-  const end = 338;
-  const margin = 26;
+  const size = buttons[0]?.offsetWidth ?? 48;
+  const radius = Math.min(128, Math.max(0, (safeRect.width - size) / 2));
+  const width = radius * 2 + size;
+  const height = radius + size + 22; // Space for the labels below the end buttons.
+  const desiredLeft = triggerRect.left + triggerRect.width / 2 - width / 2;
+  const left = Math.max(safeRect.left, Math.min(safeRect.right - width, desiredLeft));
+
+  // A real container box is needed for focus, hit-testing and visibility checks.
+  expressionMenu.style.width = `${width}px`;
+  expressionMenu.style.height = `${height}px`;
+  expressionMenu.style.left = `${left}px`;
+  expressionMenu.style.top = `${Math.max(safeRect.top, dockRect.top - height - 8)}px`;
 
   buttons.forEach((button, index) => {
     const progress = buttons.length <= 1 ? 0.5 : index / (buttons.length - 1);
-    const angle = (start + (end - start) * progress) * (Math.PI / 180);
-    let x = Math.cos(angle) * radius;
-    const y = Math.sin(angle) * radius;
-    const targetX = anchorX + x;
-    if (targetX < margin) x += margin - targetX;
-    if (targetX > window.innerWidth - margin) x -= targetX - (window.innerWidth - margin);
+    const angle = Math.PI * (1 + progress);
+    const x = width / 2 + Math.cos(angle) * radius;
+    const y = radius + size / 2 + Math.sin(angle) * radius;
     button.style.setProperty('--x', `${x.toFixed(1)}px`);
     button.style.setProperty('--y', `${y.toFixed(1)}px`);
   });
 }
 
+/** Move focus out before hiding a panel, and into its current choice on opening. */
 function setOpenMenu(next: OpenMenu): void {
+  const previous = openMenu;
+  if (previous !== next) {
+    if (expressionMenu.contains(document.activeElement)) expressionTrigger.focus({ preventScroll: true });
+    if (captionPanel.contains(document.activeElement)) captionTrigger.focus({ preventScroll: true });
+  }
   openMenu = next;
   const expressionsOpen = next === 'expressions';
   const captionsOpen = next === 'captions';
@@ -186,7 +199,14 @@ function setOpenMenu(next: OpenMenu): void {
   captionTrigger.setAttribute('aria-expanded', String(captionsOpen));
 
   document.body.classList.toggle('menu-open', expressionsOpen || captionsOpen);
-  if (expressionsOpen) positionExpressionMenu();
+  if (expressionsOpen) {
+    positionExpressionMenu();
+    if (previous !== next) {
+      expressionMenu.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus({ preventScroll: true });
+    }
+  } else if (captionsOpen && previous !== next) {
+    captionList.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus({ preventScroll: true });
+  }
 }
 
 function selectExpression(expression: Expression, announce = true): void {
@@ -202,17 +222,23 @@ function selectExpression(expression: Expression, announce = true): void {
   if (announce) showToast(`${expression} expression`);
 }
 
-function setSettingsOpen(open: boolean, returnFocus = true): void {
-  document.body.classList.toggle('settings-open', open);
-  settingsPanel.setAttribute('aria-hidden', String(!open));
-  settingsPanel.inert = !open;
-  settingsTrigger.setAttribute('aria-expanded', String(open));
+/** Use the native modal for focus containment and an inert background. */
+function setSettingsOpen(open: boolean): void {
+  if (open === settingsPanel.open) return;
   if (open) {
     setOpenMenu(null);
+    settingsPanel.inert = false;
+    settingsPanel.setAttribute('aria-hidden', 'false');
+    settingsPanel.showModal();
     closeSettings.focus({ preventScroll: true });
-  } else if (returnFocus) {
+  } else {
+    settingsPanel.close();
     settingsTrigger.focus({ preventScroll: true });
+    settingsPanel.inert = true;
+    settingsPanel.setAttribute('aria-hidden', 'true');
   }
+  document.body.classList.toggle('settings-open', open);
+  settingsTrigger.setAttribute('aria-expanded', String(open));
 }
 
 for (const [index, option] of EXPRESSIONS.entries()) {
@@ -267,7 +293,17 @@ captionTrigger.addEventListener('click', () => {
 closeCaptions.addEventListener('click', () => setOpenMenu(null));
 settingsTrigger.addEventListener('click', () => setSettingsOpen(!document.body.classList.contains('settings-open')));
 closeSettings.addEventListener('click', () => setSettingsOpen(false));
-settingsScrim.addEventListener('click', () => setSettingsOpen(false));
+settingsPanel.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  setSettingsOpen(false);
+});
+settingsPanel.addEventListener('click', (event) => {
+  if (event.target !== settingsPanel) return;
+  const rect = settingsPanel.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+    setSettingsOpen(false);
+  }
+});
 
 document.addEventListener('pointerdown', (event) => {
   const target = event.target;
@@ -284,9 +320,8 @@ document.addEventListener('pointerdown', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
-  if (document.body.classList.contains('settings-open')) setSettingsOpen(false);
-  else setOpenMenu(null);
+  if (event.key !== 'Escape' || settingsPanel.open) return;
+  setOpenMenu(null);
 });
 
 function formatValue(value: number, digits: number): string {
@@ -402,7 +437,7 @@ let dragYaw = 0;
 let dragPitch = 0;
 
 canvas.addEventListener('pointerdown', (event) => {
-  if (activePointerId !== null) return;
+  if (event.button !== 0 || !event.isPrimary || activePointerId !== null) return;
   activePointerId = event.pointerId;
   lastX = event.clientX;
   lastY = event.clientY;
@@ -432,11 +467,16 @@ canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('lostpointercapture', endDrag);
 
-window.addEventListener(
-  'pagehide',
-  () => {
-    resizeObserver.disconnect();
-    engine.dispose();
-  },
-  { once: true },
-);
+// A cached page keeps its mounted engine. Disposing on every pagehide leaves
+// a dead canvas when the visitor returns from the full studio with Back.
+window.addEventListener('pagehide', (event) => {
+  activePointerId = null;
+  canvas.classList.remove('dragging');
+  if (event.persisted) return;
+  resizeObserver.disconnect();
+  if (toastTimer !== null) window.clearTimeout(toastTimer);
+  engine.dispose();
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) resize();
+});

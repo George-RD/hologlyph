@@ -478,23 +478,8 @@ body.settings-open .caption-bubble {
   background: rgba(117, 213, 255, 0.08);
 }
 
-.settings-scrim {
-  position: fixed;
-  z-index: 19;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
+.settings-panel::backdrop {
   background: rgba(0, 0, 0, 0.25);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 180ms ease;
-}
-
-body.settings-open .settings-scrim {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .settings-panel {
@@ -503,14 +488,24 @@ body.settings-open .settings-scrim {
   top: calc(8px + var(--safe-top));
   right: calc(8px + var(--safe-right));
   bottom: calc(8px + var(--safe-bottom));
-  display: flex;
+  display: none;
   flex-direction: column;
+  margin: 0;
+  padding: 0;
+  left: auto;
+  height: auto;
+  max-height: none;
+  max-width: none;
   width: min(360px, calc(100vw - 16px - var(--safe-left) - var(--safe-right)));
   border-radius: 24px;
   background: var(--panel-strong);
   transform: translateX(calc(100% + 24px + var(--safe-right)));
   transition: transform 220ms cubic-bezier(0.2, 0.85, 0.2, 1);
   pointer-events: none;
+}
+
+.settings-panel[open] {
+  display: flex;
 }
 
 body.settings-open .settings-panel {
