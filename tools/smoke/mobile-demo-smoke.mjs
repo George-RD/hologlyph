@@ -6,6 +6,12 @@ const origin = (process.argv[2] ?? 'http://localhost:5173').replace(/\/$/, '');
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
 let page;
 let captured = false;
+// Library-mode Playwright waits otherwise have no default deadline.
+const watchdog = setTimeout(() => {
+  console.error('MOBILE DEMO SMOKE FAILED: exceeded the three-minute deadline');
+  process.exitCode = 1;
+  void browser.close();
+}, 180_000);
 
 try {
   page = await browser.newPage({
@@ -14,6 +20,7 @@ try {
     hasTouch: true,
     isMobile: true,
   });
+  page.setDefaultTimeout(30_000);
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
@@ -241,6 +248,7 @@ try {
   console.error('MOBILE DEMO SMOKE FAILED:', error);
   process.exitCode = 1;
 } finally {
+  clearTimeout(watchdog);
   if (page && !captured) {
     await mkdir('tools/evals/out', { recursive: true });
     await page.screenshot({ path: 'tools/evals/out/mobile-demo-failure.png', fullPage: true }).catch(() => {});
