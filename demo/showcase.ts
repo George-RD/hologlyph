@@ -395,7 +395,11 @@ for (const colour of BACKDROPS) {
 setBackdrop(currentBackdrop);
 
 reducedMotion.checked = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-reducedMotion.addEventListener('change', () => engine.vfx.setReducedMotion(reducedMotion.checked));
+reducedMotion.addEventListener('change', () => {
+  const enabled = reducedMotion.checked;
+  engine.vfx.setReducedMotion(enabled);
+  engine.motion.setReducedMotion(enabled);
+});
 
 engine.on('error', (error) => {
   console.warn('[hologlyph]', error);

@@ -57,3 +57,37 @@ Persisted lifecycle events are injected deterministically. Dependency checkout,
 Bun and Cairn were unavailable locally, so cairn scan/hook all and the full
 engine/visual checks remain unverified locally. Do not treat these host checks
 as merge approval; the updated PR must pass the repository gates.
+
+## 2026-09-06: motion preference regressions and CI diagnosis
+
+Confirmed the reduced-motion checkbox changed VFX only. It now also calls the
+public motion subsystem setter. Added a browser regression which clicks the
+checkbox on and off and checks both subsystem calls, preserving their original
+implementations. The original controller fails with `motion: []` while VFX
+receives `[true, false]`.
+
+The reduced-motion CSS now removes both animation and transition delays. A
+computed-style regression checks the interaction hint and the last, most
+staggered expression option. This test failed on the previous CSS and passes
+with the override. The mobile smoke also honours the existing
+`HOLOGLYPH_CHROME` browser override.
+
+Re-ran the complete expanded mobile smoke locally against the actual HTML,
+CSS and transpiled controller with a stub engine. It passes all six viewports,
+seven expression choices, speech/replay, modal focus, the new motion checks,
+touch drag and synthetic page lifecycle checks. `node --check` passes for the
+smoke. These are control-layer results, not renderer or real-device evidence.
+
+The previous head's CI run 33962710260 passed type-check, lint, tests and build,
+but the mobile smoke exceeded its three-minute deadline while a `getAttribute`
+request was pending. Capture, scoring and the negative control never ran, and
+browser shutdown prevented a failure screenshot. The same interaction smoke
+passes with a stub engine, so the CI stall has not been reproduced locally.
+Added phase checkpoints to identify the stalled operation in the next run;
+no timeout was increased and no assertion or visual gate was removed. This is
+diagnostic instrumentation, not a claim that the CI failure is fixed.
+
+Full local repository checks and Cairn gates remain unavailable in this
+environment. The branch must not be treated as merge-ready on these local
+results alone. Remaining studio-label, cycle-state and relocated-reference
+review comments are separate from these verified motion fixes.
