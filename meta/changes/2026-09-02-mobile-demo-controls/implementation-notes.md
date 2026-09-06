@@ -111,3 +111,32 @@ three-minute deadline. The expected CI speed-up remains to be verified.
 High-DPI rendering performance and physical iPhone speech still need separate
 real-device verification. The expanded local control smoke passes at both
 pixel ratios; it does not measure renderer performance.
+
+### Follow-up: deterministic speech and a measured suite budget
+
+CI run 34025362003 confirmed progress at 1x: all six viewports, all seven
+expression selections, keyboard selection and speech/replay completed. The
+suite then reached settings before the global three-minute deadline. Type,
+lint, unit tests and build all passed. The run still failed overall; capture,
+scoring and the negative control did not run.
+
+A separate local latency regression delayed speech assertions by 1200 ms. The
+old fake voice ended after 950 ms, so the test failed despite a correct host.
+The fake voice now stays active until explicitly finished, and the delayed
+assertions pass. Replay also checks two actual interruptions rather than only
+counting spoken captions. The real adapter and engine are unchanged. Expression
+and caption state assertions are batched into atomic browser snapshots to cut
+protocol round trips without removing checks.
+
+After observing two complete CI timelines, allow five minutes for the expanded
+real-engine suite while retaining the 30-second default action timeout. This
+replaces the earlier three-minute aggregate deadline; it does not raise the
+individual action limit or bypass any assertion. The renderer still runs,
+all six viewport sizes remain, and the visual scoring gate is unchanged.
+This budget change addresses observed cumulative test cost, not a claim about
+physical-device rendering performance.
+
+The updated full control smoke, including the deliberate speech delay and
+interruption assertions, passes locally with the stub engine. JavaScript
+syntax checking passes. Real-engine CI for this final revision remains the
+required verification; no merge approval is implied by the local results.

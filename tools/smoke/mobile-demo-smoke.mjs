@@ -16,12 +16,13 @@ function checkpoint(next) {
   phase = next;
   console.log(`MOBILE DEMO SMOKE: ${phase}`);
 }
-// Library-mode Playwright waits otherwise have no default deadline.
+// Keep each action bounded independently. The expanded real-engine suite
+// needs more than three minutes on CI's software renderer (run 34025362003).
 const watchdog = setTimeout(() => {
-  console.error(`MOBILE DEMO SMOKE FAILED during ${phase}: exceeded the three-minute deadline`);
+  console.error(`MOBILE DEMO SMOKE FAILED during ${phase}: exceeded the five-minute deadline`);
   process.exitCode = 1;
   void browser.close();
-}, 180_000);
+}, 300_000);
 
 try {
   page = await browser.newPage({
@@ -38,6 +39,7 @@ try {
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
   // Keep the real demo adapter and viseme path; replace only the host voice.
+  // Finish explicitly so a slow renderer cannot end speech before assertions.
   // Cancelling clears pending callbacks, as a real interrupted voice would.
   await page.addInitScript(() => {
     class FakeSpeechSynthesisUtterance {
@@ -49,12 +51,27 @@ try {
         this.onerror = null;
       }
     }
-    const voice = { spoken: [], cancellations: 0 };
-    globalThis.__mobileDemoVoice = voice;
+    let current = null;
     let timers = [];
+    const voice = {
+      spoken: [],
+      cancellations: 0,
+      interruptions: 0,
+      finish() {
+        if (!current) throw new Error('No fake speech is active');
+        const utterance = current;
+        current = null;
+        timers.forEach(clearTimeout);
+        timers = [];
+        utterance.onend?.();
+      },
+    };
+    globalThis.__mobileDemoVoice = voice;
     const speechSynthesis = {
       cancel() {
         voice.cancellations++;
+        if (current) voice.interruptions++;
+        current = null;
         timers.forEach(clearTimeout);
         timers = [];
       },
@@ -62,6 +79,7 @@ try {
       pause() {},
       resume() {},
       speak(utterance) {
+        current = utterance;
         voice.spoken.push(utterance.text);
         timers.push(setTimeout(() => utterance.onstart?.(), 0));
         [...utterance.text.matchAll(/\S+/g)].slice(0, 8).forEach((word, index) => {
@@ -69,7 +87,6 @@ try {
             utterance.onboundary?.({ charIndex: word.index, charLength: word[0].length });
           }, 90 + index * 85));
         });
-        timers.push(setTimeout(() => utterance.onend?.(), 950));
       },
     };
     Object.defineProperty(globalThis, 'SpeechSynthesisUtterance', {
@@ -148,9 +165,13 @@ try {
     await page.waitForSelector('#expressionMenu.open');
     await settle('#expressionMenu');
     await page.locator(`#expressionMenu [data-expression="${expression}"]`).tap();
-    assert.equal(await page.locator('#expressionTrigger').getAttribute('data-expression'), expression);
-    assert.equal(await page.locator(`#expressionMenu [data-expression="${expression}"]`).getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#expressionMenu').evaluate((el) => el.inert), true);
+    // One atomic snapshot avoids extra renderer round trips between assertions.
+    const selection = await page.evaluate((value) => ({
+      expression: document.getElementById('expressionTrigger').dataset.expression,
+      pressed: document.querySelector(`#expressionMenu [data-expression="${value}"]`).getAttribute('aria-pressed'),
+      inert: document.getElementById('expressionMenu').inert,
+    }), expression);
+    assert.deepEqual(selection, { expression, pressed: 'true', inert: true });
   }
   checkpoint('keyboard expression selection');
   await page.locator('#expressionTrigger').focus();
@@ -166,10 +187,16 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.matches('.caption-choice[aria-current="true"]')), true);
   await page.locator('[data-caption-id="mobile"]').tap();
   await page.waitForFunction(() => globalThis.__mobileDemoVoice.spoken.length === 1);
-  assert.equal(await page.evaluate(() => document.body.dataset.lastCaption), 'mobile');
-  assert.equal(await page.locator('#captionTrigger').getAttribute('aria-expanded'), 'false');
-  assert.equal(await page.locator('#speakTrigger').getAttribute('aria-pressed'), 'true');
-  assert.equal(await page.evaluate(() => document.activeElement?.id), 'captionTrigger');
+  // Deliberately outlive the old 950 ms fake duration: delayed assertions
+  // must still observe active speech until the test explicitly ends it.
+  await page.waitForTimeout(1_200);
+  assert.deepEqual(await page.evaluate(() => ({
+    caption: document.body.dataset.lastCaption,
+    expanded: document.getElementById('captionTrigger').getAttribute('aria-expanded'),
+    speaking: document.getElementById('speakTrigger').getAttribute('aria-pressed'),
+    focus: document.activeElement?.id,
+  })), { caption: 'mobile', expanded: 'false', speaking: 'true', focus: 'captionTrigger' });
+  await page.evaluate(() => globalThis.__mobileDemoVoice.finish());
   await page.waitForFunction(() => document.getElementById('speakTrigger').getAttribute('aria-pressed') === 'false');
 
   // Real taps during the pulse animation exercise replacement speech rather
@@ -182,6 +209,9 @@ try {
     await page.waitForFunction((count) => globalThis.__mobileDemoVoice.spoken.length === count, i + 2);
   }
   assert.equal(await page.evaluate(() => globalThis.__mobileDemoVoice.spoken.every((text) => text === document.getElementById('captionText').textContent)), true);
+  assert.equal(await page.evaluate(() => globalThis.__mobileDemoVoice.interruptions), 2, 'replay must interrupt active speech');
+  assert.equal(await page.locator('#speakTrigger').getAttribute('aria-pressed'), 'true');
+  await page.evaluate(() => globalThis.__mobileDemoVoice.finish());
   await page.waitForFunction(() => document.getElementById('speakTrigger').getAttribute('aria-pressed') === 'false');
 
   checkpoint('modal focus and motion preferences');
@@ -268,6 +298,7 @@ try {
   await settle('#captionPanel');
   await page.locator('[data-caption-id="hello"]').tap();
   await page.waitForFunction(() => globalThis.__mobileDemoVoice.spoken.length === 5);
+  await page.evaluate(() => globalThis.__mobileDemoVoice.finish());
   await page.waitForFunction(() => document.getElementById('speakTrigger').getAttribute('aria-pressed') === 'false');
 
   checkpoint('touch drag');
