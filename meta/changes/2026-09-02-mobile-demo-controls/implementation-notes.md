@@ -91,3 +91,23 @@ Full local repository checks and Cairn gates remain unavailable in this
 environment. The branch must not be treated as merge-ready on these local
 results alone. Remaining studio-label, cycle-state and relocated-reference
 review comments are separate from these verified motion fixes.
+
+### Follow-up: readable hints and software-renderer test cost
+
+Removing animation delays also fast-forwarded the hint's fade-out. Keep the
+instruction visible and unanimated under reduced motion instead. A regression
+which requires opacity 1 failed without this rule and passes with it.
+
+CI run 34024976209 passed type-check, lint, tests and build. Its checkpoints
+show continuous progress, not one permanently blocked call: six viewport
+checks completed, then neutral and friendly each took about 35 seconds before
+the global deadline interrupted thinking. This indicates cumulative execution
+cost; it does not establish a product deadlock or its exact GPU bottleneck.
+
+Match the existing visual capture harness at deviceScaleFactor 1 instead of 2.
+This quarters the render-buffer pixel count without changing CSS viewport
+sizes, touch input, the real engine, any interaction assertion, or the
+three-minute deadline. The expected CI speed-up remains to be verified.
+High-DPI rendering performance and physical iPhone speech still need separate
+real-device verification. The expanded local control smoke passes at both
+pixel ratios; it does not measure renderer performance.

@@ -26,7 +26,9 @@ const watchdog = setTimeout(() => {
 try {
   page = await browser.newPage({
     viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 2,
+    // Match the visual capture harness: CSS geometry and touch stay mobile,
+    // without quadrupling pixel work on a software-rendered CI browser.
+    deviceScaleFactor: 1,
     hasTouch: true,
     isMobile: true,
     reducedMotion: 'no-preference',
@@ -217,9 +219,10 @@ try {
   assert.equal(await page.evaluate(() => {
     const hint = getComputedStyle(document.getElementById('interactionHint'));
     const option = getComputedStyle(document.querySelector('.expression-option:last-child'));
-    return hint.animationDelay.split(',').every((delay) => parseFloat(delay) === 0) &&
+    return hint.opacity === '1' &&
+      hint.animationDelay.split(',').every((delay) => parseFloat(delay) === 0) &&
       option.transitionDelay.split(',').every((delay) => parseFloat(delay) === 0);
-  }), true, 'reduced-motion users must not wait for animation delays');
+  }), true, 'reduced-motion users need a readable hint without animation delays');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
 
   await page.keyboard.press('Shift+Tab');

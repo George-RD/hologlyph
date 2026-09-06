@@ -727,4 +727,10 @@ body.settings-open .settings-panel {
     transition-duration: 1ms !important;
     transition-delay: 0s !important;
   }
+
+  /* Keep the instruction readable rather than fast-forwarding its fade-out. */
+  .interaction-hint {
+    animation: none !important;
+    opacity: 1;
+  }
 }
