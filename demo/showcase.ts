@@ -107,6 +107,15 @@ let openMenu: OpenMenu = null;
 let speechRun = 0;
 let toastTimer: number | null = null;
 let ready = false;
+let disposed = false;
+
+// The engine emits statechange before applying its behaviour expression.
+// Restore the selected demo mood after that work, not inside the event itself.
+const stopExpressionSync = engine.on('statechange', () => {
+  queueMicrotask(() => {
+    if (!disposed) engine.setEmotion(currentExpression);
+  });
+});
 
 function showToast(message: string, duration = 1600): void {
   statusToast.textContent = message;
@@ -239,6 +248,7 @@ function setSettingsOpen(open: boolean): void {
   }
   document.body.classList.toggle('settings-open', open);
   settingsTrigger.setAttribute('aria-expanded', String(open));
+  settingsTrigger.setAttribute('aria-label', open ? 'Close studio controls' : 'Open studio controls');
 }
 
 for (const [index, option] of EXPRESSIONS.entries()) {
@@ -394,12 +404,19 @@ for (const colour of BACKDROPS) {
 }
 setBackdrop(currentBackdrop);
 
-reducedMotion.checked = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-reducedMotion.addEventListener('change', () => {
+const reducedMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+reducedMotion.checked = reducedMotionPreference.matches;
+function applyReducedMotion(): void {
   const enabled = reducedMotion.checked;
   engine.vfx.setReducedMotion(enabled);
   engine.motion.setReducedMotion(enabled);
-});
+}
+// The engine follows later OS changes too; keep the displayed state aligned.
+const onReducedMotionPreference = (event: MediaQueryListEvent): void => {
+  reducedMotion.checked = event.matches;
+};
+reducedMotionPreference.addEventListener('change', onReducedMotionPreference);
+reducedMotion.addEventListener('change', applyReducedMotion);
 
 engine.on('error', (error) => {
   console.warn('[hologlyph]', error);
@@ -411,6 +428,8 @@ expressionTrigger.disabled = true;
 captionTrigger.disabled = true;
 
 await engine.mount(canvas, stage);
+// Mount applies the OS default. Preserve any choice made while assets loaded.
+applyReducedMotion();
 engine.setScrollProgress(1);
 selectExpression(currentExpression, false);
 ready = true;
@@ -477,6 +496,9 @@ window.addEventListener('pagehide', (event) => {
   activePointerId = null;
   canvas.classList.remove('dragging');
   if (event.persisted) return;
+  disposed = true;
+  stopExpressionSync();
+  reducedMotionPreference.removeEventListener('change', onReducedMotionPreference);
   resizeObserver.disconnect();
   if (toastTimer !== null) window.clearTimeout(toastTimer);
   engine.dispose();
