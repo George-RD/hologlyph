@@ -38,7 +38,9 @@ jobs:
             curl -sf http://localhost:5173/hologlyph/engine.html >/dev/null && break
             sleep 1
           done
-      - run: bun tools/smoke/mobile-demo-state-smoke.mjs http://localhost:5173
+      - name: Check mobile demo state
+        timeout-minutes: 2
+        run: bun tools/smoke/mobile-demo-state-smoke.mjs http://localhost:5173
       - run: bun tools/smoke/mobile-demo-smoke.mjs http://localhost:5173
       - run: bun tools/evals/capture.mjs http://localhost:5173/hologlyph/engine.html
       - run: bun tools/evals/score.mjs
