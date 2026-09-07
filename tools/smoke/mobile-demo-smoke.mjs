@@ -1,0 +1,344 @@
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { chromium } from 'playwright';
+
+const origin = (process.argv[2] ?? 'http://localhost:5173').replace(/\/$/, '');
+const browser = await chromium.launch({
+  ...(process.env.HOLOGLYPH_CHROME ? { executablePath: process.env.HOLOGLYPH_CHROME } : {}),
+  args: ['--no-sandbox'],
+});
+let page;
+let captured = false;
+let phase = 'browser setup';
+
+/** Keep the last completed boundary in CI logs, including renderer stalls. */
+function checkpoint(next) {
+  phase = next;
+  console.log(`MOBILE DEMO SMOKE: ${phase}`);
+}
+// Keep each action bounded independently. The expanded real-engine suite
+// needs more than three minutes on CI's software renderer (run 34025362003).
+const watchdog = setTimeout(() => {
+  console.error(`MOBILE DEMO SMOKE FAILED during ${phase}: exceeded the five-minute deadline`);
+  process.exitCode = 1;
+  void browser.close();
+}, 300_000);
+
+try {
+  page = await browser.newPage({
+    viewport: { width: 390, height: 844 },
+    // Match the visual capture harness: CSS geometry and touch stay mobile,
+    // without quadrupling pixel work on a software-rendered CI browser.
+    deviceScaleFactor: 1,
+    hasTouch: true,
+    isMobile: true,
+    reducedMotion: 'no-preference',
+  });
+  page.setDefaultTimeout(30_000);
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  // Keep the real demo adapter and viseme path; replace only the host voice.
+  // Finish explicitly so a slow renderer cannot end speech before assertions.
+  // Cancelling clears pending callbacks, as a real interrupted voice would.
+  await page.addInitScript(() => {
+    class FakeSpeechSynthesisUtterance {
+      constructor(text) {
+        this.text = text;
+        this.onstart = null;
+        this.onboundary = null;
+        this.onend = null;
+        this.onerror = null;
+      }
+    }
+    let current = null;
+    let timers = [];
+    const voice = {
+      spoken: [],
+      cancellations: 0,
+      interruptions: 0,
+      finish() {
+        if (!current) throw new Error('No fake speech is active');
+        const utterance = current;
+        current = null;
+        timers.forEach(clearTimeout);
+        timers = [];
+        utterance.onend?.();
+      },
+    };
+    globalThis.__mobileDemoVoice = voice;
+    const speechSynthesis = {
+      cancel() {
+        voice.cancellations++;
+        if (current) voice.interruptions++;
+        current = null;
+        timers.forEach(clearTimeout);
+        timers = [];
+      },
+      getVoices() { return []; },
+      pause() {},
+      resume() {},
+      speak(utterance) {
+        current = utterance;
+        voice.spoken.push(utterance.text);
+        timers.push(setTimeout(() => utterance.onstart?.(), 0));
+        [...utterance.text.matchAll(/\S+/g)].slice(0, 8).forEach((word, index) => {
+          timers.push(setTimeout(() => {
+            utterance.onboundary?.({ charIndex: word.index, charLength: word[0].length });
+          }, 90 + index * 85));
+        });
+      },
+    };
+    Object.defineProperty(globalThis, 'SpeechSynthesisUtterance', {
+      configurable: true, value: FakeSpeechSynthesisUtterance,
+    });
+    Object.defineProperty(globalThis, 'speechSynthesis', {
+      configurable: true, value: speechSynthesis,
+    });
+  });
+
+  checkpoint('mounting the real engine');
+  await page.goto(`${origin}/hologlyph/`, { waitUntil: 'load' });
+  await page.waitForFunction(() => document.body.dataset.ready === 'true', null, { timeout: 30_000 });
+  assert.equal(await page.locator('#settingsPanel').isVisible(), false, 'settings visible on first load');
+  assert.equal(await page.locator('#settingsPanel').evaluate((el) => el.inert), true);
+  assert.equal(await page.locator('#captionPanel').evaluate((el) => el.inert), true);
+
+  /** Wait for finite control transitions, not a timing guess or the engine's animation loop. */
+  async function settle(selector) {
+    await page.locator(selector).evaluate(async (element) => {
+      await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {})));
+    });
+  }
+
+  checkpoint('responsive expression layout');
+  await page.locator('#expressionTrigger').tap();
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 430, height: 932 },
+    { width: 844, height: 390 },
+    { width: 1280, height: 800 },
+  ]) {
+    checkpoint(`expression layout ${viewport.width}x${viewport.height}`);
+    // Resize an OPEN fan to exercise the observer/orientation path as well.
+    await page.setViewportSize(viewport);
+    await page.waitForSelector('#expressionMenu.open');
+    await settle('#expressionMenu');
+    const layout = await page.evaluate(() => {
+      const canvas = document.getElementById('holo').getBoundingClientRect();
+      const menu = document.getElementById('expressionMenu').getBoundingClientRect();
+      const dock = document.querySelector('.command-dock').getBoundingClientRect();
+      const buttons = [...document.querySelectorAll('.expression-option')];
+      const rects = buttons.map((button) => button.getBoundingClientRect());
+      return {
+        canvasFills: canvas.width >= innerWidth - 1 && canvas.height >= innerHeight - 1,
+        dockFits: dock.left >= 0 && dock.right <= innerWidth && dock.bottom <= innerHeight,
+        menuVisible: menu.width > 0 && menu.height > 0,
+        count: buttons.length,
+        inBounds: rects.every((r) => r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight),
+        touchSized: rects.every((r) => r.width >= 44 && r.height >= 44),
+        separated: rects.every((a, i) => rects.every((b, j) => i === j ||
+          Math.hypot(a.x + a.width / 2 - b.x - b.width / 2, a.y + a.height / 2 - b.y - b.height / 2) >=
+          (a.width + b.width) / 2 + 4)),
+        // Check actual hit-testing across each circular target, not just centres
+        // or bounding rectangles that can pass even when neighbours cover it.
+        hittable: buttons.every((button, i) => [-15, 0, 15].every((dx) => [-15, 0, 15].every((dy) =>
+          document.elementFromPoint(rects[i].x + rects[i].width / 2 + dx, rects[i].y + rects[i].height / 2 + dy) === button))),
+      };
+    });
+    assert.equal(layout.count, 7);
+    for (const [name, passed] of Object.entries(layout)) {
+      if (name !== 'count') assert.equal(passed, true, `${viewport.width}x${viewport.height}: ${name}`);
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settle('#expressionMenu');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#expressionTrigger').evaluate((el) => el === document.activeElement), true);
+
+  // Every option must be independently tappable, not merely present in the DOM.
+  for (const expression of ['neutral', 'friendly', 'thinking', 'agree', 'concern', 'happy', 'surprised']) {
+    checkpoint(`selecting ${expression}`);
+    await page.locator('#expressionTrigger').tap();
+    await page.waitForSelector('#expressionMenu.open');
+    await settle('#expressionMenu');
+    await page.locator(`#expressionMenu [data-expression="${expression}"]`).tap();
+    // One atomic snapshot avoids extra renderer round trips between assertions.
+    const selection = await page.evaluate((value) => ({
+      expression: document.getElementById('expressionTrigger').dataset.expression,
+      pressed: document.querySelector(`#expressionMenu [data-expression="${value}"]`).getAttribute('aria-pressed'),
+      inert: document.getElementById('expressionMenu').inert,
+    }), expression);
+    assert.deepEqual(selection, { expression, pressed: 'true', inert: true });
+  }
+  checkpoint('keyboard expression selection');
+  await page.locator('#expressionTrigger').focus();
+  await page.keyboard.press('Enter');
+  await settle('#expressionMenu');
+  assert.equal(await page.evaluate(() => document.activeElement?.matches('.expression-option[aria-pressed="true"]')), true);
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'expressionTrigger');
+
+  checkpoint('caption speech');
+  await page.locator('#captionTrigger').tap();
+  await settle('#captionPanel');
+  assert.equal(await page.evaluate(() => document.activeElement?.matches('.caption-choice[aria-current="true"]')), true);
+  await page.locator('[data-caption-id="mobile"]').tap();
+  await page.waitForFunction(() => globalThis.__mobileDemoVoice.spoken.length === 1);
+  // Deliberately outlive the old 950 ms fake duration: delayed assertions
+  // must still observe active speech until the test explicitly ends it.
+  await page.waitForTimeout(1_200);
+  assert.deepEqual(await page.evaluate(() => ({
+    caption: document.body.dataset.lastCaption,
+    expanded: document.getElementById('captionTrigger').getAttribute('aria-expanded'),
+    speaking: document.getElementById('speakTrigger').getAttribute('aria-pressed'),
+    focus: document.activeElement?.id,
+  })), { caption: 'mobile', expanded: 'false', speaking: 'true', focus: 'captionTrigger' });
+  await page.evaluate(() => globalThis.__mobileDemoVoice.finish());
+  await page.waitForFunction(() => document.getElementById('speakTrigger').getAttribute('aria-pressed') === 'false');
+
+  // Real taps during the pulse animation exercise replacement speech rather
+  // than letting Playwright wait until speech ends to click a stable button.
+  checkpoint('rapid speech replay');
+  const say = await page.locator('#speakTrigger').boundingBox();
+  assert.ok(say);
+  for (let i = 0; i < 3; i++) {
+    await page.touchscreen.tap(say.x + say.width / 2, say.y + say.height / 2);
+    await page.waitForFunction((count) => globalThis.__mobileDemoVoice.spoken.length === count, i + 2);
+  }
+  assert.equal(await page.evaluate(() => globalThis.__mobileDemoVoice.spoken.every((text) => text === document.getElementById('captionText').textContent)), true);
+  assert.equal(await page.evaluate(() => globalThis.__mobileDemoVoice.interruptions), 2, 'replay must interrupt active speech');
+  assert.equal(await page.locator('#speakTrigger').getAttribute('aria-pressed'), 'true');
+  await page.evaluate(() => globalThis.__mobileDemoVoice.finish());
+  await page.waitForFunction(() => document.getElementById('speakTrigger').getAttribute('aria-pressed') === 'false');
+
+  checkpoint('modal focus and motion preferences');
+  await page.locator('#settingsTrigger').tap();
+  await settle('#settingsPanel');
+  assert.equal(await page.locator('#settingsPanel').evaluate((el) => el.open && el.matches(':modal')), true);
+  const panelBox = await page.locator('#settingsPanel').boundingBox();
+  assert.ok(panelBox && panelBox.x >= 0 && panelBox.x + panelBox.width <= 390);
+  assert.equal(await page.evaluate(() => {
+    document.getElementById('speakTrigger').focus();
+    return document.getElementById('settingsPanel').contains(document.activeElement);
+  }), true, 'background can steal modal focus');
+  // The preference controls both subsystems, not just the checkbox or VFX.
+  await page.evaluate(() => {
+    const engine = globalThis.__hologlyphEngine;
+    const motion = engine.motion.setReducedMotion.bind(engine.motion);
+    const vfx = engine.vfx.setReducedMotion.bind(engine.vfx);
+    globalThis.__mobileDemoReducedMotion = { motion: [], vfx: [] };
+    engine.motion.setReducedMotion = (enabled) => {
+      globalThis.__mobileDemoReducedMotion.motion.push(enabled);
+      motion(enabled);
+    };
+    engine.vfx.setReducedMotion = (enabled) => {
+      globalThis.__mobileDemoReducedMotion.vfx.push(enabled);
+      vfx(enabled);
+    };
+  });
+  await page.locator('#reducedMotion').check();
+  await page.locator('#reducedMotion').uncheck();
+  assert.deepEqual(await page.evaluate(() => globalThis.__mobileDemoReducedMotion), {
+    motion: [true, false], vfx: [true, false],
+  }, 'reduced motion must update both engine subsystems');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.evaluate(() => {
+    const hint = getComputedStyle(document.getElementById('interactionHint'));
+    const option = getComputedStyle(document.querySelector('.expression-option:last-child'));
+    return hint.opacity === '1' &&
+      hint.animationDelay.split(',').every((delay) => parseFloat(delay) === 0) &&
+      option.transitionDelay.split(',').every((delay) => parseFloat(delay) === 0);
+  }), true, 'reduced-motion users need a readable hint without animation delays');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await page.evaluate(() => document.activeElement === document.body || document.getElementById('settingsPanel').contains(document.activeElement)), true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#settingsPanel').isVisible(), false);
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'settingsTrigger');
+  await page.locator('#settingsTrigger').tap();
+  await settle('#settingsPanel');
+  await page.touchscreen.tap(2, 400);
+  assert.equal(await page.locator('#settingsPanel').isVisible(), false, 'backdrop tap did not close settings');
+
+  checkpoint('speech rejection recovery');
+  // Verify the host catches a rejected engine promise and leaves Say usable.
+  await page.evaluate(() => {
+    const engine = globalThis.__hologlyphEngine;
+    const original = engine.speak.bind(engine);
+    engine.speak = async () => {
+      engine.speak = original;
+      throw new Error('Expected smoke-test speech rejection');
+    };
+  });
+  await page.locator('#speakTrigger').tap();
+  await page.waitForFunction(() => document.getElementById('statusToast').textContent === 'Speech is unavailable in this browser');
+  assert.equal(await page.locator('#speakTrigger').getAttribute('aria-pressed'), 'false');
+
+  checkpoint('cached-page lifecycle');
+  // Deterministically cover the persisted page lifecycle; actual BFCache
+  // eligibility depends on the browser/GPU and is not assumed by this smoke.
+  await page.evaluate(() => {
+    const engine = globalThis.__hologlyphEngine;
+    const original = engine.dispose.bind(engine);
+    globalThis.__mobileDemoDisposals = 0;
+    engine.dispose = () => {
+      globalThis.__mobileDemoDisposals++;
+      original();
+    };
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+  });
+  assert.equal(await page.evaluate(() => globalThis.__mobileDemoDisposals), 0, 'cached page disposed its engine');
+  await page.locator('#captionTrigger').tap();
+  await settle('#captionPanel');
+  await page.locator('[data-caption-id="hello"]').tap();
+  await page.waitForFunction(() => globalThis.__mobileDemoVoice.spoken.length === 5);
+  await page.evaluate(() => globalThis.__mobileDemoVoice.finish());
+  await page.waitForFunction(() => document.getElementById('speakTrigger').getAttribute('aria-pressed') === 'false');
+
+  checkpoint('touch drag');
+  await page.evaluate(() => {
+    const motion = globalThis.__hologlyphEngine.motion;
+    const original = motion.setHeadTarget.bind(motion);
+    globalThis.__mobileDemoTargets = [];
+    motion.setHeadTarget = (yaw, pitch) => {
+      globalThis.__mobileDemoTargets.push({ yaw, pitch });
+      original(yaw, pitch);
+    };
+  });
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 100, y: 230, id: 1 }] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 165, y: 260, id: 1 }] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await session.detach();
+  }
+  assert.equal(await page.evaluate(() => globalThis.__mobileDemoTargets.some((p) => p.yaw > 0 && p.pitch > 0)), true);
+  assert.equal(await page.locator('#holo').evaluate((el) => el.classList.contains('dragging')), false);
+
+  checkpoint('capture and terminal cleanup');
+  await page.evaluate(() => document.getElementById('statusToast').classList.remove('visible'));
+  await mkdir('tools/evals/out', { recursive: true });
+  await page.screenshot({ path: 'tools/evals/out/mobile-demo.png', fullPage: true });
+  captured = true;
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+  assert.equal(await page.evaluate(() => globalThis.__mobileDemoDisposals), 1);
+  assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join('; ')}`);
+  console.log('MOBILE DEMO SMOKE PASSED: six viewports, seven moods, speech/replay, modal focus, reduced motion, touch drag and page lifecycle');
+} catch (error) {
+  console.error(`MOBILE DEMO SMOKE FAILED during ${phase}:`, error);
+  process.exitCode = 1;
+} finally {
+  clearTimeout(watchdog);
+  if (page && !captured) {
+    await mkdir('tools/evals/out', { recursive: true });
+    await page.screenshot({ path: 'tools/evals/out/mobile-demo-failure.png', fullPage: true }).catch(() => {});
+  }
+  await browser.close();
+}

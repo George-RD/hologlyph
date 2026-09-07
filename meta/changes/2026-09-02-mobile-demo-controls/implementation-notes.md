@@ -1,0 +1,142 @@
+# Implementation notes
+
+## 2026-09-02
+
+The broad `todo.studio-showcase-overhaul` remains open. This change resolves the
+specific mobile disclosure and speech request without claiming the wider camera
+and full-studio presentation work is complete.
+
+The previous `demo/index.html` is retained as `demo/studio.html` rather than
+reimplemented. The new root intentionally exposes only live-look controls. This
+keeps one public presentation URL while preserving the deep diagnostic surface
+for deliberate use.
+
+Local repository checkout was unavailable in the execution environment. The
+new TypeScript was checked with TypeScript 5.8.3 under strict mode and
+`noUncheckedIndexedAccess`; the repository pull-request workflow remains the
+authoritative full gate.
+
+## 2026-09-05: PR review corrections
+
+The original CI failed on three invalid ARIA declarations in the new markup,
+then separately on the zero-sized expression-menu visibility check. The fan
+also overlapped its 48 px touch targets, despite keeping their centres onscreen.
+
+- Give the menu a real box and fit the complete semicircle within the existing
+  safe-area chrome. Do not clamp individual buttons into their neighbours.
+- Focus the current expression or caption on opening and restore the trigger
+  before hiding the selected control.
+- Use a native modal dialog for settings, with an inert background, Escape,
+  backdrop dismissal and focus restoration. It is hidden before script startup.
+- Remove invalid generic-element ARIA labels and use a labelled section for
+  expressions. Disable engine-dependent buttons in the initial HTML.
+- Preserve the mounted engine on persisted pagehide and resize on pageshow;
+  terminal pagehide still disposes. Reset drag state and clear the toast timer
+  on terminal cleanup. Only the primary pointer starts a drag.
+- Catch rejected speech promises without leaving Say pressed or leaking an
+  unhandled rejection.
+
+The smoke now checks six viewport sizes (320, 375, 390, 430, landscape 844 and
+1280 px), option separation and hit-testing, all seven selections, keyboard
+focus, sample speech and rapid replay, modal dismissal, touch drag, rejection
+handling and both persisted and terminal page lifecycle paths. It awaits finite
+control animations rather than measuring intermediate transforms. The fake
+voice cancels pending callbacks. Browser teardown runs even after assertions
+fail, and a failure screenshot is retained.
+
+Local verification: the original HTML/CSS/controller were reconstructed from
+the PR and their Git blob hashes verified. A real Chromium control harness with
+a stub engine changed from 12 passing / 26 failing assertions to 38 passing / 0
+failing. The expanded smoke also passed against that host-only harness. The
+controller passed strict TypeScript with a local contract shim; the smoke
+passed JavaScript syntax checking. Harnesses and shims are not production files.
+
+Limits: this does not validate the renderer, audible iPhone speech, actual
+Safari BFCache eligibility or the complete repository type/build/test battery.
+Persisted lifecycle events are injected deterministically. Dependency checkout,
+Bun and Cairn were unavailable locally, so cairn scan/hook all and the full
+engine/visual checks remain unverified locally. Do not treat these host checks
+as merge approval; the updated PR must pass the repository gates.
+
+## 2026-09-06: motion preference regressions and CI diagnosis
+
+Confirmed the reduced-motion checkbox changed VFX only. It now also calls the
+public motion subsystem setter. Added a browser regression which clicks the
+checkbox on and off and checks both subsystem calls, preserving their original
+implementations. The original controller fails with `motion: []` while VFX
+receives `[true, false]`.
+
+The reduced-motion CSS now removes both animation and transition delays. A
+computed-style regression checks the interaction hint and the last, most
+staggered expression option. This test failed on the previous CSS and passes
+with the override. The mobile smoke also honours the existing
+`HOLOGLYPH_CHROME` browser override.
+
+Re-ran the complete expanded mobile smoke locally against the actual HTML,
+CSS and transpiled controller with a stub engine. It passes all six viewports,
+seven expression choices, speech/replay, modal focus, the new motion checks,
+touch drag and synthetic page lifecycle checks. `node --check` passes for the
+smoke. These are control-layer results, not renderer or real-device evidence.
+
+The previous head's CI run 33962710260 passed type-check, lint, tests and build,
+but the mobile smoke exceeded its three-minute deadline while a `getAttribute`
+request was pending. Capture, scoring and the negative control never ran, and
+browser shutdown prevented a failure screenshot. The same interaction smoke
+passes with a stub engine, so the CI stall has not been reproduced locally.
+Added phase checkpoints to identify the stalled operation in the next run;
+no timeout was increased and no assertion or visual gate was removed. This is
+diagnostic instrumentation, not a claim that the CI failure is fixed.
+
+Full local repository checks and Cairn gates remain unavailable in this
+environment. The branch must not be treated as merge-ready on these local
+results alone. Remaining studio-label, cycle-state and relocated-reference
+review comments are separate from these verified motion fixes.
+
+### Follow-up: readable hints and software-renderer test cost
+
+Removing animation delays also fast-forwarded the hint's fade-out. Keep the
+instruction visible and unanimated under reduced motion instead. A regression
+which requires opacity 1 failed without this rule and passes with it.
+
+CI run 34024976209 passed type-check, lint, tests and build. Its checkpoints
+show continuous progress, not one permanently blocked call: six viewport
+checks completed, then neutral and friendly each took about 35 seconds before
+the global deadline interrupted thinking. This indicates cumulative execution
+cost; it does not establish a product deadlock or its exact GPU bottleneck.
+
+Match the existing visual capture harness at deviceScaleFactor 1 instead of 2.
+This quarters the render-buffer pixel count without changing CSS viewport
+sizes, touch input, the real engine, any interaction assertion, or the
+three-minute deadline. The expected CI speed-up remains to be verified.
+High-DPI rendering performance and physical iPhone speech still need separate
+real-device verification. The expanded local control smoke passes at both
+pixel ratios; it does not measure renderer performance.
+
+### Follow-up: deterministic speech and a measured suite budget
+
+CI run 34025362003 confirmed progress at 1x: all six viewports, all seven
+expression selections, keyboard selection and speech/replay completed. The
+suite then reached settings before the global three-minute deadline. Type,
+lint, unit tests and build all passed. The run still failed overall; capture,
+scoring and the negative control did not run.
+
+A separate local latency regression delayed speech assertions by 1200 ms. The
+old fake voice ended after 950 ms, so the test failed despite a correct host.
+The fake voice now stays active until explicitly finished, and the delayed
+assertions pass. Replay also checks two actual interruptions rather than only
+counting spoken captions. The real adapter and engine are unchanged. Expression
+and caption state assertions are batched into atomic browser snapshots to cut
+protocol round trips without removing checks.
+
+After observing two complete CI timelines, allow five minutes for the expanded
+real-engine suite while retaining the 30-second default action timeout. This
+replaces the earlier three-minute aggregate deadline; it does not raise the
+individual action limit or bypass any assertion. The renderer still runs,
+all six viewport sizes remain, and the visual scoring gate is unchanged.
+This budget change addresses observed cumulative test cost, not a claim about
+physical-device rendering performance.
+
+The updated full control smoke, including the deliberate speech delay and
+interruption assertions, passes locally with the stub engine. JavaScript
+syntax checking passes. Real-engine CI for this final revision remains the
+required verification; no merge approval is implied by the local results.
