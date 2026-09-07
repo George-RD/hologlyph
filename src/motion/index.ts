@@ -34,12 +34,12 @@ interface Vec3 {
 const MOUTH_NAMES = [...RIG_VISEME_MORPHS, ...RIG_TONGUE_MORPHS, 'jaw_open'];
 const MOUTH: Record<string, true> = {};
 for (const m of MOUTH_NAMES) MOUTH[m] = true;
-/** Blink morphs idle may fill below expression priority (resting face only). */
-const BLINK_NAMES: Record<string, true> = {
-  exp_blink: true,
-  exp_blink_l: true,
-  exp_blink_r: true,
-};
+/**
+ * Procedural blinking uses the bilateral blink morph only. Driving the bilateral
+ * target together with the left/right targets stacks the same eyelid delta and
+ * over-closes each lid.
+ */
+const PROCEDURAL_BLINK_NAME = 'exp_blink';
 
 /** Attack/release time constants (seconds) for mouth-region smoothing. */
 const TAU_ATTACK = 0.05;
@@ -276,8 +276,8 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
 
     // Idle head motion yields to explicit head control: it is fully
     // suppressed the moment a nod is active or the head is still posing
-    // (curYaw/curPitch non-zero), and eases slowly back in once control ends
-    // so idle never snaps in/out or hard-applies an accumulated drift offset.
+    // (curYaw/curPitch non-zero), and eases slowly back to 1 afterward so idle
+    // never snaps in/out or hard-applies an accumulated random drift offset.
     const explicitHead = nod !== null || Math.hypot(curYaw, curPitch) > 1e-4;
     if (explicitHead) {
       idleHeadBlend = 0;
@@ -314,19 +314,26 @@ export function createMotionEngine(options: MotionEngineOptions = {}): MotionEng
           avatar.setMorph(name, clamp01(next));
         } else {
           const expr = clamp01(displayWeights[name] ?? 0);
-          // Idle composes below expression priority: it only fills the blink
-          // morphs when the explicit expression does not already drive them
-          // (resting face), so it never fights an explicit expression or viseme.
-          // Blink hold overrides/augments both.
-          const idleBlinkVal = BLINK_NAMES[name] && expr < 1e-3 ? idlePose.blink : 0;
-          const blinkTarget = BLINK_NAMES[name] ? Math.max(expr, idleBlinkVal, blinkHold) : expr;
-          avatar.setMorph(name, clamp01(blinkTarget));
+          if (name === PROCEDURAL_BLINK_NAME) {
+            // The bilateral morph already contains both left and right eyelid
+            // deltas. Keep procedural/hold closure on this one channel so it
+            // cannot stack with exp_blink_l/exp_blink_r.
+            const idleBlinkVal = expr < 1e-3 ? idlePose.blink : 0;
+            avatar.setMorph(name, clamp01(Math.max(expr, idleBlinkVal, blinkHold)));
+          } else {
+            avatar.setMorph(name, expr);
+          }
         }
       }
       for (const name of RIG_VISEME_MORPHS) {
         const target = visemeActive && vw ? (vw[name] ?? 0) : 0;
         const current = mouthCurrent[name] ?? 0;
-        const tau = target > current ? TAU_ATTACK : TAU_RELEASE;
+        // While speech is active, incoming and outgoing one-hot visemes use the
+        // same time constant. Their smoothed weights therefore conserve the
+        // intended blend instead of the old fast-attack/slow-release overlap
+        // pushing the mouth past a full authored pose. Clearing speech keeps
+        // the softer release back to rest.
+        const tau = visemeActive ? TAU_ATTACK : target > current ? TAU_ATTACK : TAU_RELEASE;
         const next = current + (target - current) * (1 - Math.exp(-dt / tau));
         mouthCurrent[name] = next;
         avatar.setMorph(name, clamp01(next));
