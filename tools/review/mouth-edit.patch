@@ -1,0 +1,260 @@
+diff --git a/src/core/engine.ts b/src/core/engine.ts
+index 5f87e59..6949583 100644
+--- a/src/core/engine.ts
++++ b/src/core/engine.ts
+@@ -66,6 +66,7 @@ import {
+   type PoolSurface,
+ } from '../shaders';
+ import { createInteriorGlyphField } from '../shaders/interior-glyph-field.js';
++import { buildMouthMaterial } from '../shaders/mouth-material.js';
+ import { createPoolSurface } from '../shaders/pool-surface.js';
+ import { createCompositorGlass, type CompositorGlass } from './compositor-glass.js';
+ import { createEmitter } from './emitter.js';
+@@ -87,10 +88,9 @@ import {
+   type Stage,
+ } from './participants.js';
+  
+-// Materials the engine must not replace with the text skin. The mouth cavity
+-// and the eye trim (caruncle-corner blend shell + lacrimal fluid) keep their
+-// authored dark materials. All other morph meshes receive the glyph grid,
+-// including any teeth-named or unnamed placeholder material.
++// Internal materials must not be dressed as outer skin. The combined mouth
++// primitive gets its own subdued glyph material; eye trim keeps its authored
++// material. Other meshes retain the existing text-skin routing.
+ const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior', 'eye_trim']);
+ function isEyeMesh(mesh: THREE.Mesh): boolean {
+   if (mesh.parent?.name === 'eyes' || mesh.name.startsWith('eyes_') || mesh.name.startsWith('eye_')) {
+@@ -272,6 +272,7 @@ class EngineImpl implements Engine {
+ 
+   private avatar: LoadedAvatar | null = null;
+   private skinMaterial: THREE.Material | null = null;
++  private mouthMaterial: THREE.Material | null = null;
+   /**
+    * The three passes `buildSkinMaterial` owns: the front surface, the interior
+    * wall and the occlusion mask. Held together because they share one uniform
+@@ -1013,6 +1014,10 @@ class EngineImpl implements Engine {
+ 
+     const skinMats = this.sysVfx.createSkinMaterial(this.sysTextSkin);
+     const headMat = skinMats.front;
++    const getMouthMat = () => {
++      this.mouthMaterial ??= buildMouthMaterial(headMat);
++      return this.mouthMaterial;
++    };
+     let eyeballMat: THREE.Material | null = null;
+     const getEyeballMat = () => {
+       if (!eyeballMat) {
+@@ -1061,6 +1066,11 @@ class EngineImpl implements Engine {
+         mat.depthWrite = true;
+         continue;
+       }
++      if (name === 'mouth_interior') {
++        if (original && !Array.isArray(original)) this.displacedMaterials.add(original);
++        mesh.material = getMouthMat();
++        continue;
++      }
+       if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
+       if (Array.isArray(original)) {
+         for (const material of original) {
+@@ -1510,6 +1520,8 @@ class EngineImpl implements Engine {
+    * Idempotent: three's `dispose` is, and the reference is cleared here.
+    */
+   private disposeSkinMaterials(): void {
++    this.mouthMaterial?.dispose();
++    this.mouthMaterial = null;
+     const mats = this.skinMaterials;
+     if (!mats) return;
+     this.skinMaterials = null;
+diff --git a/src/shaders/mouth-material.ts b/src/shaders/mouth-material.ts
+new file mode 100644
+index 0000000..bf873e0
+--- /dev/null
++++ b/src/shaders/mouth-material.ts
+@@ -0,0 +1,48 @@
++/**
++ * An inner surface, not a second skin or an anatomical insert.
++ *
++ * The shipped teeth, gums and tongue share one primitive. Borrow the face's
++ * live glyph graph so its source, density, palette and flow cannot drift, but
++ * keep the cavity mostly dark and suppress flesh-coloured feature tinting.
++ * No extra atlas, uniform updater, render pass or material per tooth.
++ */
++import { FrontSide, NoBlending, type Material } from 'three';
++import { MeshBasicNodeMaterial, type MeshStandardNodeMaterial } from 'three/webgpu';
++import { dot, float, luminance, mix, normalView, positionViewDirection, pow, saturate, vec3 } from 'three/tsl';
++
++export function buildMouthMaterial(surface: Material): Material {
++  const front = surface as MeshStandardNodeMaterial;
++  const material = new MeshBasicNodeMaterial();
++  // The engine recognises this name as an internal depth-writing surface.
++  material.name = 'mouth_interior';
++  material.side = FrontSide;
++  material.transparent = false;
++  material.blending = NoBlending;
++  material.depthTest = true;
++  material.depthWrite = true;
++
++  // No alpha holes: a transparent tongue would reveal the back of the gums,
++  // and a luminous tooth would become a floating object behind closed lips.
++  const colour = vec3(front.colorNode ?? vec3(0));
++  const etched = mix(vec3(luminance(colour)), colour, 0.25).mul(0.32);
++  const rim = pow(saturate(float(1).sub(dot(normalView, positionViewDirection))), 3);
++  material.colorNode = vec3(0.002, 0.004, 0.006)
++    .add(etched)
++    .add(vec3(0.012, 0.020, 0.028).mul(rim))
++    .clamp(0, 0.22);
++
++  // Reuse the actual graph, not a rest-position copy: morphs and skinning run
++  // first, then the same melt/flow map and corrected normals as the shell.
++  material.positionNode = front.positionNode;
++  material.normalNode = front.normalNode;
++  // Core and a custom avatar may both release installed materials. Keep this
++  // surface idempotent without taking ownership of the shared graph/texture.
++  const release = material.dispose.bind(material);
++  let disposed = false;
++  material.dispose = () => {
++    if (disposed) return;
++    disposed = true;
++    release();
++  };
++  return material;
++}
+diff --git a/test/core.test.ts b/test/core.test.ts
+index b65e9bf..49ab43a 100644
+--- a/test/core.test.ts
++++ b/test/core.test.ts
+@@ -361,6 +361,15 @@ vi.mock('../src/text-skin', () => ({
+   },
+ }));
+ 
++vi.mock('../src/shaders/mouth-material', () => ({
++  buildMouthMaterial: vi.fn(() => {
++    const material = new THREE.MeshBasicMaterial();
++    material.name = 'mouth_interior';
++    material.blending = THREE.NoBlending;
++    return material;
++  }),
++}));
++
+ vi.mock('../src/shaders', async () => ({
+   // The pool and fluid maths are pure and import nothing GPU-shaped, so the
+   // fake uses the real functions: a stubbed profile or a stubbed drive would
+@@ -1124,7 +1133,7 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
+ });
+  
+  describe('text-skin material application (mouth interior)', () => {
+-   it('keeps mouth material but skins teeth, ordinary, and unnamed meshes', async () => {
++   it('gives the combined mouth its own glyph material and preserves other routing', async () => {
+      const keepMaterials = { isKept: true } as unknown as THREE.Material;
+      const teethMaterials = { isTeeth: true } as unknown as THREE.Material;
+      const skinnedMaterial = { isSkin: false } as unknown as THREE.Material;
+@@ -1154,7 +1163,8 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
+      const engine = createEngine({ avatarUrl: 'fake.glb' });
+      await engine.mount(document.createElement('canvas'), document.createElement('div'));
+  
+-     expect(keptMesh.material).toBe(keepMaterials);
++     expect(keptMesh.material).not.toBe(keepMaterials);
++     expect(keptMesh.material).not.toBe(skinMeshMaterial);
+      expect((keptMesh.material as THREE.Material).name).toBe('mouth_interior');
+      expect(teethMesh.material).toBe(skinMeshMaterial);
+      expect(ordinaryMesh.material).toBe(skinMeshMaterial);
+@@ -1162,6 +1172,41 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
+      engine.dispose();
+    });
+  });
++describe('mouth material ownership', () => {
++  it('shares one oral material without replacing geometry or morph arrays', async () => {
++    const authored = new THREE.MeshStandardMaterial();
++    authored.name = 'mouth_interior';
++    const authoredDispose = vi.spyOn(authored, 'dispose');
++    const geometry = new THREE.BufferGeometry();
++    const first = new THREE.Mesh(geometry, authored);
++    const second = new THREE.Mesh(geometry, authored);
++    const influences = [0.4, 0.2];
++    const dictionary = { viseme_aa: 0, tongue_out: 1 };
++    first.morphTargetInfluences = influences;
++    first.morphTargetDictionary = dictionary;
++    const group = new THREE.Group();
++    group.add(first, second);
++    h.avatarOverride = {
++      root: group, morphMeshes: [first, second], bones: {}, animations: [],
++      setMorph() {}, getMorph() { return 0; }, dispose() {},
++    };
++    const engine = createEngine({ avatarUrl: 'fake.glb' });
++    await engine.mount(document.createElement('canvas'), document.createElement('div'));
++    expect(first.material).toBe(second.material);
++    expect(first.material).not.toBe(authored);
++    expect(first.geometry).toBe(geometry);
++    expect(first.morphTargetInfluences).toBe(influences);
++    expect(first.morphTargetDictionary).toBe(dictionary);
++    expect(first.renderOrder).toBe(1);
++    // A mouth-only custom rig must not become the shell used for overlays.
++    expect(group.children).toHaveLength(2);
++    const oralDispose = vi.spyOn(first.material as THREE.Material, 'dispose');
++    engine.dispose(); engine.dispose();
++    expect(oralDispose).toHaveBeenCalledTimes(1);
++    expect(authoredDispose).toHaveBeenCalledTimes(1);
++  });
++});
++
+ describe('displaced materials', () => {
+   it('disposes displaced authored materials and their textures once on teardown', async () => {
+     const texture = { isTexture: true, dispose: vi.fn() } as unknown as THREE.Texture;
+diff --git a/test/shaders-mouth.test.ts b/test/shaders-mouth.test.ts
+new file mode 100644
+index 0000000..ff1fc4c
+--- /dev/null
++++ b/test/shaders-mouth.test.ts
+@@ -0,0 +1,53 @@
++import { describe, expect, it } from 'vitest';
++import { NoBlending, FrontSide, CanvasTexture } from 'three';
++import type { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
++import type { TextSkinEngine } from '../src/contracts';
++import { buildSkinMaterial } from '../src/shaders/materials';
++import { buildMouthMaterial } from '../src/shaders/mouth-material';
++
++function makeSkin(): TextSkinEngine {
++  return {
++    texture: new CanvasTexture(document.createElement('canvas')), scrollOffset: 0, scrollSpeed: 0,
++    setSource() {}, setScrollSpeed() {}, setReducedMotion() {}, update() {}, dispose() {},
++  };
++}
++
++describe('holographic mouth material', () => {
++  it('borrows the live colour and deformation graphs, not outer-skin transparency', () => {
++    const skin = buildSkinMaterial(makeSkin());
++    const front = skin.material as MeshStandardNodeMaterial;
++    const mouth = buildMouthMaterial(skin.material) as MeshBasicNodeMaterial;
++    expect(mouth.name).toBe('mouth_interior');
++    expect(mouth.transparent).toBe(false);
++    expect(mouth.blending).toBe(NoBlending);
++    expect(mouth.depthWrite).toBe(true);
++    expect(mouth.depthTest).toBe(true);
++    expect(mouth.side).toBe(FrontSide);
++    expect(mouth.opacityNode).toBeNull();
++    expect(mouth.positionNode).toBe(front.positionNode);
++    expect(mouth.normalNode).toBe(front.normalNode);
++    const nodes: unknown[] = [];
++    mouth.colorNode?.traverse((node) => { nodes.push(node); });
++    expect(nodes).toContain(front.colorNode);
++    expect(nodes).toContain(skin.uniforms.scroll);
++    expect(nodes).toContain(skin.uniforms.glyphScale);
++    mouth.dispose(); skin.material.dispose(); skin.interior.dispose(); skin.mask.dispose();
++  });
++
++  it('does not dispose its borrowed surface or atlas', () => {
++    const atlas = makeSkin();
++    const skin = buildSkinMaterial(atlas);
++    let surfaceDisposals = 0;
++    let textureDisposals = 0;
++    skin.material.addEventListener('dispose', () => { surfaceDisposals++; });
++    atlas.texture.addEventListener('dispose', () => { textureDisposals++; });
++    const mouth = buildMouthMaterial(skin.material);
++    let mouthDisposals = 0;
++    mouth.addEventListener('dispose', () => { mouthDisposals++; });
++    mouth.dispose(); mouth.dispose();
++    expect(mouthDisposals).toBe(1);
++    expect(surfaceDisposals).toBe(0);
++    expect(textureDisposals).toBe(0);
++    skin.material.dispose(); skin.interior.dispose(); skin.mask.dispose();
++  });
++});
