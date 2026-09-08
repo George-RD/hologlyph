@@ -13,6 +13,7 @@
 
 import type {
   AudioEngine,
+  BlendshapeWeights,
   SpeechMode,
   TTSAdapter,
   UtteranceHandle,
@@ -29,6 +30,25 @@ import {
 const VISEME_TICK_MS = 30;
 const VISEME_MS = 75;
 
+/**
+ * SpeechSynthesis gives us words, not calibrated facial coefficients. The ICT
+ * canonical viseme targets are intentionally expressive at weight 1, and the
+ * owner-approved demo established 0.55 as the natural conversational scale on
+ * 2026-07-21. Keep that calibration at this approximation boundary instead of
+ * weakening the rig or rescaling provider-supplied viseme frames in MotionEngine.
+ */
+export const DEMO_VISEME_GAIN = 0.55;
+
+/** Calibrate one canonical demo viseme without changing the generic helper. */
+export function demoWeightsForViseme(viseme: string): BlendshapeWeights {
+  const raw = weightsForViseme(viseme);
+  const calibrated: BlendshapeWeights = {};
+  for (const [name, weight] of Object.entries(raw)) {
+    calibrated[name] = name === 'jaw_open' ? weight : weight * DEMO_VISEME_GAIN;
+  }
+  return calibrated;
+}
+
 // Structural view of the fields we read from a `boundary` event. Not every
 // TypeScript DOM lib types `charLength`, so we describe exactly what we need.
 interface SpeechBoundaryEvent {
@@ -40,10 +60,10 @@ interface SpeechBoundaryEvent {
 type TimerHandle = ReturnType<typeof setInterval>;
 
 // Single typed view of the browser speech globals.
- const browserGlobals = globalThis as {
-   speechSynthesis?: SpeechSynthesis;
-   SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance;
- };
+const browserGlobals = globalThis as {
+  speechSynthesis?: SpeechSynthesis;
+  SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance;
+};
 
 class DemoTTSAdapter implements TTSAdapter {
   readonly mode: SpeechMode = 'demo';
@@ -125,7 +145,7 @@ class DemoTTSAdapter implements TTSAdapter {
       while (cursor < sequence.length && cursor <= step) {
         const viseme = sequence[cursor]!;
         const time = (boundaryStartMs - utteranceStartMs + cursor * VISEME_MS) / 1000;
-        handle.viseme({ time, weights: weightsForViseme(viseme) });
+        handle.viseme({ time, weights: demoWeightsForViseme(viseme) });
         cursor++;
       }
       // Past the word: emit exactly one silence frame to close the mouth.
