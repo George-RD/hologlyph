@@ -206,11 +206,11 @@ describe('demo adapter', () => {
     synth.last!.onboundary!({ charIndex: 0, charLength: 2 });
     vi.advanceTimersByTime(30); // first viseme (aa) at t=0
     expect(frames).toHaveLength(1);
-    expect(frames[0]!.weights).toEqual(weightsForViseme('viseme_aa'));
+    expect(frames[0]!.weights).toEqual({ viseme_aa: 0.55, jaw_open: 0 });
     expect(frames[0]!.time).toBeCloseTo(0, 5);
     vi.advanceTimersByTime(90); // second viseme (ee) at t=0.075
     expect(frames).toHaveLength(2);
-    expect(frames[1]!.weights).toEqual(weightsForViseme('viseme_ee'));
+    expect(frames[1]!.weights).toEqual({ viseme_ee: 0.55, jaw_open: 0 });
     expect(frames[1]!.time - frames[0]!.time).toBeCloseTo(0.075, 5);
     vi.advanceTimersByTime(300); // silence frame after the word at t=0.15
     expect(frames).toHaveLength(3);
