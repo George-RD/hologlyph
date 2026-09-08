@@ -49,8 +49,8 @@ try {
     });
     return rows;
   });
-  assert(meshes.some((mesh) => mesh.vertices > 10000), 'Placeholder cannot pass a mouth review');
   writeFileSync(`${output}meshes.json`, JSON.stringify(meshes, null, 2));
+  assert(meshes.some((mesh) => mesh.materials.some((material) => material.name === 'mouth_interior') && mesh.morphs.includes('tongue_out')), 'Review requires the real mouth primitive and authored tongue morphs');
   for (const glass of [0, 0.7]) {
     await page.evaluate((amount) => {
       window.__hologlyphEngine.sysVfx.setHeadConfig({ skin: { glass: { amount } } });
@@ -70,7 +70,7 @@ try {
           camera.position.set(2.4 * Math.sin(yaw), 0.05, 2.4 * Math.cos(yaw));
           camera.lookAt(0, 0, 0);
         }, { yaw, weights });
-        await page.waitForTimeout(180);
+        await page.waitForTimeout(300);
         await page.locator('#holo').screenshot({ path: `${output}${glass ? 'glass' : 'text'}-${yaw ? 'side' : 'front'}-${name}.png` });
       }
     }
