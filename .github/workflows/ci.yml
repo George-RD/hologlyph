@@ -38,12 +38,12 @@ jobs:
             curl -sf http://localhost:5173/hologlyph/engine.html >/dev/null && break
             sleep 1
           done
-      - name: Capture facial interior A/B
+      - name: Capture facial speech-gain A/B
         run: bun tools/smoke/facial-interior-ab.mjs http://localhost:5173
       - uses: actions/upload-artifact@v4
         with:
-          name: facial-interior-ab
-          path: tools/evals/out/facial-interior-ab/
+          name: facial-speech-gain-ab
+          path: tools/evals/out/facial-speech-gain-ab/
       - name: Check mobile demo state
         timeout-minutes: 2
         run: bun tools/smoke/mobile-demo-state-smoke.mjs http://localhost:5173
