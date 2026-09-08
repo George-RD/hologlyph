@@ -7,12 +7,14 @@
  * No extra atlas, uniform updater, render pass or material per tooth.
  */
 import { FrontSide, NoBlending, type Material } from 'three';
-import { MeshBasicNodeMaterial, type MeshStandardNodeMaterial } from 'three/webgpu';
+import { NodeMaterial, type MeshStandardNodeMaterial } from 'three/webgpu';
 import { dot, float, luminance, mix, normalView, positionViewDirection, pow, saturate, vec3 } from 'three/tsl';
 
 export function buildMouthMaterial(surface: Material): Material {
   const front = surface as MeshStandardNodeMaterial;
-  const material = new MeshBasicNodeMaterial();
+  // MeshBasicNodeMaterial ignores normalNode in Three r178. The unlit base
+  // honours it, so the shared deformation has matching shading normals too.
+  const material = new NodeMaterial();
   // The engine recognises this name as an internal depth-writing surface.
   material.name = 'mouth_interior';
   material.side = FrontSide;

@@ -47,11 +47,12 @@ async function capture(name, reference = false) {
     const original = [...engine.displacedMaterials].find((m) => m.name === 'mouth_interior');
     const current = engine.mouthMaterial;
     if (!original || !current) throw new Error('Missing original or replacement mouth material');
+    const relayer = original.transparent !== current.transparent || original.blending !== current.blending;
     original.transparent = current.transparent;
     original.blending = current.blending;
     original.depthWrite = current.depthWrite;
     original.depthTest = current.depthTest;
-    original.needsUpdate = true;
+    if (relayer) original.needsUpdate = true;
     engine.avatar.root.traverse((mesh) => {
       if (mesh.isMesh && (mesh.material === original || mesh.material === current)) {
         mesh.material = reference ? original : current;
@@ -65,6 +66,40 @@ async function capture(name, reference = false) {
 }
 
 try {
+  // Headless Chromium has no system voice. Drive the host's word-boundary
+  // events deterministically, keeping the real demo adapter, speech engine
+  // and motion blend intact. This verifies animation, not audible synthesis.
+  await page.addInitScript(() => {
+    class TestUtterance {
+      constructor(text) { this.text = text; }
+    }
+    let startTimer;
+    let boundaryTimer;
+    const cancel = () => {
+      clearTimeout(startTimer);
+      clearInterval(boundaryTimer);
+    };
+    const synthesis = {
+      cancel,
+      getVoices() { return []; },
+      speak(utterance) {
+        cancel();
+        const words = [...utterance.text.matchAll(/\S+/g)];
+        let cursor = 0;
+        const boundary = () => {
+          const word = words[cursor++ % words.length];
+          if (word) utterance.onboundary?.({ charIndex: word.index, charLength: word[0].length });
+        };
+        startTimer = setTimeout(() => {
+          utterance.onstart?.();
+          boundary();
+          boundaryTimer = setInterval(boundary, 600);
+        }, 0);
+      },
+    };
+    Object.defineProperty(globalThis, 'SpeechSynthesisUtterance', { configurable: true, value: TestUtterance });
+    Object.defineProperty(globalThis, 'speechSynthesis', { configurable: true, value: synthesis });
+  });
   await page.goto(process.argv[2] ?? 'http://localhost:5173/hologlyph/engine.html', { waitUntil: 'load' });
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await page.waitForFunction(() => document.getElementById('state')?.textContent === 'state: idle');
@@ -88,7 +123,7 @@ try {
     return rows;
   });
   writeFileSync(`${output}meshes.json`, JSON.stringify(meshes, null, 2));
-  assert(meshes.some((mesh) => mesh.materials.some((material) => material.name === 'mouth_interior' && material.type === 'MeshBasicNodeMaterial') && mesh.morphs.includes('tongue_out')), 'Review requires the real mouth primitive, replacement shader and tongue morphs');
+  assert(meshes.some((mesh) => mesh.materials.some((material) => material.name === 'mouth_interior' && material.type === 'NodeMaterial') && mesh.morphs.includes('tongue_out')), 'Review requires the real mouth primitive, replacement shader and tongue morphs');
   for (const glass of [0, 0.7]) {
     await page.evaluate((amount) => {
       window.__hologlyphEngine.vfx.setHeadConfig({ skin: { glass: { amount } } });
@@ -129,10 +164,10 @@ try {
       Object.entries(mesh.morphTargetDictionary ?? {}).some(([name, index]) =>
         name.startsWith('viseme_') && name !== 'viseme_sil' && mesh.morphTargetInfluences[index] > 0.05));
   });
-  await capture('mobile-live-speech');
+  await capture('mobile-speech-animation');
   await page.evaluate(() => window.__hologlyphEngine.speech.cancel());
   assert.deepEqual(errors, [], 'Browser errors during mouth review');
 } finally {
-  writeFileSync(`${output}result.json`, JSON.stringify({ captures, count: captures.length, errors }, null, 2));
+  writeFileSync(`${output}result.json`, JSON.stringify({ captures, count: captures.length, voice: 'synthetic host word-boundary events; no audio', errors }, null, 2));
   await browser.close();
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NoBlending, FrontSide, CanvasTexture } from 'three';
-import type { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
+import type { NodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import type { TextSkinEngine } from '../src/contracts';
 import { buildSkinMaterial } from '../src/shaders/materials';
 import { buildMouthMaterial } from '../src/shaders/mouth-material';
@@ -16,7 +16,7 @@ describe('holographic mouth material', () => {
   it('borrows the live colour and deformation graphs, not outer-skin transparency', () => {
     const skin = buildSkinMaterial(makeSkin());
     const front = skin.material as MeshStandardNodeMaterial;
-    const mouth = buildMouthMaterial(skin.material) as MeshBasicNodeMaterial;
+    const mouth = buildMouthMaterial(skin.material) as NodeMaterial;
     expect(mouth.name).toBe('mouth_interior');
     expect(mouth.transparent).toBe(false);
     expect(mouth.blending).toBe(NoBlending);
@@ -26,6 +26,10 @@ describe('holographic mouth material', () => {
     expect(mouth.opacityNode).toBeNull();
     expect(mouth.positionNode).toBe(front.positionNode);
     expect(mouth.normalNode).toBe(front.normalNode);
+    const normals: unknown[] = [];
+    mouth.setupNormal().traverse((node) => { normals.push(node); });
+    expect(normals).toContain(front.normalNode);
+    expect(mouth.lights).toBe(false);
     const nodes: unknown[] = [];
     mouth.colorNode?.traverse((node) => { nodes.push(node); });
     expect(nodes).toContain(front.colorNode);
