@@ -1,5 +1,4 @@
 name: Mouth visual review
-
 on:
   pull_request:
     paths:
@@ -7,10 +6,11 @@ on:
       - 'test/**'
       - 'tools/smoke/mouth-*.mjs'
       - '.github/workflows/mouth-review.yml'
-
 permissions:
   contents: read
-
+concurrency:
+  group: mouth-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
   mouth-review:
     runs-on: ubuntu-latest
@@ -30,17 +30,8 @@ jobs:
             sleep 1
           done
           exit 1
-      - name: Capture oral poses
+      - name: Compare mouth materials and exercise speech
         run: bun tools/smoke/mouth-review.mjs http://localhost:5173/hologlyph/engine.html
-      - name: Export isolated verification dependencies
-        if: always()
-        run: tar -czf /tmp/hologlyph-review-deps.tgz node_modules
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mouth-review-deps
-          path: /tmp/hologlyph-review-deps.tgz
-          retention-days: 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
