@@ -66,6 +66,7 @@ import {
   type PoolSurface,
 } from '../shaders';
 import { createInteriorGlyphField } from '../shaders/interior-glyph-field.js';
+import { buildMouthMaterial } from '../shaders/mouth-material.js';
 import { createPoolSurface } from '../shaders/pool-surface.js';
 import { createCompositorGlass, type CompositorGlass } from './compositor-glass.js';
 import { createEmitter } from './emitter.js';
@@ -87,10 +88,9 @@ import {
   type Stage,
 } from './participants.js';
  
-// Materials the engine must not replace with the text skin. The mouth cavity
-// and the eye trim (caruncle-corner blend shell + lacrimal fluid) keep their
-// authored dark materials. All other morph meshes receive the glyph grid,
-// including any teeth-named or unnamed placeholder material.
+// Internal materials must not be dressed as outer skin. The combined mouth
+// primitive gets its own subdued glyph material; eye trim keeps its authored
+// material. Other meshes retain the existing text-skin routing.
 const KEEP_MATERIALS: ReadonlySet<string> = new Set(['mouth_interior', 'eye_trim']);
 function isEyeMesh(mesh: THREE.Mesh): boolean {
   if (mesh.parent?.name === 'eyes' || mesh.name.startsWith('eyes_') || mesh.name.startsWith('eye_')) {
@@ -272,6 +272,7 @@ class EngineImpl implements Engine {
 
   private avatar: LoadedAvatar | null = null;
   private skinMaterial: THREE.Material | null = null;
+  private mouthMaterial: THREE.Material | null = null;
   /**
    * The three passes `buildSkinMaterial` owns: the front surface, the interior
    * wall and the occlusion mask. Held together because they share one uniform
@@ -1013,6 +1014,10 @@ class EngineImpl implements Engine {
 
     const skinMats = this.sysVfx.createSkinMaterial(this.sysTextSkin);
     const headMat = skinMats.front;
+    const getMouthMat = () => {
+      this.mouthMaterial ??= buildMouthMaterial(headMat);
+      return this.mouthMaterial;
+    };
     let eyeballMat: THREE.Material | null = null;
     const getEyeballMat = () => {
       if (!eyeballMat) {
@@ -1059,6 +1064,11 @@ class EngineImpl implements Engine {
         mat.side = FrontSide;
         mat.depthTest = true;
         mat.depthWrite = true;
+        continue;
+      }
+      if (name === 'mouth_interior') {
+        if (original && !Array.isArray(original)) this.displacedMaterials.add(original);
+        mesh.material = getMouthMat();
         continue;
       }
       if (name !== undefined && KEEP_MATERIALS.has(name)) continue;
@@ -1510,6 +1520,8 @@ class EngineImpl implements Engine {
    * Idempotent: three's `dispose` is, and the reference is cleared here.
    */
   private disposeSkinMaterials(): void {
+    this.mouthMaterial?.dispose();
+    this.mouthMaterial = null;
     const mats = this.skinMaterials;
     if (!mats) return;
     this.skinMaterials = null;
