@@ -1,0 +1,46 @@
+name: Mouth visual review
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'tools/smoke/mouth-*.mjs'
+      - '.github/workflows/mouth-review.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  mouth-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - run: bunx playwright install --with-deps chromium
+      - name: Start review server
+        run: |
+          bun run dev &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:5173/hologlyph/engine.html >/dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Capture oral poses
+        run: bun tools/smoke/mouth-review.mjs http://localhost:5173/hologlyph/engine.html
+      - name: Include reproducible review source
+        if: always()
+        run: |
+          tar --exclude=.git --exclude=node_modules --exclude=tools/evals/out --exclude=tools/asset-pipeline/.cache -czf /tmp/hologlyph-review-source.tgz .
+          mkdir -p tools/evals/out/mouth
+          cp /tmp/hologlyph-review-source.tgz tools/evals/out/mouth/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mouth-review
+          path: tools/evals/out/mouth/
+          retention-days: 7
