@@ -32,12 +32,15 @@ jobs:
           exit 1
       - name: Capture oral poses
         run: bun tools/smoke/mouth-review.mjs http://localhost:5173/hologlyph/engine.html
-      - name: Include reproducible review source
+      - name: Export isolated verification dependencies
         if: always()
-        run: |
-          tar --exclude=.git --exclude=node_modules --exclude=tools/evals/out --exclude=tools/asset-pipeline/.cache -czf /tmp/hologlyph-review-source.tgz .
-          mkdir -p tools/evals/out/mouth
-          cp /tmp/hologlyph-review-source.tgz tools/evals/out/mouth/
+        run: tar -czf /tmp/hologlyph-review-deps.tgz node_modules
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mouth-review-deps
+          path: /tmp/hologlyph-review-deps.tgz
+          retention-days: 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
