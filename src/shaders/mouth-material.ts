@@ -1,22 +1,16 @@
 import { FrontSide, NoBlending, type Material } from 'three';
 import { NodeMaterial, type MeshStandardNodeMaterial } from 'three/webgpu';
 import {
-  float,
-  luminance,
-  mix,
-  positionGeometry,
-  smoothstep,
-  vec3,
+  Fn, attribute, dot, float, luminance, mix, normalWorld,
+  positionGeometry, pow, saturate, smoothstep, vec2, vec3,
 } from 'three/tsl';
 
 /**
- * Keep the mouth legible as anatomy rather than a luminous cavity.
+ * Opaque, source-labelled anatomy inside the holographic face.
  *
- * ICT folds teeth/gums/tongue into one morph-bearing primitive. Classify only
- * the narrow bind-space regions that actually read as dental rows and tongue;
- * everything else stays close to black. Deliberately avoid view-facing rim
- * light here: it was lighting the whole concave shell and produced a fog/cloud
- * inside the mouth instead of discrete forms.
+ * The asset carries [teeth, tongue] weights from the source material groups
+ * and authored tongue mask. Gums are neither. No coordinate bands decide
+ * anatomical identity, so a bright gum wall cannot masquerade as teeth.
  */
 export function buildMouthMaterial(surface: Material): Material {
   const front = surface as MeshStandardNodeMaterial;
@@ -28,39 +22,37 @@ export function buildMouthMaterial(surface: Material): Material {
   material.depthTest = true;
   material.depthWrite = true;
 
+  // GLTFLoader lowercases custom attribute semantics. A legacy/custom avatar
+  // without the labels keeps a dark cavity, without guessing its anatomy.
+  const roles = Fn((builder) => builder.geometry.hasAttribute('_oral_region')
+    ? attribute('_oral_region', 'vec2') : vec2(0))();
+  const teeth = roles.x.saturate();
+  const tongue = roles.y.saturate().mul(float(1).sub(teeth));
   const surfaceColour = vec3(front.colorNode ?? vec3(0));
-  const glyph = mix(vec3(luminance(surfaceColour)), surfaceColour, 0.22);
+  const glyph = mix(vec3(luminance(surfaceColour)), surfaceColour, 0.2).clamp(0, 1);
 
-  // Require geometry to be genuinely forward before it can become bright.
-  // This rejects the rear cavity and most gum/cheek wall vertices.
-  const forward = smoothstep(0.185, 0.245, positionGeometry.z);
-  const centreDental = float(1).sub(smoothstep(0.075, 0.125, positionGeometry.x.abs()));
-
-  // Thin dental bands: enough white edge to read as teeth without turning the
-  // entire upper/lower mouth shell into one glowing slab.
-  const upperDental = smoothstep(0.006, 0.017, positionGeometry.y)
-    .mul(float(1).sub(smoothstep(0.034, 0.046, positionGeometry.y)));
-  const lowerDental = smoothstep(-0.061, -0.049, positionGeometry.y)
-    .mul(float(1).sub(smoothstep(-0.031, -0.019, positionGeometry.y)));
-  const dental = upperDental.add(lowerDental).clamp(0, 1).mul(forward).mul(centreDental);
-
-  // Tongue is lower, central, and slightly less forward than the teeth. Its
-  // mask is intentionally tighter and dimmer so it reads as a surface behind
-  // the teeth, not as a second light source.
-  const tongueCentre = float(1).sub(smoothstep(0.038, 0.068, positionGeometry.x.abs()));
-  const tongueDepth = smoothstep(0.145, 0.205, positionGeometry.z)
-    .mul(float(1).sub(smoothstep(0.225, 0.245, positionGeometry.z)));
-  const tongueBand = smoothstep(-0.09, -0.073, positionGeometry.y)
-    .mul(float(1).sub(smoothstep(-0.038, -0.02, positionGeometry.y)));
-  const tongue = tongueBand.mul(tongueCentre).mul(tongueDepth).mul(float(1).sub(dental));
-
-  // Near-black cavity is the dominant state. Glyph contribution is deliberately
-  // tiny here: the mouth should contain negative space, not a glowing cloud.
-  const cavityColour = vec3(0.0015, 0.002, 0.003).add(glyph.mul(0.025));
-  const tongueColour = vec3(0.055, 0.024, 0.052).add(glyph.mul(vec3(0.12, 0.055, 0.13)));
-  const teethColour = vec3(0.28, 0.32, 0.33).add(glyph.mul(vec3(0.2, 0.24, 0.25)));
-
-  material.colorNode = mix(mix(cavityColour, tongueColour, tongue), teethColour, dental).clamp(0, 0.48);
+  // The same world-space key/fill directions as the face. Shape comes from
+  // normals, not a flat emissive fill or a rim around the entire concavity.
+  const key = saturate(dot(normalWorld, vec3(1.2, 1.6, 2).normalize()));
+  const fill = saturate(dot(normalWorld, vec3(-1.5, 0.4, 1).normalize()));
+  const shade = key.mul(0.72).add(fill.mul(0.18)).add(0.1);
+  // Light recedes into the mouth. This affects illumination only, not labels.
+  const depthLight = mix(0.25, 1, smoothstep(0.1, 0.255, positionGeometry.z));
+  const enamel = vec3(0.24, 0.29, 0.31).mul(pow(shade, 1.25))
+    .add(glyph.mul(vec3(0.10, 0.13, 0.14)))
+    .add(vec3(0.035, 0.05, 0.055).mul(pow(key, 12)))
+    .mul(depthLight);
+  // A dark root, rounded sides and a restrained centre groove reveal the
+  // tongue's volume. These terms shade the labelled surface; they do not
+  // colour the gum wall or manufacture a tongue where no tongue exists.
+  const tipLight = pow(smoothstep(0.14, 0.24, positionGeometry.z), 1.3);
+  const roundedSides = float(1).sub(smoothstep(0.014, 0.044, positionGeometry.x.abs()).mul(0.4));
+  const centreGroove = smoothstep(0.001, 0.006, positionGeometry.x.abs()).mul(0.23).add(0.77);
+  const tongueSurface = mix(vec3(0.006, 0.004, 0.01), vec3(0.15, 0.085, 0.17), tipLight)
+    .mul(shade.mul(0.85).add(0.15)).mul(roundedSides).mul(centreGroove)
+    .add(glyph.mul(vec3(0.055, 0.035, 0.065)).mul(tipLight));
+  const cavity = vec3(0.001, 0.0015, 0.0025).add(glyph.mul(0.012));
+  material.colorNode = mix(mix(cavity, tongueSurface, tongue), enamel, teeth).clamp(0, 0.45);
   material.positionNode = front.positionNode;
   material.normalNode = front.normalNode;
 
