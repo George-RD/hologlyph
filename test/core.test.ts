@@ -361,6 +361,15 @@ vi.mock('../src/text-skin', () => ({
   },
 }));
 
+vi.mock('../src/shaders/mouth-material', () => ({
+  buildMouthMaterial: vi.fn(() => {
+    const material = new THREE.MeshBasicMaterial();
+    material.name = 'mouth_interior';
+    material.blending = THREE.NoBlending;
+    return material;
+  }),
+}));
+
 vi.mock('../src/shaders', async () => ({
   // The pool and fluid maths are pure and import nothing GPU-shaped, so the
   // fake uses the real functions: a stubbed profile or a stubbed drive would
@@ -1124,7 +1133,7 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
 });
  
  describe('text-skin material application (mouth interior)', () => {
-   it('keeps mouth material but skins teeth, ordinary, and unnamed meshes', async () => {
+   it('gives the combined mouth its own glyph material and preserves other routing', async () => {
      const keepMaterials = { isKept: true } as unknown as THREE.Material;
      const teethMaterials = { isTeeth: true } as unknown as THREE.Material;
      const skinnedMaterial = { isSkin: false } as unknown as THREE.Material;
@@ -1154,7 +1163,8 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
      const engine = createEngine({ avatarUrl: 'fake.glb' });
      await engine.mount(document.createElement('canvas'), document.createElement('div'));
  
-     expect(keptMesh.material).toBe(keepMaterials);
+     expect(keptMesh.material).not.toBe(keepMaterials);
+     expect(keptMesh.material).not.toBe(skinMeshMaterial);
      expect((keptMesh.material as THREE.Material).name).toBe('mouth_interior');
      expect(teethMesh.material).toBe(skinMeshMaterial);
      expect(ordinaryMesh.material).toBe(skinMeshMaterial);
@@ -1162,6 +1172,41 @@ describe('avatar delivery (dec.default-asset-delivery)', () => {
      engine.dispose();
    });
  });
+describe('mouth material ownership', () => {
+  it('shares one oral material without replacing geometry or morph arrays', async () => {
+    const authored = new THREE.MeshStandardMaterial();
+    authored.name = 'mouth_interior';
+    const authoredDispose = vi.spyOn(authored, 'dispose');
+    const geometry = new THREE.BufferGeometry();
+    const first = new THREE.Mesh(geometry, authored);
+    const second = new THREE.Mesh(geometry, authored);
+    const influences = [0.4, 0.2];
+    const dictionary = { viseme_aa: 0, tongue_out: 1 };
+    first.morphTargetInfluences = influences;
+    first.morphTargetDictionary = dictionary;
+    const group = new THREE.Group();
+    group.add(first, second);
+    h.avatarOverride = {
+      root: group, morphMeshes: [first, second], bones: {}, animations: [],
+      setMorph() {}, getMorph() { return 0; }, dispose() {},
+    };
+    const engine = createEngine({ avatarUrl: 'fake.glb' });
+    await engine.mount(document.createElement('canvas'), document.createElement('div'));
+    expect(first.material).toBe(second.material);
+    expect(first.material).not.toBe(authored);
+    expect(first.geometry).toBe(geometry);
+    expect(first.morphTargetInfluences).toBe(influences);
+    expect(first.morphTargetDictionary).toBe(dictionary);
+    expect(first.renderOrder).toBe(1);
+    // A mouth-only custom rig must not become the shell used for overlays.
+    expect(group.children).toHaveLength(2);
+    const oralDispose = vi.spyOn(first.material as THREE.Material, 'dispose');
+    engine.dispose(); engine.dispose();
+    expect(oralDispose).toHaveBeenCalledTimes(1);
+    expect(authoredDispose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('displaced materials', () => {
   it('disposes displaced authored materials and their textures once on teardown', async () => {
     const texture = { isTexture: true, dispose: vi.fn() } as unknown as THREE.Texture;
