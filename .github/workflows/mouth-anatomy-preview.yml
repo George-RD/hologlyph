@@ -1,0 +1,43 @@
+name: Mouth anatomy candidate
+on:
+  pull_request:
+    paths:
+      - 'tools/review/mouth-*'
+      - 'tools/smoke/mouth-anatomy-preview.mjs'
+      - '.github/workflows/mouth-anatomy-preview.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mouth-anatomy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+      - name: Apply and rebuild the isolated candidate
+        run: |
+          git apply --check tools/review/mouth-regions.patch
+          git apply tools/review/mouth-regions.patch
+          cp tools/review/mouth-material-candidate.txt src/shaders/mouth-material.ts
+          cp tools/review/mouth-regions-test.txt test/mouth-regions.test.ts
+          bun tools/asset-pipeline/build-bust.ts /tmp/mouth-raw.glb
+          bun tools/asset-pipeline/optimize.ts --simplify 0.5 /tmp/mouth-raw.glb assets/hologlyph-bust.glb
+          bunx tsc --noEmit
+          bunx vitest run
+      - run: bunx playwright install --with-deps chromium
+      - name: Render the real engine
+        run: |
+          bun run dev &
+          for i in $(seq 1 60); do curl -sf http://localhost:5173/hologlyph/engine.html >/dev/null && break; sleep 1; done
+          bun tools/smoke/mouth-anatomy-preview.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mouth-anatomy-candidate
+          path: tools/evals/out/mouth-anatomy/
+          retention-days: 7
