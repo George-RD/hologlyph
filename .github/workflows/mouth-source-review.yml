@@ -1,0 +1,27 @@
+name: Mouth source review
+on:
+  pull_request:
+    paths: ['.github/workflows/mouth-source-review.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+      - name: Build the pinned source rig for offline review
+        run: |
+          bun tools/asset-pipeline/build-bust.ts /tmp/hologlyph-raw.glb
+          mkdir -p /tmp/mouth-source
+          cp /tmp/hologlyph-raw.glb /tmp/mouth-source/
+          cp "$(which bun)" /tmp/mouth-source/bun
+          tar --exclude=.git --exclude=node_modules --exclude=tools/evals/out -czf /tmp/mouth-source/source.tgz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mouth-source
+          path: /tmp/mouth-source/
+          retention-days: 1
