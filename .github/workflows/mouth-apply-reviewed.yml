@@ -1,0 +1,73 @@
+name: Apply reviewed mouth anatomy
+on:
+  pull_request:
+    paths: ['.github/workflows/mouth-apply-reviewed.yml']
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.event.pull_request.number == 96 && github.head_ref == 'feat/coherent-mouth-materials' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+      - name: Apply the exact visually reviewed candidate
+        run: |
+          echo 'bc31896c9c18021ecc47f3e3e413ebe592423cecb3c975dd8ccc112892648ea6  tools/review/mouth-regions.patch' | sha256sum --check
+          echo '0810468b98cf8d58b893196306ce4f031bab7cab06d8e8b94471f0da47ccc637  tools/review/mouth-material-candidate.txt' | sha256sum --check
+          echo '1184cf54b4fe9ecb55055803372f40e1b996883294deea48531fefb5f4702180  tools/review/mouth-regions-test.txt' | sha256sum --check
+          git apply --check tools/review/mouth-regions.patch
+          git apply --index tools/review/mouth-regions.patch
+          cp tools/review/mouth-material-candidate.txt src/shaders/mouth-material.ts
+          cp tools/review/mouth-regions-test.txt test/mouth-regions.test.ts
+          bun tools/asset-pipeline/build-bust.ts /tmp/mouth-raw.glb
+          bun tools/asset-pipeline/optimize.ts --simplify 0.5 /tmp/mouth-raw.glb assets/hologlyph-bust.glb
+          echo 'e8f280fad8f279589ae25a36dd5e922e97d4dcd03b19734b41b8da3a527badaf  assets/hologlyph-bust.glb' | sha256sum --check
+          echo 'dd766d1e08de9446eaa59d2a9e361dfae1a58bb0916c5d0a792b57e37973bbd0  tools/asset-pipeline/build-bust.ts' | sha256sum --check
+          git rm tools/review/mouth-regions.patch tools/review/mouth-material-candidate.txt tools/review/mouth-regions-test.txt .github/workflows/mouth-source-review.yml .github/workflows/mouth-anatomy-preview.yml .github/workflows/mouth-owner-preview.yml tools/smoke/mouth-owner-preview.mjs .github/workflows/mouth-apply-reviewed.yml
+          git add tools/asset-pipeline/build-bust.ts src/shaders/mouth-material.ts test/mouth-regions.test.ts assets/hologlyph-bust.glb
+          git diff --cached --check
+      - name: Type-check, test, lint and build
+        run: |
+          bunx tsc --noEmit
+          bunx vitest run
+          bun run lint
+          bun run build
+      - name: Install the pinned Cairn binary
+        run: |
+          curl -fL --retry 2 https://github.com/cairn-framework/cairn/releases/download/v0.10.0/cairn-framework-x86_64-unknown-linux-gnu.tar.xz -o /tmp/cairn.tar.xz
+          echo '6415bac1217d9e23eab992571b434a832a0ed0cd43958adbc999f5bb301512d0  /tmp/cairn.tar.xz' | sha256sum --check
+          mkdir -p /tmp/cairn-bin "$HOME/.local/bin"
+          tar -xJf /tmp/cairn.tar.xz -C /tmp/cairn-bin
+          CAIRN=$(find /tmp/cairn-bin -type f -name cairn | head -1)
+          test -n "$CAIRN"
+          install -m 755 "$CAIRN" "$HOME/.local/bin/cairn"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Authoritative architecture gate
+        run: |
+          set -o pipefail
+          cairn --version
+          cairn scan 2>&1 | tee /tmp/mouth-cairn-scan.log
+          cairn hook all 2>&1 | tee /tmp/mouth-cairn-gate.log
+      - name: Commit only to the reviewed feature branch
+        run: |
+          git diff --cached --stat
+          git config user.name 'George'
+          git config user.email '180932462+George-RD@users.noreply.github.com'
+          printf '%s\n' 'feat(mouth): preserve anatomical regions and shade visible teeth and tongue' > /tmp/mouth-commit-message
+          cat /tmp/mouth-commit-message
+          git commit -F /tmp/mouth-commit-message
+          git push origin HEAD:refs/heads/feat/coherent-mouth-materials
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mouth-gate-evidence
+          path: /tmp/mouth-cairn-*.log
+          retention-days: 7

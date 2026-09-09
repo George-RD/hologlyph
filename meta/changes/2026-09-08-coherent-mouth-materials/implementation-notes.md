@@ -1,32 +1,46 @@
 # Implementation notes
 
-Base: `b3a53d26faeac71677720d2a607ff85c971ef17f`. The blink/viseme deformation
-bounds in that commit are unchanged. No asset bytes or configuration defaults are changed.
+## 9 September 2026: source-labelled anatomy
 
-Local verification on 8 September 2026: TypeScript passes; all 30 test files pass
-with 601 tests passing and one existing skip; lint has no errors and eight
-pre-existing warnings; the library build passes. New tests cover the borrowed
-live glyph/deformation graphs, depth flags, shared material lifetime, preserved
-geometry and morph arrays, and mouth-only custom rigs not becoming the shell.
+The initial dim glyph material and the two subsequent position-band attempts
+were rejected by the owner. The cloud was not solved by narrowing coordinate
+bands: those bands still illuminated gum walls. This pass replaces that
+classification with the actual source materials and authored tongue mask.
 
-Browser captures run in GitHub Actions because this container blocks browser
-navigation to local servers. `tools/smoke/mouth-review.mjs` rejects placeholder
-assets, records browser errors and compares the original and replacement
-materials on the same posed geometry. The first replacement run produced 37 posed frames. Direct inspection of the
-paired front views shows the cavity now carries subdued glyphs instead of a
-plain insert; side, mobile, light-host and partial-melt frames were also reviewed.
-The added audible-speech leg failed because headless Chromium has no working
-system voice. The harness now supplies deterministic host word-boundary events,
-through the real demo adapter and motion engine, as the existing mobile smoke
-harness does. It does not claim to verify audio playback.
+`mouthRegionWeights` writes [teeth, tongue] into `_ORAL_REGION` on the existing
+mouth primitive. The rebuilt and optimised GLB contains 4,868 teeth vertices,
+362 tongue vertices and 2,537 gum vertices. The geometry and morph arrays are
+unchanged: a local decoded comparison checked 210 existing attributes/index or
+morph arrays against the previous asset with exact equality. No speech weights,
+blink bounds, public controls or configuration defaults were changed.
 
-Review also found that Three r178's MeshBasicNodeMaterial ignores normalNode.
-Using the unlit NodeMaterial base preserves the shared deformation normals.
-A regression checks setupNormal's actual node graph; it fails with the Basic
-subclass and passes with NodeMaterial. The complete local suite remains green.
-The final browser run and visual-eval outcome are recorded in PR #96.
+Final candidate GLB: 1,148,252 bytes, below the 1.5 MiB budget.
+SHA256: e8f280fad8f279589ae25a36dd5e922e97d4dcd03b19734b41b8da3a527badaf
+Source provenance remains the pinned ICT manifest and tongue manifest consumed
+by build-bust.ts. Rebuilding and optimising at --simplify 0.5 reproduces the asset.
 
-The Cairn CLI is not installed in this container, so `cairn scan` and
-`cairn hook all` have not run. No Cairn gate pass is claimed. The PR stays unmerged
-until visual approval. Temporary source/dependency transfer helpers are removed
-from the final tree; the retained mouth-review workflow is read-only.
+Verification: two new tests failed before the region implementation and pass
+with it. The full local suite passes 606 tests in 32 files, including the
+source-regeneration check now that verified source files are cached. Type-check,
+lint and library build pass; lint has eight pre-existing warnings and no errors.
+The remote candidate job also passes the full suite and type-check.
+
+The first labelled render made the tongue too flat. A second iteration gives
+it a dark root, shaped sides and a restrained centre groove. It also corrects
+the review harness's canvas aspect ratio by calling engine.resize(700, 820).
+Final candidate run 34361182660 captures 18 real-engine frames in text/glass,
+front/side and seven mouth poses with zero browser errors. The contact sheet,
+full-size SS and TH frames, and side/closed frames were directly inspected.
+Teeth have distinct silhouettes and gaps; the tongue recedes into a dark cavity
+rather than colouring the gum wall. No image synthesis or retouching is used.
+
+The headless speech review supplies synthetic host word-boundary events through
+the real adapter and motion path; audio playback and on-device iOS rendering are
+not verified. The live GitHub Pages demo remains unchanged pending acceptance.
+
+The source-labelled pass was rendered in an isolated candidate workflow before
+being applied to the feature branch. The apply job checks exact payload/asset
+hashes and the Cairn gate before updating that branch. Its outcome and final
+branch verification are recorded in PR #96. No gate pass is implied here until
+that job succeeds. Temporary transfer and candidate workflows are removed by
+that job; the retained mouth-review workflow is read-only.

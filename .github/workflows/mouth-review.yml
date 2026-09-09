@@ -4,6 +4,8 @@ on:
     paths:
       - 'src/**'
       - 'test/**'
+      - 'assets/**'
+      - 'tools/asset-pipeline/**'
       - 'tools/smoke/mouth-*.mjs'
       - '.github/workflows/mouth-review.yml'
 permissions:
@@ -14,7 +16,7 @@ concurrency:
 jobs:
   mouth-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -30,11 +32,15 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: Review labelled teeth and tongue
+        run: bun tools/smoke/mouth-anatomy-preview.mjs
       - name: Compare mouth materials and exercise speech
         run: bun tools/smoke/mouth-review.mjs http://localhost:5173/hologlyph/engine.html
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: mouth-review
-          path: tools/evals/out/mouth/
+          path: |
+            tools/evals/out/mouth/
+            tools/evals/out/mouth-anatomy/
           retention-days: 7
