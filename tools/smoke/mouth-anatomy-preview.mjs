@@ -21,6 +21,7 @@ try {
   const labels = await page.evaluate(() => {
     const e = window.__hologlyphEngine;
     e.setMotionFrozen(true);
+    e.resize(700, 820);
     return e.avatar.morphMeshes.filter(mesh => mesh.material.name === 'mouth_interior').map(mesh => {
       const attr = mesh.geometry.getAttribute('_oral_region');
       if (!attr) throw new Error('Preview loaded an unlabelled mouth');
@@ -36,7 +37,7 @@ try {
   assert(labels.length > 0 && labels.every(label => label.teeth > 100 && label.tongue > 100 && label.gums > 100));
   const poses = [
     ['closed', {}], ['aa', { viseme_aa: 1 }], ['ee', { viseme_ee: 1 }],
-    ['oh', { viseme_oh: 1 }], ['th', { viseme_th: 1, tongue_out: 0.7 }],
+    ['ss', { viseme_ss: 1 }], ['oh', { viseme_oh: 1 }], ['th', { viseme_th: 1, tongue_out: 0.7 }],
     ['tongue-up', { viseme_dd: 1, tongue_up: 0.75 }],
   ];
   for (const glass of [0, 0.7]) {
