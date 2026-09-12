@@ -10,9 +10,9 @@ import { inheritLiquidInterior } from './liquid-material';
 /** The same atlas dimensions the face projection consumes. */
 export const MOUTH_ATLAS_COLUMNS = 96;
 export const MOUTH_ATLAS_ROWS = 64;
-/** Cells per model unit, deliberately finer than the face. */
-export const MOUTH_TEETH_DENSITY = 420;
-export const MOUTH_TONGUE_DENSITY = 280;
+/** Cells per model unit: finer than the face, close to the eyes' scale. */
+export const MOUTH_TEETH_DENSITY = 320;
+export const MOUTH_TONGUE_DENSITY = 220;
 
 const glyphSources = new WeakMap<Material, TextSkinEngine>();
 
@@ -68,14 +68,17 @@ export function buildMouthMaterial(surface: Material): Material {
   const key = saturate(dot(normal, vec3(1.2, 1.6, 2).normalize()));
   const fill = saturate(dot(normal, vec3(-1.5, 0.4, 1).normalize()));
   const shade = key.mul(0.63).add(fill.mul(0.19)).add(0.18);
+  // Illuminate the strokes, not an enamel fill. A modest floor keeps side
+  // teeth readable instead of reducing their finer letters to dim speckles.
+  const glyphLight = shade.mul(0.7).add(0.3);
   const depthLight = mix(0.35, 1, smoothstep(0.1, 0.255, positionGeometry.z));
   const liveLight = luminance(surfaceColour).clamp(0, 1).mul(0.08).add(0.92);
-  const teethColour = vec3(0.28, 0.65, 0.95).mul(letters).mul(shade).mul(liveLight)
+  const teethColour = vec3(0.46, 0.76, 1).mul(letters).mul(glyphLight).mul(liveLight)
     .add(vec3(0.003, 0.009, 0.017).mul(shade)).mul(depthLight);
   const tipLight = smoothstep(0.12, 0.235, positionGeometry.z).mul(0.65).add(0.35);
   const roundedSides = float(1).sub(smoothstep(0.016, 0.046, positionGeometry.x.abs()).mul(0.25));
   const centreGroove = smoothstep(0.001, 0.006, positionGeometry.x.abs()).mul(0.12).add(0.88);
-  const tongueColour = vec3(0.52, 0.17, 0.8).mul(letters).mul(shade).mul(liveLight)
+  const tongueColour = vec3(0.52, 0.17, 0.8).mul(letters).mul(glyphLight).mul(liveLight)
     .add(vec3(0.012, 0.0025, 0.018).mul(shade))
     .mul(tipLight).mul(roundedSides).mul(centreGroove);
   const cavity = vec3(0.001, 0.0015, 0.003);

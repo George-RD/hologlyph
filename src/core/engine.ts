@@ -804,7 +804,9 @@ class EngineImpl implements Engine {
    * transform can reconcile the two because a lens is not affine.
    *
    * Overlap alone is normal and silent: refracting decorative live content is
-   * the whole point, and it is always a mistake.
+   * the whole point, and there is nothing to warn about until a CONTROL is
+   * caught under the distortion. The library cannot move the host's DOM, so
+   * when one is, it says so.
    */
   private warnIfLensTrapsControls(element: Element, canvas: HTMLCanvasElement): void {
     if (!lensRegionsOverlap(documentRect(canvas), documentRect(element))) return;
