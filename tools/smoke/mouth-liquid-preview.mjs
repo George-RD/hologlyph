@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { decodePng } from '../evals/score.mjs';
 
+/** Mean absolute RGB difference, excluding the PNG's optional alpha channel. */
 function imageDifference(a, b) {
   assert.equal(a.width, b.width);
   assert.equal(a.height, b.height);
@@ -12,6 +13,13 @@ function imageDifference(a, b) {
     for (let c = 0; c < 3; c++) sum += Math.abs(a.data[i * a.channels + c] - b.data[i * b.channels + c]);
   }
   return sum / (a.width * a.height * 3);
+}
+
+/** A removed mesh must fail, not pass vacuously through [].every(Boolean). */
+function assertTrimRestored(visibility, expectedCount) {
+  assert(visibility.length > 0, 'Re-forming must retain authored eye trim');
+  assert.equal(visibility.length, expectedCount, 'Re-forming must retain every authored eye-trim mesh');
+  assert(visibility.every(Boolean), 'Authored trim must return with the head');
 }
 
 /** Real renderer evidence, not reference art or a separate proxy animation. */
@@ -138,7 +146,13 @@ export async function reviewLiquidBody(base = 'http://localhost:5173/hologlyph/e
     });
     assert(reformed.position[0] > 0.1, 'Re-forming must retain travelled placement');
     assert.deepEqual(reformed.carrier, [...reformed.position, 0], 'The complete rig must follow placement');
-    assert(reformed.trim.every(Boolean), 'Authored trim must return with the head');
+    assertTrimRestored(reformed.trim, trim.length);
+    // Negative controls for the review finding: absence, partial loss and a
+    // retained-but-hidden mesh must all be rejected by this same predicate.
+    assert.throws(() => assertTrimRestored([], trim.length));
+    assert.throws(() => assertTrimRestored([true], 2));
+    assert.throws(() => assertTrimRestored([false], 1));
+    report.trimNegativeControls = 'missing, partial and hidden trim rejected';
     await capture('reformed');
     await page.evaluate(() => window.__liquidLab.background('light'));
     await capture('reformed-light');
