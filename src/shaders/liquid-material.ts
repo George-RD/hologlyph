@@ -137,11 +137,12 @@ export class LiquidMaterialOwner {
   private normal(original: NodeMaterial['normalNode']): NonNullable<NodeMaterial['normalNode']> {
     const gradient = cross(dFdx(positionView), dFdy(positionView));
     const flat = gradient.div(gradient.length().max(1e-8));
-    return select(
-      this.amount.greaterThan(0).and(this.extent.greaterThan(0)),
-      mix(original ?? normalView, flat, smoothstep(0, 0.6, this.amount)).normalize(),
-      original ?? normalView,
-    );
+    // Evaluate the original normal before the alternate one, outside a
+    // conditional branch. normalView is a cached toVar in Three r178: sharing
+    // it across separate select branches can leave the off branch uninitialised.
+    // The alternate vector is bounded even for a degenerate triangle.
+    const gate = smoothstep(0, 0.6, this.amount).mul(smoothstep(0, 0.0001, this.extent));
+    return mix(original ?? normalView, flat, gate);
   }
 
   attachSurface(materials: SkinMaterials, skin: TextSkinEngine): void {

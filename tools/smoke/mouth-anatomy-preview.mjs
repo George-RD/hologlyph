@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { reviewLiquidBody } from './mouth-liquid-preview.mjs';
 
+// Fail fast on a missing/flat-shaded head before the longer anatomy matrix.
+await reviewLiquidBody(process.argv[2]);
+
 const out = fileURLToPath(new URL('../evals/out/mouth-anatomy/', import.meta.url));
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
@@ -67,5 +70,3 @@ try {
 } finally {
   await browser.close();
 }
-
-await reviewLiquidBody(process.argv[2]);
