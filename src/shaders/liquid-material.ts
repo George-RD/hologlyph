@@ -127,7 +127,7 @@ export class LiquidMaterialOwner {
     const interior = materials.interior as MeshStandardNodeMaterial;
     const mask = materials.mask as NodeMaterial;
     const projection = this.projection(front.positionNode);
-    const normal = this.normal(front.normalNode);
+    const normal = vec3(this.normal(front.normalNode));
     const transition = smoothstep(0.2, 0.9, this.amount);
     const local = positionLocal.sub(vec3(this.offset.x, this.offset.y, 0));
     const scroll = reference('scrollOffset', 'float', skin);
@@ -157,7 +157,7 @@ export class LiquidMaterialOwner {
 
   gateInterior(material: NodeMaterial): void {
     const visibility = float(1).sub(smoothstep(0.5, 0.88, this.amount));
-    material.opacityNode = float(material.opacityNode ?? 1).mul(visibility);
+    material.opacityNode = float(material.opacityNode ?? float(1)).mul(visibility);
     material.alphaTestNode = float(0.02);
     if (material.colorNode) material.colorNode = vec3(material.colorNode).mul(visibility);
   }
