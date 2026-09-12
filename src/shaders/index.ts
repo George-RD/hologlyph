@@ -50,6 +50,10 @@ import {
   easeEmergence,
 } from './emergence';
 import { REDUCED_DRIVE } from './pool';
+import { bindMouthGlyphSource } from './mouth-material';
+import { bindLiquidEngine, LiquidMaterialOwner } from './liquid-material';
+export { liquidBody, liquidInteriorVisibility } from './liquid-material';
+export type { LiquidControls } from './liquid-material';
 
 interface SkinBinding {
   skin: TextSkinEngine;
@@ -190,6 +194,7 @@ export type {
  */
 export function createVFXEngine(): VFXEngine {
   const height = BUST_HEIGHT;
+  const liquid = new LiquidMaterialOwner();
   const plane = new Plane(new Vector3(0, 1, 0), 0);
   const skinBindings: SkinBinding[] = [];
   const eyeBindings: EyeBinding[] = [];
@@ -257,7 +262,7 @@ export function createVFXEngine(): VFXEngine {
   function applyFromCurrent(): void {
     state.emergence = current;
     state.rootOffsetY = computeRootOffsetY(current, height);
-    plane.constant = computeClipConstant(current, height);
+    plane.constant = computeClipConstant(current, height) - liquid.verticalOffset;
   }
 
   function applyConfigToBindings(config: HeadConfig): void {
@@ -416,12 +421,16 @@ export function createVFXEngine(): VFXEngine {
       // something else wrote it.
       built.uniforms.meltMinY.value = bodyMinY;
       built.uniforms.meltExtent.value = bodyExtent;
-      return { front: built.material, interior: built.interior, mask: built.mask };
+      const materials = { front: built.material, interior: built.interior, mask: built.mask };
+      liquid.attachSurface(materials, skin);
+      bindMouthGlyphSource(built.material, skin);
+      return materials;
     },
 
     createEyeballMaterial(eyeSkin: TextSkinEngine, frame: { cx: number; cy: number; cz: number }): THREE.Material {
       if (disposed) throw new Error('VFXEngine: createEyeballMaterial after dispose');
       const built = buildEyeballMaterial(eyeSkin, frame, activeConfig);
+      liquid.attachEye(built.material);
       const binding = { skin: eyeSkin, scroll: built.uniforms.scroll, uniforms: built.uniforms };
       eyeBindings.push(binding);
       built.material.addEventListener('dispose', () => {
@@ -495,6 +504,7 @@ export function createVFXEngine(): VFXEngine {
       const usable = Number.isFinite(minY) && Number.isFinite(maxY) && span > 0;
       bodyMinY = usable ? minY : 0;
       bodyExtent = usable ? span : 0;
+      liquid.setExtent(minY, maxY);
       for (const binding of skinBindings) {
         binding.uniforms.meltMinY.value = bodyMinY;
         binding.uniforms.meltExtent.value = bodyExtent;
@@ -507,10 +517,12 @@ export function createVFXEngine(): VFXEngine {
 
     setReducedMotion(reducedMotion: boolean): void {
       reduced = reducedMotion;
+      liquid.setReducedMotion(reducedMotion);
     },
 
     update(dt: number): void {
       if (disposed) return;
+      liquid.update(dt);
       if (reduced) {
         current = target;
       } else {
@@ -622,6 +634,7 @@ export function createVFXEngine(): VFXEngine {
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      liquid.dispose();
       skinBindings.length = 0;
       eyeBindings.length = 0;
       lens = null;
@@ -639,5 +652,6 @@ export function createVFXEngine(): VFXEngine {
     },
   };
 
+  bindLiquidEngine(engine, liquid);
   return engine;
 }

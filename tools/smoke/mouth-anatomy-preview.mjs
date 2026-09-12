@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { reviewLiquidBody } from './mouth-liquid-preview.mjs';
+
+// Fail fast on a missing/flat-shaded head before the longer anatomy matrix.
+await reviewLiquidBody(process.argv[2]);
 
 const out = fileURLToPath(new URL('../evals/out/mouth-anatomy/', import.meta.url));
 mkdirSync(out, { recursive: true });
