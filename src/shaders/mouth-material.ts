@@ -44,7 +44,7 @@ export function buildMouthMaterial(surface: Material): Material {
   const source = glyphSources.get(surface);
   // Legacy standalone builders retain their borrowed glyph source. The VFX
   // factory supplies the live atlas for the finer, surface-following field.
-  let ink = luminance(surfaceColour).clamp(0, 1);
+  let ink = float(luminance(surfaceColour).clamp(0, 1));
   if (source) {
     const density = mix(MOUTH_TONGUE_DENSITY, MOUTH_TEETH_DENSITY, teeth);
     const p = positionGeometry.mul(density);
@@ -58,7 +58,7 @@ export function buildMouthMaterial(surface: Material): Material {
     // fronts. Sharp weights avoid a cloudy double image around curved edges.
     const weights = pow(normalGeometry.abs().add(0.0001), 12);
     const total = weights.x.add(weights.y).add(weights.z);
-    ink = onX.mul(weights.x).add(onY.mul(weights.y)).add(onZ.mul(weights.z)).div(total);
+    ink = float(onX.mul(weights.x).add(onY.mul(weights.y)).add(onZ.mul(weights.z)).div(total));
   }
   const letters = smoothstep(0.06, 0.68, ink);
   // Reuse the deformed normal graph, including liquid waves, rather than
