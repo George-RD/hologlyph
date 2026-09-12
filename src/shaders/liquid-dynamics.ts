@@ -26,11 +26,27 @@ const CELL = 2 / (N - 1);
 export type LiquidPoint = readonly [number, number];
 export type LiquidPosition = readonly [number, number, number];
 
+/**
+ * Allowed carrier-origin positions in model-space X/Y, not CSS pixels.
+ * Hosts must reserve space for the body's visible footprint. These limits
+ * constrain placement, not the future liquid contour or arbitrary obstacles.
+ */
+export interface LiquidBounds {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+}
+
+const DEFAULT_BOUNDS: LiquidBounds = Object.freeze({ minX: -8, maxX: 8, minY: -8, maxY: 8 });
+
+/** Reject invalid public coordinates before changing simulation state. */
 function finite(value: number, name: string): number {
   if (!Number.isFinite(value)) throw new RangeError(`${name} must be finite`);
   return value;
 }
 
+/** Project a finite scalar into a closed interval, including a single point. */
 function clamp(value: number, low: number, high: number): number {
   return Math.max(low, Math.min(high, value));
 }
@@ -74,6 +90,7 @@ export class LiquidDynamics {
   private readonly active = new Uint8Array(N * N);
   private readonly centre: [number, number] = [0, 0];
   private readonly speed: [number, number] = [0, 0];
+  private placementBounds: LiquidBounds = DEFAULT_BOUNDS;
   private targetPoint: [number, number] | null = null;
   private accumulator = 0;
   private progress = 0;
@@ -82,6 +99,7 @@ export class LiquidDynamics {
   private reduced = false;
   private dead = false;
 
+  /** Build the fixed disc and reflecting wave neighbourhood once. */
   constructor() {
     for (let row = 0; row < N; row++) {
       for (let col = 0; col < N; col++) {
@@ -108,13 +126,62 @@ export class LiquidDynamics {
     }
   }
 
+  /** Current eased head-to-liquid progress. */
   get amount(): number { return this.progress; }
+  /** Requested head-to-liquid progress, before easing. */
   get targetAmount(): number { return this.targetProgress; }
+  /** Current carrier-origin placement in model-space X/Y. */
   get position(): LiquidPoint { return this.centre; }
+  /** Carrier velocity in model-space units per second. */
   get velocity(): LiquidPoint { return this.speed; }
+  /** Steering is available only at the full-liquid endpoint. */
   get canSteer(): boolean { return this.progress >= 0.995 && this.targetProgress === 1; }
+  /** Whether this solver has released its owned state. */
   get disposed(): boolean { return this.dead; }
+  /** Immutable host-supplied carrier limits; defaults to [-8,8] on each axis. */
+  get bounds(): LiquidBounds { return this.placementBounds; }
 
+  /**
+   * Replace placement limits atomically without advancing the simulation.
+   * Resizing projects an escaped origin and clamps any held target immediately.
+   * Contact removes outward velocity only; inward and tangential motion remain.
+   * Equal endpoints pin an axis. Non-finite, reversed or overflowing spans throw.
+   */
+  setBounds(bounds: LiquidBounds): void {
+    if (this.dead) return;
+    const next = Object.freeze({
+      minX: finite(bounds.minX, 'Liquid minimum x'),
+      maxX: finite(bounds.maxX, 'Liquid maximum x'),
+      minY: finite(bounds.minY, 'Liquid minimum y'),
+      maxY: finite(bounds.maxY, 'Liquid maximum y'),
+    });
+    if (next.minX > next.maxX || next.minY > next.maxY
+      || !Number.isFinite(next.maxX - next.minX) || !Number.isFinite(next.maxY - next.minY)) {
+      throw new RangeError('Liquid bounds must have ordered finite spans');
+    }
+    this.placementBounds = next;
+    if (this.targetPoint) {
+      this.targetPoint[0] = clamp(this.targetPoint[0], next.minX, next.maxX);
+      this.targetPoint[1] = clamp(this.targetPoint[1], next.minY, next.maxY);
+    }
+    this.constrainAxis(0);
+    this.constrainAxis(1);
+  }
+
+  /** Project one carrier axis and cancel only velocity pointing out of bounds. */
+  private constrainAxis(axis: number): void {
+    const bounds = this.placementBounds;
+    const low = axis === 0 ? bounds.minX : bounds.minY;
+    const high = axis === 0 ? bounds.maxX : bounds.maxY;
+    const position = clamp(this.centre[axis] ?? 0, low, high);
+    const velocity = this.speed[axis] ?? 0;
+    this.centre[axis] = position;
+    if ((position <= low && velocity < 0) || (position >= high && velocity > 0)) {
+      this.speed[axis] = 0;
+    }
+  }
+
+  /** Request a continuous transition, or explicitly snap for a host-controlled pose. */
   setAmount(amount: number, immediate = false): void {
     if (this.dead) return;
     this.targetProgress = clamp(finite(amount, 'Liquid amount'), 0, 1);
@@ -131,7 +198,8 @@ export class LiquidDynamics {
     finite(x, 'Liquid target x');
     finite(y, 'Liquid target y');
     if (this.dead || !this.canSteer) return false;
-    this.targetPoint = [clamp(x, -8, 8), clamp(y, -8, 8)];
+    const bounds = this.placementBounds;
+    this.targetPoint = [clamp(x, bounds.minX, bounds.maxX), clamp(y, bounds.minY, bounds.maxY)];
     if (this.reduced) {
       this.centre[0] = this.targetPoint[0];
       this.centre[1] = this.targetPoint[1];
@@ -141,6 +209,7 @@ export class LiquidDynamics {
     return true;
   }
 
+  /** Drop the steering target while retaining bounded release momentum. */
   release(): void { this.targetPoint = null; }
 
   /** Local fluid-disc coordinates in [-1,1]. A dipole preserves mean height. */
@@ -165,6 +234,7 @@ export class LiquidDynamics {
       + (this.nextVelocity[i] ?? 0) - mean;
   }
 
+  /** Remove automatic motion and waves while retaining explicit bounded placement. */
   setReducedMotion(reduced: boolean): void {
     if (this.dead) return;
     this.reduced = reduced;
@@ -179,6 +249,7 @@ export class LiquidDynamics {
     }
   }
 
+  /** Consume bounded frame time on the single fixed-step VFX clock. */
   update(dt: number): void {
     if (this.dead || this.reduced || !Number.isFinite(dt) || dt <= 0) return;
     if (this.progress === 0 && this.targetProgress === 0
@@ -193,6 +264,7 @@ export class LiquidDynamics {
     }
   }
 
+  /** Advance the transition, constrained carrier and zero-mean wave field once. */
   private step(): void {
     const dt = LIQUID_STEP;
     const omega = 10;
@@ -218,9 +290,13 @@ export class LiquidDynamics {
       const acceleration = clamp(desired, -ACCEL_LIMIT, ACCEL_LIMIT);
       const nextSpeed = velocity + acceleration * dt;
       this.speed[axis] = Math.abs(nextSpeed) < EPSILON && !this.targetPoint ? 0 : nextSpeed;
-      this.centre[axis] = clamp(position + (this.speed[axis] ?? 0) * dt, -8, 8);
-      if (axis === 0) ax = acceleration;
-      else ay = acceleration;
+      this.centre[axis] = position + (this.speed[axis] ?? 0) * dt;
+      this.constrainAxis(axis);
+      // Slosh follows actual bounded motion, including contact deceleration,
+      // rather than a spring still pushing through a wall. Cap impact forcing.
+      const actualAcceleration = clamp(((this.speed[axis] ?? 0) - velocity) / dt, -ACCEL_LIMIT, ACCEL_LIMIT);
+      if (axis === 0) ax = actualAcceleration;
+      else ay = actualAcceleration;
     }
     if (this.progress === 0) {
       this.clearWaves();
@@ -266,12 +342,14 @@ export class LiquidDynamics {
     }
   }
 
+  /** Signed mean-height integral; this does not measure the full mesh volume. */
   get volumeError(): number {
     let sum = 0;
     for (const i of this.cells) sum += this.heights[i] ?? 0;
     return sum * CELL * CELL;
   }
 
+  /** Discrete wave energy used for damping and stability regressions. */
   get waveEnergy(): number {
     let energy = 0;
     for (const i of this.cells) {
@@ -299,12 +377,14 @@ export class LiquidDynamics {
     }
   }
 
+  /** Return all wave buffers to exact rest without changing carrier placement. */
   private clearWaves(): void {
     this.heights.fill(0);
     this.waveVelocity.fill(0);
     this.nextVelocity.fill(0);
   }
 
+  /** Release momentum and wave state idempotently; later updates are ignored. */
   dispose(): void {
     if (this.dead) return;
     this.dead = true;
