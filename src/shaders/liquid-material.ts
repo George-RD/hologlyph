@@ -48,7 +48,7 @@ export function inheritLiquidInterior(surface: Material, material: NodeMaterial)
   surfaceOwners.get(surface)?.gateInterior(material);
 }
 
-/** The core uses this for non-glyph eye trim, which must not float above a puddle. */
+/** Visibility factor for authored trim that has not adopted the liquid graph. */
 export function liquidInteriorVisibility(vfx: VFXEngine): number {
   const amount = owners.get(vfx)?.dynamics.amount ?? 0;
   return 1 - Math.min(1, Math.max(0, amount / 0.08));
@@ -83,8 +83,8 @@ export class LiquidMaterialOwner {
     const minY = this.minY;
     const extent = this.extent;
     const offset = this.offset;
-    return Fn(() => {
-      const p = vec3(original ?? positionLocal).toVar();
+    return Fn(([input = positionLocal]) => {
+      const p = vec3(input).toVar();
       const result = p.toVar();
       If(amount.greaterThan(0).and(extent.greaterThan(0)), () => {
         const span = extent.max(0.0001);
@@ -109,7 +109,7 @@ export class LiquidMaterialOwner {
       });
       // Placement survives re-forming. It is not multiplied by melt amount.
       return result.add(vec3(offset.x, offset.y, 0));
-    })();
+    })(vec3(original ?? positionLocal));
   }
 
   private normal(original: NodeMaterial['normalNode']): NonNullable<NodeMaterial['normalNode']> {
