@@ -23,12 +23,27 @@ export async function reviewLiquidBody(base = 'http://localhost:5173/hologlyph/e
     await page.waitForTimeout(180);
     await page.screenshot({ path: `${out}${name}.png` });
     captures.push(name);
+    writeFileSync(`${out}result.json`, JSON.stringify(report, null, 2));
+    console.log(`LIQUID REVIEW ${name}`);
   };
   try {
     const url = new URL('liquid-body-lab.html', base);
     await page.goto(url.href, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.__liquidLab?.ready, { timeout: 60000 });
+    await page.waitForFunction(() => window.__liquidLab?.ready, undefined, { timeout: 60000 });
     await page.waitForFunction(() => window.__liquidLab.engine.vfx.emergence > 0.99);
+    await page.evaluate(async () => {
+      const { surfaceProbe } = await import('./liquid-surface-probe.ts');
+      window.__surfaceProbe = surfaceProbe(window.__liquidLab.engine);
+      window.__liquidLab.pose('ee');
+    });
+    for (const mode of ['actual', 'no-depth', 'reference-normal', 'reference-colour', 'reference-position', 'reference-all']) {
+      await page.evaluate(mode => window.__surfaceProbe.apply(mode), mode);
+      await capture(`probe-${mode}`);
+    }
+    await page.evaluate(() => {
+      window.__surfaceProbe.dispose();
+      delete window.__surfaceProbe;
+    });
     for (const background of ['dark', 'light']) {
       await page.evaluate(background => {
         const lab = window.__liquidLab;
