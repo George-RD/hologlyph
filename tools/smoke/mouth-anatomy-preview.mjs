@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { reviewLiquidBody } from './mouth-liquid-preview.mjs';
 
 const out = fileURLToPath(new URL('../evals/out/mouth-anatomy/', import.meta.url));
 mkdirSync(out, { recursive: true });
@@ -66,3 +67,5 @@ try {
 } finally {
   await browser.close();
 }
+
+await reviewLiquidBody(process.argv[2]);
