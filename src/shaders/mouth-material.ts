@@ -61,15 +61,14 @@ export function buildMouthMaterial(surface: Material): Material {
     ink = float(onX.mul(weights.x).add(onY.mul(weights.y)).add(onZ.mul(weights.z)).div(total));
   }
   const letters = smoothstep(0.06, 0.68, ink);
-  // Reuse the deformed normal graph, including liquid waves, rather than
-  // shading a deformed mouth with its original anatomical normals.
-  const normal = vec3(front.normalNode ?? normalView).add(vec3(0, 0, 0.000001)).normalize();
+  // normalView resolves material.normalNode inside Three's NORMAL sub-build.
+  // Embedding front.normalNode here instead recursively evaluates the normal
+  // graph from the colour sub-build and can black out the entire surface.
+  const normal = normalView;
   const key = saturate(dot(normal, vec3(1.2, 1.6, 2).normalize()));
   const fill = saturate(dot(normal, vec3(-1.5, 0.4, 1).normalize()));
   const shade = key.mul(0.63).add(fill.mul(0.19)).add(0.18);
   const depthLight = mix(0.35, 1, smoothstep(0.1, 0.255, positionGeometry.z));
-  // Keep the live face graph in the light response, without reusing its much
-  // coarser letter spacing as the mouth texture.
   const liveLight = luminance(surfaceColour).clamp(0, 1).mul(0.08).add(0.92);
   const teethColour = vec3(0.28, 0.65, 0.95).mul(letters).mul(shade).mul(liveLight)
     .add(vec3(0.003, 0.009, 0.017).mul(shade)).mul(depthLight);
