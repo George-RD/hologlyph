@@ -11,7 +11,7 @@ import {
 import type { SkinMaterials, TextSkinEngine, VFXEngine } from '../contracts';
 import {
   LIQUID_LAG, LIQUID_MAX_HEIGHT, LIQUID_RESOLUTION, LIQUID_THICKNESS,
-  LiquidDynamics, type LiquidPoint,
+  LiquidDynamics, type LiquidBounds, type LiquidPoint,
 } from './liquid-dynamics';
 import { createLiquidScene, type LiquidSceneBinding } from './liquid-scene';
 
@@ -21,10 +21,15 @@ export interface LiquidControls {
   readonly position: LiquidPoint;
   readonly velocity: LiquidPoint;
   readonly canSteer: boolean;
+  /** Immutable model-space limits for the carrier origin, not the mesh contour. */
+  readonly bounds: LiquidBounds;
+  /** Replace host limits, containing held targets and released momentum. */
+  setBounds(bounds: LiquidBounds): void;
   /** 0 is the speaking head, 1 is liquid. Interrupted transitions are continuous. */
   setAmount(amount: number, immediate?: boolean): void;
   /** Model-space X/Y placement. Enabled only once the body is fully liquid. */
   steerTo(x: number, y: number): boolean;
+  /** Release the drag target without discarding bounded momentum. */
   release(): void;
   /** Disturb the surface at local disc coordinates in [-1,1]. */
   impulse(x: number, y: number, strength?: number): void;
@@ -40,6 +45,7 @@ export function liquidBody(vfx: VFXEngine): LiquidControls {
   return owner.dynamics;
 }
 
+/** Associate the engine with its existing liquid owner; never create another clock. */
 export function bindLiquidEngine(vfx: VFXEngine, owner: LiquidMaterialOwner): void {
   owners.set(vfx, owner);
 }
@@ -49,6 +55,7 @@ export function bindLiquidScene(vfx: VFXEngine, root: Group | null): void {
   owners.get(vfx)?.bindScene(root);
 }
 
+/** Report an active or requested deformation so head-only effects can suspend. */
 export function liquidBodyChanging(vfx: VFXEngine): boolean {
   const body = owners.get(vfx)?.dynamics;
   return body !== undefined && (body.amount > 0 || body.targetAmount > 0);
@@ -72,6 +79,7 @@ export function liquidInteriorVisibility(vfx: VFXEngine): number {
   return 1 - Math.min(1, Math.max(0, amount / 0.08));
 }
 
+/** Own the wave texture, per-avatar scene binding and liquid material graphs. */
 export class LiquidMaterialOwner {
   readonly dynamics = new LiquidDynamics();
   private readonly amount = uniform(0);
@@ -84,6 +92,7 @@ export class LiquidMaterialOwner {
   private dead = false;
   private fieldWasActive = false;
 
+  /** Restore the previous avatar's hierarchy before binding its replacement. */
   bindScene(root: Group | null): void {
     if (this.dead) return;
     this.scene?.dispose();
@@ -91,6 +100,7 @@ export class LiquidMaterialOwner {
     this.sync();
   }
 
+  /** Lazily allocate the shared RGBA8 wave texture for either renderer backend. */
   private fieldTexture(): DataTexture {
     if (!this.field) {
       this.dynamics.writeTexture(this.pixels);
@@ -103,6 +113,7 @@ export class LiquidMaterialOwner {
     return this.field;
   }
 
+  /** Wrap the live upstream position graph with finite-depth collapse and waves. */
   private projection(original: NodeMaterial['positionNode']): NonNullable<NodeMaterial['positionNode']> {
     // Real node edges preserve upstream morph/skinning/deformation graphs.
     // Every operand remains bounded while the feature is disabled.
@@ -134,6 +145,7 @@ export class LiquidMaterialOwner {
       .add(vec3(this.offset.x, this.offset.y, 0));
   }
 
+  /** Preserve the head normal path and blend towards bounded surface gradients. */
   private normal(original: NodeMaterial['normalNode']): NonNullable<NodeMaterial['normalNode']> {
     const gradient = cross(dFdx(positionView), dFdy(positionView));
     const flat = gradient.div(gradient.length().max(1e-8));
@@ -145,6 +157,7 @@ export class LiquidMaterialOwner {
     return mix(original ?? normalView, flat, gate);
   }
 
+  /** Attach shared deformation and live glyph colour to the existing skin passes. */
   attachSurface(materials: SkinMaterials, skin: TextSkinEngine): void {
     if (this.dead) throw new Error('Liquid material owner is disposed');
     const front = materials.front as MeshStandardNodeMaterial;
@@ -175,6 +188,7 @@ export class LiquidMaterialOwner {
     }
   }
 
+  /** Deform an authored eye material and hide it as the head becomes liquid. */
   attachEye(material: Material): void {
     const node = material as NodeMaterial;
     node.positionNode = this.projection(node.positionNode);
@@ -182,6 +196,7 @@ export class LiquidMaterialOwner {
     this.gateInterior(node);
   }
 
+  /** Fade and discard rigid internals before the full-liquid endpoint. */
   gateInterior(material: NodeMaterial): void {
     const visibility = float(1).sub(smoothstep(0.5, 0.88, this.amount));
     material.opacityNode = float(material.opacityNode ?? float(1)).mul(visibility);
@@ -189,6 +204,7 @@ export class LiquidMaterialOwner {
     if (material.colorNode) material.colorNode = vec3(material.colorNode).mul(visibility);
   }
 
+  /** Set usable avatar height bounds, or disable projection for invalid extents. */
   setExtent(minY: number, maxY: number): void {
     const span = maxY - minY;
     const usable = Number.isFinite(minY) && Number.isFinite(maxY) && span > 0;
@@ -196,17 +212,20 @@ export class LiquidMaterialOwner {
     this.extent.value = usable ? span : 0;
   }
 
+  /** Apply the reduced-motion policy and immediately synchronise render state. */
   setReducedMotion(reduced: boolean): void {
     this.dynamics.setReducedMotion(reduced);
     this.sync();
   }
 
+  /** Advance only from the owning VFX clock, then synchronise render state. */
   update(dt: number): void {
     if (this.dead) return;
     this.dynamics.update(dt);
     this.sync();
   }
 
+  /** Copy solver state into the rig carrier, uniforms and existing texture. */
   private sync(): void {
     this.amount.value = this.dynamics.amount;
     this.offset.value.set(this.scene ? 0 : this.dynamics.position[0], this.scene ? 0 : this.dynamics.position[1]);
@@ -218,8 +237,10 @@ export class LiquidMaterialOwner {
     this.fieldWasActive = this.dynamics.amount > 0;
   }
 
+  /** Model-space vertical placement used by the owning VFX engine. */
   get verticalOffset(): number { return this.dynamics.position[1]; }
 
+  /** Restore the avatar and release the owned texture and solver idempotently. */
   dispose(): void {
     if (this.dead) return;
     this.dead = true;
