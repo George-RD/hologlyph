@@ -5,6 +5,7 @@ import type { Engine, LoadedAvatar, RendererHost } from '../src/contracts.js';
 // This undeployed review page exposes the same inspection hooks as engine.html.
 // Private scene access is not part of the consumer API.
 type ReviewEngine = Engine & { avatar: LoadedAvatar; sysRenderer: RendererHost };
+/** Resolve a required lab control rather than silently dropping an interaction. */
 function element<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`Missing review element: ${id}`);
@@ -19,6 +20,10 @@ const rippleButton = element<HTMLButtonElement>('ripple');
 const speakButton = element<HTMLButtonElement>('speak');
 const engine = createEngine() as ReviewEngine;
 const liquid = liquidBody(engine.vfx);
+// Carrier-origin limits, with the same travel area previously used for drag
+// targets. The solver now also contains released and re-forming momentum.
+// These are not a claim that a future free contour fits every viewport.
+liquid.setBounds({ minX: -0.6, maxX: 0.6, minY: -0.2, maxY: 0.85 });
 let ready = false;
 let close = false;
 let side = false;
@@ -35,6 +40,7 @@ const down = new Vector3();
 const origin = new Vector2();
 const ndc = new Vector2();
 
+/** Frame the selected review pose; fixed-camera topology review remains separate. */
 function view(): void {
   if (!ready) return;
   const camera = engine.sysRenderer.camera;
@@ -54,6 +60,7 @@ function view(): void {
   camera.updateMatrixWorld();
 }
 
+/** Keep the page backdrop and shader backdrop in agreement for visual review. */
 function background(name: string): void {
   const colour = name === 'light' ? '#eff3fa' : name === 'checker' ? '#60738d' : '#05070d';
   document.body.classList.toggle('light', name === 'light');
@@ -62,6 +69,7 @@ function background(name: string): void {
   engine.vfx.setHeadConfig({ skin: { backdrop: { color: colour, auto: false } } });
 }
 
+/** Hold an authored viseme in head mode without the live motion driver competing. */
 function pose(name: string): void {
   if (!ready || liquid.amount > 0.001) return;
   engine.speech.cancel();
@@ -71,6 +79,7 @@ function pose(name: string): void {
   if (name !== 'sil') engine.avatar.setMorph(`viseme_${name}`, 1);
 }
 
+/** Request a liquid transition while suspending speech and updating the controls. */
 function amount(value: number, immediate = false): void {
   if (!ready) return;
   engine.speech.cancel();
@@ -83,6 +92,7 @@ function amount(value: number, immediate = false): void {
   liquidButton.setAttribute('aria-pressed', String(value === 1));
 }
 
+/** Intersect a pointer ray with the model-space placement plane. */
 function pointerPoint(event: PointerEvent): Vector3 | null {
   const rect = canvas.getBoundingClientRect();
   if (!(rect.width > 0) || !(rect.height > 0)) return null;
@@ -91,8 +101,9 @@ function pointerPoint(event: PointerEvent): Vector3 | null {
   return raycaster.ray.intersectPlane(plane, point);
 }
 
+/** Delegate target and release containment to the single simulation owner. */
 function steer(x: number, y: number): void {
-  liquid.steerTo(Math.max(-0.6, Math.min(0.6, x)), Math.max(-0.2, Math.min(0.85, y)));
+  liquid.steerTo(x, y);
 }
 
 canvas.tabIndex = 0;
@@ -111,6 +122,7 @@ canvas.addEventListener('pointermove', event => {
   const world = pointerPoint(event);
   if (world) steer(origin.x + world.x - down.x, origin.y + world.y - down.y);
 });
+/** Release only the active pointer and retain the solver's bounded momentum. */
 function release(event: PointerEvent): void {
   if (event.pointerId !== pointer) return;
   const id = pointer;
@@ -159,6 +171,7 @@ const resize = new ResizeObserver(() => {
 });
 resize.observe(host);
 
+/** Refresh review UI only; the engine owns the sole simulation clock. */
 function tick(): void {
   if (disposed) return;
   const inHead = liquid.amount === 0 && liquid.targetAmount === 0;
@@ -174,11 +187,13 @@ function tick(): void {
 frame = requestAnimationFrame(tick);
 const review = {
   engine, liquid, pose, amount, background,
+  /** Select the review camera without changing simulation state. */
   view(options: { close?: boolean; side?: boolean }): void {
     close = options.close ?? close;
     side = options.side ?? side;
     view();
   },
+  /** Whether the real avatar and renderer are ready for browser inspection. */
   get ready(): boolean { return ready; },
 };
 (window as unknown as { __liquidLab: typeof review }).__liquidLab = review;
