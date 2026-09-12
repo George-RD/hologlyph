@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CanvasTexture } from 'three';
-import type { NodeMaterial } from 'three/webgpu';
+import type { NodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import type { TextSkinEngine } from '../src/contracts';
 import { buildSkinMaterial } from '../src/shaders/materials';
 import { LiquidMaterialOwner } from '../src/shaders/liquid-material';
@@ -24,7 +24,7 @@ describe('liquid normal sub-build regression', () => {
   it('preserves the front and back normal chains independently', () => {
     const skin = source();
     const built = buildSkinMaterial(skin);
-    const front = built.material as NodeMaterial;
+    const front = built.material as MeshStandardNodeMaterial;
     const back = built.interior as NodeMaterial;
     const originalFront = front.normalNode;
     const originalBack = back.normalNode;
@@ -42,7 +42,7 @@ describe('liquid normal sub-build regression', () => {
   it('reads normalView in colour instead of evaluating the custom normal graph twice', () => {
     const skin = source();
     const built = buildSkinMaterial(skin);
-    const front = built.material as NodeMaterial;
+    const front = built.material as MeshStandardNodeMaterial;
     const owner = new LiquidMaterialOwner();
     owner.attachSurface({ front, interior: built.interior, mask: built.mask }, skin);
     bindMouthGlyphSource(front, skin);
