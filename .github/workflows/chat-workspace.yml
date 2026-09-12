@@ -1,0 +1,35 @@
+name: Chat workbench snapshot
+on:
+  push:
+    branches: [workbench/glyph-fluid-20260912]
+    paths: [.github/workflows/chat-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - run: bun install --frozen-lockfile
+      - name: Package source and offline toolchain without credentials
+        run: |
+          mkdir -p /tmp/hologlyph-workspace
+          git archive HEAD | tar -x -C /tmp/hologlyph-workspace
+          git bundle create /tmp/hologlyph-workspace/history.bundle HEAD refs/remotes/origin/main refs/remotes/origin/glass
+          cp -a node_modules /tmp/hologlyph-workspace/
+          mkdir -p /tmp/hologlyph-workspace/.offline-bin
+          cp "$(command -v bun)" /tmp/hologlyph-workspace/.offline-bin/bun
+          tar -czf /tmp/hologlyph-workspace.tar.gz -C /tmp/hologlyph-workspace .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hologlyph-workspace
+          path: /tmp/hologlyph-workspace.tar.gz
+          retention-days: 1
+          compression-level: 0
