@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Hologlyph | Mouth and liquid review</title>
+  <style>
+    *{box-sizing:border-box} :root{color-scheme:dark;font:14px/1.4 system-ui,sans-serif}
+    body{margin:0;background:#05070d;color:#e2edff;overflow:hidden}
+    #host{position:fixed;inset:0} canvas{display:block;width:100%;height:100%;touch-action:none}
+    header{position:fixed;top:max(18px,env(safe-area-inset-top));left:20px;pointer-events:none}
+    h1{font-size:15px;font-weight:500;margin:0} #status{font-size:12px;opacity:.7;margin-top:6px}
+    #controls{position:fixed;bottom:max(16px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:grid;gap:8px;justify-items:center;width:min(94vw,640px)}
+    .row{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+    button{border:1px solid #8292b655;border-radius:8px;color:#e2edff;background:#0c1528e8;font:inherit;min-height:40px;padding:8px 13px;cursor:pointer;backdrop-filter:blur(12px)}
+    button:hover{border-color:#7bcaff} button:focus-visible{outline:2px solid #d49bff;outline-offset:3px}
+    button[aria-pressed=true]{background:#214f77;border-color:#80ceff} button:disabled{opacity:.35;cursor:default}
+    body.light header{color:#172846} body.checker{background:repeating-conic-gradient(#24334a 0% 25%,#a3b3c9 0% 50%) 50%/120px 120px}
+    @media(max-width:500px){header{left:14px}button{padding:8px 10px;font-size:12px;min-height:42px}}
+  </style>
+</head>
+<body>
+  <main id="host"><canvas id="holo" aria-label="Interactive glyph head and liquid body"></canvas></main>
+  <header><h1>Mouth and liquid review</h1><div id="status" role="status">Loading the head.</div></header>
+  <nav id="controls" aria-label="Review controls">
+    <div class="row"><button id="head" type="button" aria-pressed="true">Head</button><button id="liquid" type="button" aria-pressed="false">Liquid</button><button id="ripple" type="button" disabled>Disturb</button><button id="speak" type="button">Speak</button></div>
+    <div class="row" id="poses"><button type="button" data-pose="sil">Closed</button><button type="button" data-pose="ee">EE</button><button type="button" data-pose="aa">AH</button><button type="button" data-pose="oh">OH</button><button type="button" data-pose="ou">OO</button><button type="button" id="side">Side</button><button type="button" id="close">Close-up</button></div>
+    <div class="row" id="backgrounds"><button type="button" data-bg="dark">Dark</button><button type="button" data-bg="light">Light</button><button type="button" data-bg="checker">Pattern</button></div>
+  </nav>
+  <script type="module" src="./liquid-body-lab.ts"></script>
+</body>
+</html>
