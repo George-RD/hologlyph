@@ -90,12 +90,15 @@ export async function probeLiquidMouthFade(): Promise<{
     return { backend: renderer.backend.constructor.name, phases, opaqueControl, offPixelDifferences };
   } finally {
     renderer.setRenderTarget(null);
-    target.dispose();
-    renderer.dispose();
+    // Materials notify the renderer while disposing. Release them before
+    // its node caches, otherwise Three r178's usedTimes lookup is invalid.
+    scene.clear();
     geometry.dispose();
     mouth.dispose();
     source.dispose();
     backing.dispose();
     owner.dispose();
+    target.dispose();
+    renderer.dispose();
   }
 }

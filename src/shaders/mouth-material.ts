@@ -35,6 +35,9 @@ export function buildMouthMaterial(surface: Material): Material {
   material.blending = NoBlending;
   material.depthTest = true;
   material.depthWrite = true;
+  // Alpha alone cannot fade an opaque pass. Hashing discards coverage and
+  // depth together during liquid handover; opacity one retains every pixel.
+  material.alphaHash = true;
 
   const roles = Fn((builder) => builder.geometry.hasAttribute('_oral_region')
     ? attribute('_oral_region', 'vec2') : vec2(0))();

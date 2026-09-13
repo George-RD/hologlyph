@@ -79,8 +79,8 @@ describe('liquid renderer binding', () => {
     expect(body.amount).toBe(1);
     body.steerTo(0.2, 0.1);
     vfx.update(0);
-    vfx.dispose(); vfx.dispose();
     expect(body.position).toEqual([0.2, 0.1]);
+    vfx.dispose(); vfx.dispose();
     expect(body.steerTo(1, 1)).toBe(false);
     body.setAmount(0);
     expect(body.amount).toBe(1);
