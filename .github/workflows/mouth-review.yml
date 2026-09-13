@@ -5,6 +5,7 @@ on:
       - 'src/**'
       - 'test/**'
       - 'assets/**'
+      - 'demo/liquid*'
       - 'tools/asset-pipeline/**'
       - 'tools/smoke/mouth-*.mjs'
       - 'tools/smoke/liquid-*.mjs'
