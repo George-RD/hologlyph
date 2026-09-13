@@ -1,0 +1,46 @@
+name: Hologlyph verification snapshot
+on:
+  push:
+    branches: ['work/hologlyph-98-99-verification']
+    paths: ['.github/workflows/verification-snapshot.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Populate verified source cache for offline regression tests
+        run: bun tools/asset-pipeline/build-bust.ts /tmp/snapshot-source-check.glb
+      - name: Prepare the pinned architecture gate
+        run: |
+          curl -fL --retry 2 https://github.com/cairn-framework/cairn/releases/download/v0.10.0/cairn-framework-x86_64-unknown-linux-gnu.tar.xz -o /tmp/cairn.tar.xz
+          echo '6415bac1217d9e23eab992571b434a832a0ed0cd43958adbc999f5bb301512d0  /tmp/cairn.tar.xz' | sha256sum --check
+          mkdir -p /tmp/cairn-bin /tmp/hologlyph-tools
+          tar -xJf /tmp/cairn.tar.xz -C /tmp/cairn-bin
+          CAIRN=$(find /tmp/cairn-bin -type f -name cairn | head -1)
+          test -n "$CAIRN"
+          install -m 755 "$CAIRN" /tmp/hologlyph-tools/cairn
+          cp -L "$(command -v bun)" /tmp/hologlyph-tools/bun
+      - name: Package source, dependencies and tools without runner credentials
+        run: |
+          git rev-parse HEAD > /tmp/hologlyph-tools/source-head.txt
+          git status --porcelain > /tmp/hologlyph-tools/source-status.txt
+          tar -czf /tmp/hologlyph-source.tgz --exclude='./.git' .
+          tar -czf /tmp/hologlyph-tools.tgz -C /tmp hologlyph-tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hologlyph-verification-snapshot
+          path: |
+            /tmp/hologlyph-source.tgz
+            /tmp/hologlyph-tools.tgz
+          compression-level: 0
+          retention-days: 2
