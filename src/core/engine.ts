@@ -66,6 +66,7 @@ import {
   type PoolSurface,
 } from '../shaders';
 import { createInteriorGlyphField } from '../shaders/interior-glyph-field.js';
+import { bindLiquidScene, liquidBodyChanging, liquidBodySpaceChanged } from '../shaders/liquid-material.js';
 import { buildMouthMaterial } from '../shaders/mouth-material.js';
 import { createPoolSurface } from '../shaders/pool-surface.js';
 import { createCompositorGlass, type CompositorGlass } from './compositor-glass.js';
@@ -653,6 +654,17 @@ class EngineImpl implements Engine {
       this.sysVfx.setStageColliders(this.stageColliders);
       return this.stageObstacles;
     }
+    // The old radial collision profile describes the head at its original
+    // location, not a travelling liquid surface. Release its reactions rather
+    // than denting or pushing page elements at stale coordinates.
+    if (liquidBodySpaceChanged(this.sysVfx)) {
+      this.sysVfx.setStageColliders(this.stageColliders);
+      const count = stage.participants.length;
+      if (this.stageOffsets.length < count * 2) this.stageOffsets = new Float64Array(count * 2);
+      this.stageOffsets.fill(0);
+      stage.write(this.stageOffsets);
+      return this.stageObstacles;
+    }
 
     const profile = this.poolProfile;
     const camera = this.sysRenderer.camera;
@@ -834,6 +846,7 @@ class EngineImpl implements Engine {
     this.disposed = true;
 
     this.stopLoop();
+    bindLiquidScene(this.sysVfx, null);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.reducedMotionMql?.removeEventListener?.('change', this.onReducedMotion);
 
@@ -962,6 +975,7 @@ class EngineImpl implements Engine {
   }
 
   private replaceAvatar(candidateAvatar: LoadedAvatar): void {
+    bindLiquidScene(this.sysVfx, null);
     this.disposeOverlayMeshes();
     // The outgoing avatar's three skin passes go with it. A fresh set is built
     // below, and the VFX engine retires the old binding once all three are
@@ -1187,6 +1201,7 @@ class EngineImpl implements Engine {
     }
     this.interiorBody = bodyMesh ? resolveInteriorBody(bodyMesh, this.avatar) : null;
 
+    bindLiquidScene(this.sysVfx, this.avatar.root);
     this.applyGlassLayering();
   }
 
@@ -1207,7 +1222,7 @@ class EngineImpl implements Engine {
    */
   private applyPoolLayer(): void {
     const config = this.sysVfx.headConfig.pool;
-    const want = config.amount > 0;
+    const want = config.amount > 0 && !liquidBodySpaceChanged(this.sysVfx);
     if (!want) {
       if (this.pool) {
         this.sysRenderer.scene.remove(this.pool.object);
@@ -1280,7 +1295,7 @@ class EngineImpl implements Engine {
    */
   private applyCompositorGlass(): CompositorGlass | null {
     const config = this.sysVfx.headConfig.compositor;
-    if (config.amount <= 0 || !this.canvas || this.lensContributing()) {
+    if (config.amount <= 0 || !this.canvas || this.lensContributing() || liquidBodyChanging(this.sysVfx)) {
       if (this.compositor) {
         this.compositor.dispose();
         this.compositor = null;
@@ -1356,7 +1371,7 @@ class EngineImpl implements Engine {
   private applyInteriorGlyphs(): void {
     const config = this.sysVfx.headConfig.interior;
     const body = this.interiorBody;
-    if (config.count <= 0 || !body) {
+    if (config.count <= 0 || !body || liquidBodyChanging(this.sysVfx)) {
       this.disposeInteriorGlyphs();
       return;
     }
@@ -1672,7 +1687,7 @@ class EngineImpl implements Engine {
 
     // While frozen, skip the motion update entirely: idle and gaze phase off
     // wall-clock time, so even dt=0 would keep breathing between frames.
-    if (!this.motionFrozen) this.sysMotion.update(dt, this.elapsed);
+    if (!this.motionFrozen && !liquidBodyChanging(this.sysVfx)) this.sysMotion.update(dt, this.elapsed);
 
     // After motion, so the field reads this frame's pose rather than last
     // frame's, and before the render that consumes the buffers it writes.
