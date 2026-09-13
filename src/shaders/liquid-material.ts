@@ -13,6 +13,7 @@ import {
   LIQUID_LAG, LIQUID_MAX_HEIGHT, LIQUID_RESOLUTION, LIQUID_THICKNESS,
   LiquidDynamics, type LiquidBounds, type LiquidPoint,
 } from './liquid-dynamics';
+import { LiquidFreeSurface } from './liquid-free-surface';
 import { createLiquidScene, type LiquidSceneBinding } from './liquid-scene';
 
 export interface LiquidControls {
@@ -82,9 +83,10 @@ export function liquidInteriorVisibility(vfx: VFXEngine): number {
 /** Own the wave texture, per-avatar scene binding and liquid material graphs. */
 export class LiquidMaterialOwner {
   readonly dynamics = new LiquidDynamics();
-  private readonly amount = uniform(0);
-  private readonly minY = uniform(0);
-  private readonly extent = uniform(0);
+  private readonly free = new LiquidFreeSurface();
+  private readonly amount = this.free.amount;
+  private readonly minY = this.free.minY;
+  private readonly extent = this.free.extent;
   private readonly offset = uniform(new Vector2());
   private readonly pixels = new Uint8Array(LIQUID_RESOLUTION ** 2 * 4);
   private field: DataTexture | null = null;
@@ -95,8 +97,10 @@ export class LiquidMaterialOwner {
   /** Restore the previous avatar's hierarchy before binding its replacement. */
   bindScene(root: Group | null): void {
     if (this.dead) return;
+    this.free.mesh?.removeFromParent();
     this.scene?.dispose();
     this.scene = root ? createLiquidScene(root) : null;
+    if (this.scene && this.free.mesh) this.scene.carrier.add(this.free.mesh);
     this.sync();
   }
 
@@ -113,7 +117,7 @@ export class LiquidMaterialOwner {
     return this.field;
   }
 
-  /** Wrap the live upstream position graph with finite-depth collapse and waves. */
+  /** Collapse the authored head, then converge onto the independent closed surface. */
   private projection(original: NodeMaterial['positionNode']): NonNullable<NodeMaterial['positionNode']> {
     // Real node edges preserve upstream morph/skinning/deformation graphs.
     // Every operand remains bounded while the feature is disabled.
@@ -134,11 +138,15 @@ export class LiquidMaterialOwner {
     const radial = derivative.max(LIQUID_THICKNESS).pow(-0.5);
     const xz = p.xz.mul(radial);
     const uv = xz.div(span.mul(2.2)).add(0.5).clamp(0, 1);
-    const packed = texture(this.fieldTexture(), uv).level(float(0));
+    const field = this.fieldTexture();
+    const packed = texture(field, uv).level(float(0));
     const wave = packed.r.mul(65280).add(packed.g.mul(255)).sub(32768)
       .div(32767).mul(LIQUID_MAX_HEIGHT).mul(span);
-    const projected = vec3(xz.x,
+    const collapsed = vec3(xz.x,
       this.minY.add(p.y.sub(this.minY).mul(vertical)).add(wave.mul(h).mul(progress)), xz.y);
+    const direction = p.sub(vec3(0, this.minY.add(span.mul(0.5)), 0));
+    const target = this.free.position(direction, field);
+    const projected = mix(collapsed, target, smoothstep(0.32, 0.88, this.amount));
     // With a bound scene, placement is a real carrier transform. Standalone
     // material users retain the model-space offset path.
     return select(this.amount.greaterThan(0).and(this.extent.greaterThan(0)), projected, p)
@@ -177,15 +185,20 @@ export class LiquidMaterialOwner {
     const lighting = normalView.z.abs().mul(0.5).add(0.5);
     const glow = letters.mul(lighting);
     const liquidColour = vec3(0.08, 0.43, 0.85).mul(glow).add(vec3(0.002, 0.014, 0.035));
+    const headVisibility = float(1).sub(smoothstep(0.8, 0.95, this.amount));
     front.colorNode = mix(front.colorNode ?? vec3(0), liquidColour, transition);
     front.emissiveNode = mix(front.emissiveNode ?? vec3(0), vec3(0.025, 0.15, 0.32).mul(glow), transition);
-    front.opacityNode = mix(front.opacityNode ?? float(1), float(0.94), transition);
+    front.opacityNode = mix(front.opacityNode ?? float(1), float(0.94), transition).mul(headVisibility);
     interior.colorNode = mix(interior.colorNode ?? vec3(0), liquidColour.mul(0.35), transition);
     interior.emissiveNode = mix(interior.emissiveNode ?? vec3(0), liquidColour.mul(0.08), transition);
+    interior.opacityNode = float(interior.opacityNode ?? float(1)).mul(headVisibility);
     for (const material of [front, interior, mask]) {
       material.positionNode = projection;
       surfaceOwners.set(material, this);
     }
+    this.free.attach(skin, this.fieldTexture());
+    if (this.scene && this.free.mesh) this.scene.carrier.add(this.free.mesh);
+    this.sync();
   }
 
   /** Deform an authored eye material and hide it as the head becomes liquid. */
@@ -227,7 +240,7 @@ export class LiquidMaterialOwner {
 
   /** Copy solver state into the rig carrier, uniforms and existing texture. */
   private sync(): void {
-    this.amount.value = this.dynamics.amount;
+    this.free.sync(this.dynamics);
     this.offset.value.set(this.scene ? 0 : this.dynamics.position[0], this.scene ? 0 : this.dynamics.position[1]);
     this.scene?.update(this.dynamics);
     if (this.field && (this.dynamics.amount > 0 || this.fieldWasActive)) {
@@ -240,10 +253,11 @@ export class LiquidMaterialOwner {
   /** Model-space vertical placement used by the owning VFX engine. */
   get verticalOffset(): number { return this.dynamics.position[1]; }
 
-  /** Restore the avatar and release the owned texture and solver idempotently. */
+  /** Restore the avatar and release owned surface, texture and solver idempotently. */
   dispose(): void {
     if (this.dead) return;
     this.dead = true;
+    this.free.dispose();
     this.scene?.dispose();
     this.scene = null;
     this.dynamics.dispose();
