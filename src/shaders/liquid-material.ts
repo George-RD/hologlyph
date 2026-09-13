@@ -258,7 +258,12 @@ export class LiquidMaterialOwner {
   private sync(): void {
     this.free.sync(this.dynamics);
     this.offset.value.set(this.scene ? 0 : this.dynamics.position[0], this.scene ? 0 : this.dynamics.position[1]);
-    this.scene?.update(this.dynamics);
+    // No usable extent means no replacement surface. Keep the authored head
+    // and internals visible instead of switching to an invisible liquid mesh.
+    const drawable = this.free.mesh !== null && this.extent.value > 0;
+    this.amount.value = drawable ? this.dynamics.amount : 0;
+    this.scene?.update({ amount: this.amount.value,
+      targetAmount: drawable ? this.dynamics.targetAmount : 0, position: this.dynamics.position });
     if (this.field && (this.dynamics.amount > 0 || this.fieldWasActive)) {
       this.dynamics.writeTexture(this.pixels);
       this.field.needsUpdate = true;

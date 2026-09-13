@@ -77,6 +77,33 @@ describe('bounded independent liquid outline', () => {
 });
 
 describe('free-surface lifecycle', () => {
+  it('keeps the authored body when the liquid has no usable extent', () => {
+    const skin = skinSource();
+    const built = buildSkinMaterial(skin);
+    const owner = new LiquidMaterialOwner();
+    const root = new Group();
+    const geometry = new BoxGeometry();
+    const head = new Mesh(geometry, built.material);
+    root.add(head);
+    owner.attachSurface({ front: built.material, interior: built.interior, mask: built.mask }, skin);
+    owner.bindScene(root);
+    owner.dynamics.setAmount(1, true);
+    owner.update(0);
+    const surface = root.getObjectByName('hologlyph_liquid_surface');
+    expect(head.visible).toBe(true);
+    expect(surface?.visible).toBe(false);
+    owner.setExtent(-0.8, 0.8);
+    owner.update(0);
+    expect(head.visible).toBe(false);
+    expect(surface?.visible).toBe(true);
+    owner.setExtent(NaN, 1);
+    owner.update(0);
+    expect(head.visible).toBe(true);
+    expect(surface?.visible).toBe(false);
+    owner.dispose(); geometry.dispose();
+    built.material.dispose(); built.interior.dispose(); built.mask.dispose(); skin.texture.dispose();
+  });
+
   it('hides every original mesh at full liquid and restores authored visibility', () => {
     const root = new Group();
     const geometry = new BoxGeometry();

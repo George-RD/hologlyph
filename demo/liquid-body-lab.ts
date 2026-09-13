@@ -50,7 +50,7 @@ function view(): void {
   const camera = engine.sysRenderer.camera;
   const root = engine.avatar.root;
   const footprint = liquidBodyFootprint(engine.vfx);
-  const state = `${close}:${side}:${camera.aspect}:${root.position.y}:${footprint?.maxX}`;
+  const state = `${close}:${side}:${camera.aspect}:${root.position.y}:${footprint?.maxX}:${close ? liquid.position.join() : ''}`;
   if (state === lastView) return;
   lastView = state;
   const yaw = side ? 0.48 : 0;
@@ -58,8 +58,12 @@ function view(): void {
   const distance = (close ? 0.88 : 4.5) * aspectScale;
   const targetY = close ? -0.12 : -0.25;
   const rise = close ? 0.04 : 2;
-  camera.position.set(Math.sin(yaw) * distance, targetY + rise, Math.cos(yaw) * distance);
-  camera.lookAt(0, targetY, close ? 0.12 : 0);
+  // Close-up follows the travelled head. Wide framing remains fixed during
+  // transitions, so it cannot disguise the handover between representations.
+  const focusX = close ? liquid.position[0] : 0;
+  const focusY = close ? liquid.position[1] : 0;
+  camera.position.set(focusX + Math.sin(yaw) * distance, focusY + targetY + rise, Math.cos(yaw) * distance);
+  camera.lookAt(focusX, focusY + targetY, close ? 0.12 : 0);
   camera.updateMatrixWorld();
   const bounds = footprint ? viewportLiquidBounds(camera, root, footprint, desiredBounds) : null;
   fits = bounds !== null;

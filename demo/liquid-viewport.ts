@@ -17,7 +17,10 @@ export function viewportLiquidBounds(
 ): LiquidBounds | null {
   const values = [footprint.minX, footprint.maxX, footprint.minY, footprint.maxY,
     footprint.minZ, footprint.maxZ, desired.minX, desired.maxX, desired.minY, desired.maxY, padding];
-  if (!values.every(Number.isFinite) || padding < 0 || padding >= 0.5
+  const spans = [footprint.maxX - footprint.minX, footprint.maxY - footprint.minY,
+    footprint.maxZ - footprint.minZ, desired.maxX - desired.minX, desired.maxY - desired.minY];
+  if (!values.every(Number.isFinite) || !spans.every(span => Number.isFinite(span) && span >= 0)
+    || padding < 0 || padding >= 0.5
     || desired.minX > 0 || desired.maxX < 0 || desired.minY > 0 || desired.maxY < 0) {
     throw new RangeError('Liquid viewport bounds require finite extents and a travel area containing the origin');
   }
@@ -25,6 +28,7 @@ export function viewportLiquidBounds(
   camera.updateMatrixWorld();
   const clip = new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     .multiply(root.matrixWorld);
+  if (!clip.elements.every(Number.isFinite)) return null;
   const point = new Vector4();
   const margin = 1 - 2 * padding;
 
@@ -36,7 +40,8 @@ export function viewportLiquidBounds(
           for (const py of [footprint.minY, footprint.maxY]) {
             for (const pz of [footprint.minZ, footprint.maxZ]) {
               point.set(px + x, py + y, pz, 1).applyMatrix4(clip);
-              if (!(point.w > 0) || Math.abs(point.x) > margin * point.w
+              if (![point.x, point.y, point.z, point.w].every(Number.isFinite)
+                || !(point.w > 0) || Math.abs(point.x) > margin * point.w
                 || Math.abs(point.y) > margin * point.w || Math.abs(point.z) > point.w) return false;
             }
           }
