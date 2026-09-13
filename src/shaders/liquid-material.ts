@@ -5,7 +5,7 @@ import {
 import type { MeshStandardNodeMaterial, NodeMaterial } from 'three/webgpu';
 import {
   cross, dFdx, dFdy, float, luminance, mix, normalView,
-  positionLocal, positionView, reference, select, smoothstep,
+  positionGeometry, positionLocal, positionView, reference, select, smoothstep,
   texture, uniform, vec2, vec3,
 } from 'three/tsl';
 import type { SkinMaterials, TextSkinEngine, VFXEngine } from '../contracts';
@@ -14,6 +14,7 @@ import {
   LiquidDynamics, type LiquidBounds, type LiquidPoint,
 } from './liquid-dynamics';
 import { LiquidFreeSurface } from './liquid-free-surface';
+import { liquidFootprint, type LiquidFootprint } from './liquid-footprint';
 import { createLiquidScene, type LiquidSceneBinding } from './liquid-scene';
 
 export interface LiquidControls {
@@ -44,6 +45,13 @@ export function liquidBody(vfx: VFXEngine): LiquidControls {
   const owner = owners.get(vfx);
   if (!owner) throw new Error('This VFX engine has no liquid-body binding');
   return owner.dynamics;
+}
+
+/** Conservative endpoint footprint; null until the avatar has a usable extent. */
+export function liquidBodyFootprint(vfx: VFXEngine): LiquidFootprint | null {
+  const owner = owners.get(vfx);
+  if (!owner) throw new Error('This VFX engine has no liquid-body binding');
+  return owner.footprint;
 }
 
 /** Associate the engine with its existing liquid owner; never create another clock. */
@@ -144,7 +152,10 @@ export class LiquidMaterialOwner {
       .div(32767).mul(LIQUID_MAX_HEIGHT).mul(span);
     const collapsed = vec3(xz.x,
       this.minY.add(p.y.sub(this.minY).mul(vertical)).add(wave.mul(h).mul(progress)), xz.y);
-    const direction = p.sub(vec3(0, this.minY.add(span.mul(0.5)), 0));
+    // The final outline must not depend on a live viseme or recursively copy
+    // its entire graph into every angular term. Bind-space rays only assign
+    // shell vertices to the shared target; the closed mesh owns the endpoint.
+    const direction = positionGeometry.sub(vec3(0, this.minY.add(span.mul(0.5)), 0));
     const target = this.free.position(direction, field);
     const projected = mix(collapsed, target, smoothstep(0.32, 0.88, this.amount));
     // With a bound scene, placement is a real carrier transform. Standalone
@@ -220,9 +231,14 @@ export class LiquidMaterialOwner {
   /** Set usable avatar height bounds, or disable projection for invalid extents. */
   setExtent(minY: number, maxY: number): void {
     const span = maxY - minY;
-    const usable = Number.isFinite(minY) && Number.isFinite(maxY) && span > 0;
+    const usable = Number.isFinite(minY) && Number.isFinite(maxY) && Number.isFinite(span) && span > 0;
     this.minY.value = usable ? minY : 0;
     this.extent.value = usable ? span : 0;
+  }
+
+  /** Maximum endpoint envelope, excluding carrier translation and root transforms. */
+  get footprint(): LiquidFootprint | null {
+    return this.dead ? null : liquidFootprint(this.minY.value, this.minY.value + this.extent.value);
   }
 
   /** Apply the reduced-motion policy and immediately synchronise render state. */
