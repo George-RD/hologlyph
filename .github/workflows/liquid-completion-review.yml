@@ -7,6 +7,7 @@ on:
       - 'demo/liquid*'
       - 'tools/smoke/*liquid*'
       - 'meta/decisions/liquid-free-boundary.md'
+      - 'cairn.blueprint'
       - '.github/workflows/liquid-completion-review.yml'
 permissions:
   contents: read

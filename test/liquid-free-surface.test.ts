@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BoxGeometry, CanvasTexture, Group, Mesh, MeshBasicMaterial } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import type { TextSkinEngine } from '../src/contracts';
 import { LiquidBoundary, LIQUID_BOUNDARY_LIMIT } from '../src/shaders/liquid-boundary';
 import { LiquidDynamics } from '../src/shaders/liquid-dynamics';
@@ -77,6 +78,28 @@ describe('bounded independent liquid outline', () => {
 });
 
 describe('free-surface lifecycle', () => {
+  it('does not fade standalone materials before their replacement can enter a scene', () => {
+    const skin = skinSource();
+    const built = buildSkinMaterial(skin);
+    const owner = new LiquidMaterialOwner();
+    owner.attachSurface({ front: built.material, interior: built.interior, mask: built.mask }, skin);
+    owner.setExtent(-0.8, 0.8);
+    // Inspect the live opacity uniform, not a separately constructed material.
+    const amount = (owner as unknown as { amount: { value: number } }).amount;
+    const nodes: unknown[] = [];
+    (built.material as NodeMaterial).opacityNode?.traverse(node => nodes.push(node));
+    expect(nodes).toContain(amount);
+    owner.dynamics.setAmount(1, true);
+    owner.update(0);
+    expect(amount.value).toBe(0);
+    owner.bindScene(new Group());
+    expect(amount.value).toBe(1);
+    owner.bindScene(null);
+    expect(amount.value).toBe(0);
+    owner.dispose();
+    built.material.dispose(); built.interior.dispose(); built.mask.dispose(); skin.texture.dispose();
+  });
+
   it('keeps the authored body when the liquid has no usable extent', () => {
     const skin = skinSource();
     const built = buildSkinMaterial(skin);

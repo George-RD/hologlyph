@@ -258,9 +258,9 @@ export class LiquidMaterialOwner {
   private sync(): void {
     this.free.sync(this.dynamics);
     this.offset.value.set(this.scene ? 0 : this.dynamics.position[0], this.scene ? 0 : this.dynamics.position[1]);
-    // No usable extent means no replacement surface. Keep the authored head
-    // and internals visible instead of switching to an invisible liquid mesh.
-    const drawable = this.free.mesh !== null && this.extent.value > 0;
+    // A replacement needs both usable extents and a scene. Standalone skin
+    // materials retain placement, but must not fade for an unattached mesh.
+    const drawable = this.scene !== null && this.free.mesh !== null && this.extent.value > 0;
     this.amount.value = drawable ? this.dynamics.amount : 0;
     this.scene?.update({ amount: this.amount.value,
       targetAmount: drawable ? this.dynamics.targetAmount : 0, position: this.dynamics.position });

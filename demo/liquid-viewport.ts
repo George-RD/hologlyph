@@ -1,4 +1,4 @@
-import { Matrix4, Vector4, type Object3D, type PerspectiveCamera } from 'three';
+import { Matrix4, Vector4, WebGPUCoordinateSystem, type Object3D, type PerspectiveCamera } from 'three';
 import type { LiquidBounds, LiquidFootprint } from '../src/index';
 
 /**
@@ -40,9 +40,12 @@ export function viewportLiquidBounds(
           for (const py of [footprint.minY, footprint.maxY]) {
             for (const pz of [footprint.minZ, footprint.maxZ]) {
               point.set(px + x, py + y, pz, 1).applyMatrix4(clip);
+              const outsideDepth = camera.coordinateSystem === WebGPUCoordinateSystem
+                ? point.z < 0 || point.z > point.w
+                : Math.abs(point.z) > point.w;
               if (![point.x, point.y, point.z, point.w].every(Number.isFinite)
                 || !(point.w > 0) || Math.abs(point.x) > margin * point.w
-                || Math.abs(point.y) > margin * point.w || Math.abs(point.z) > point.w) return false;
+                || Math.abs(point.y) > margin * point.w || outsideDepth) return false;
             }
           }
         }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Group, PerspectiveCamera, Vector3 } from 'three';
+import { Group, PerspectiveCamera, Vector3, WebGLCoordinateSystem, WebGPUCoordinateSystem } from 'three';
 import { viewportLiquidBounds } from '../demo/liquid-viewport';
 import { liquidFootprint } from '../src/shaders/liquid-footprint';
 import type { LiquidBounds, LiquidFootprint } from '../src/index';
@@ -24,13 +24,30 @@ function expectContained(camera: PerspectiveCamera, root: Group, footprint: Liqu
         const projected = new Vector3(px + x, py + y, pz).applyMatrix4(root.matrixWorld).project(camera);
         expect(Math.abs(projected.x)).toBeLessThanOrEqual(0.88 + 1e-9);
         expect(Math.abs(projected.y)).toBeLessThanOrEqual(0.88 + 1e-9);
-        expect(Math.abs(projected.z)).toBeLessThanOrEqual(1 + 1e-9);
+        expect(projected.z).toBeGreaterThanOrEqual(camera.coordinateSystem === WebGPUCoordinateSystem ? -1e-9 : -1 - 1e-9);
+        expect(projected.z).toBeLessThanOrEqual(1 + 1e-9);
       }
     }
   }
 }
 
 describe('perspective liquid containment', () => {
+  it.each([WebGLCoordinateSystem, WebGPUCoordinateSystem])('honours near and far planes in coordinate system %s', coordinateSystem => {
+    const camera = new PerspectiveCamera(45, 1, 1, 10);
+    camera.coordinateSystem = coordinateSystem;
+    camera.updateProjectionMatrix();
+    camera.position.z = 2;
+    camera.updateMatrixWorld();
+    const root = new Group();
+    const origin = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    const footprint = { minX: -0.05, maxX: 0.05, minY: -0.05, maxY: 0.05, minZ: 0.7, maxZ: 0.9 };
+    expect(viewportLiquidBounds(camera, root, footprint, origin)).not.toBeNull();
+    // The front corner is only 0.8 units from a near plane at 1. WebGPU
+    // projects it into negative Z within (-w, 0), which WebGL's test admits.
+    expect(viewportLiquidBounds(camera, root, { ...footprint, maxZ: 1.2 }, origin)).toBeNull();
+    expect(viewportLiquidBounds(camera, root, { ...footprint, minZ: -8.2 }, origin)).toBeNull();
+  });
+
   it('insets the visible body rather than only clamping its origin', () => {
     const root = new Group();
     const camera = cameraAt(6);
