@@ -1,0 +1,144 @@
+name: Pinned liquid evidence
+on:
+  push:
+    branches: ['work/hologlyph-98-99-verification']
+    paths: ['.github/workflows/liquid-evidence-publish.yml']
+permissions:
+  contents: write
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CANDIDATE: 4339acb27b6d134cb067b357ef5988f3a4b46090
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: Capture the real renderer
+        run: |
+          bun run dev > /tmp/liquid-server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:5173/hologlyph/liquid-body-lab.html >/dev/null && break
+            sleep 1
+          done
+          cat > .liquid-review-capture.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          const out = '/tmp/liquid-evidence';
+          mkdirSync(out, {recursive:true});
+          const browser = await chromium.launch({args:['--no-sandbox']});
+          const page = await browser.newPage({viewport:{width:1000,height:900},deviceScaleFactor:1,reducedMotion:'no-preference'});
+          const report = {sourceHead:process.env.CANDIDATE,errors:[],captures:[],states:[]};
+          page.on('pageerror',e=>report.errors.push(e.message));
+          page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
+          page.setDefaultTimeout(60000);
+          async function capture(name) {
+            await page.waitForTimeout(250);
+            await page.screenshot({path:`${out}/${name}.png`});
+            report.captures.push(name);
+            report.states.push(await page.evaluate(()=>{
+              const lab=window.__liquidLab;
+              const mesh=lab?.engine.avatar.root.getObjectByName('hologlyph_liquid_surface');
+              return {amount:lab?.liquid.amount,fit:lab?.fits,bounds:lab?.liquid.bounds,position:lab?.liquid.position,
+                modes:lab?.liquid.boundary.modes,camera:lab?.engine.sysRenderer.camera.position.toArray(),
+                surface:mesh?{visible:mesh.visible,indices:mesh.geometry.index.count}:null};
+            }));
+            console.log('CAPTURE',name,JSON.stringify(report.states.at(-1)));
+          }
+          try {
+            await page.goto('http://localhost:5173/hologlyph/liquid-body-lab.html');
+            await page.waitForFunction(()=>window.__liquidLab?.ready);
+            await page.waitForFunction(()=>window.__liquidLab.engine.vfx.emergence>.999);
+            await page.evaluate(()=>{
+              const lab=window.__liquidLab;
+              lab.engine.sysTextSkin.setReducedMotion(true);
+              lab.engine.eyeTextSkin.setReducedMotion(true);
+              lab.pose('ee');
+            });
+            for(const amount of [0,.25,.5,.65,.8,.9,1]) {
+              await page.evaluate(a=>window.__liquidLab.amount(a,true),amount);
+              await capture(`collapse-${String(Math.round(amount*100)).padStart(3,'0')}`);
+            }
+            await page.evaluate(()=>{window.__liquidLab.liquid.steerTo(.6,.5);window.__liquidLab.liquid.impulse(.4,.3,1.5);});
+            await capture('sloshing');
+            await page.evaluate(()=>window.__liquidLab.liquid.release());
+            await capture('released');
+            for(const bg of ['light','checker']) {
+              await page.evaluate(bg=>window.__liquidLab.background(bg),bg);
+              await capture(`liquid-${bg}`);
+            }
+            await page.setViewportSize({width:390,height:844});
+            await capture('mobile-liquid');
+            await page.evaluate(()=>window.__liquidLab.amount(0));
+            await page.waitForFunction(()=>window.__liquidLab.liquid.amount===0);
+            await capture('mobile-reformed');
+            await page.setViewportSize({width:1000,height:900});
+            await page.evaluate(()=>{window.__liquidLab.background('dark');window.__liquidLab.view({close:true});window.__liquidLab.pose('aa');});
+            await capture('tongue-dark');
+          } finally {
+            writeFileSync(`${out}/result.json`,JSON.stringify(report,null,2));
+            await browser.close();
+          }
+          if(report.errors.length)throw new Error(JSON.stringify(report.errors));
+          JS
+          bun .liquid-review-capture.mjs
+      - name: Build contact sheets from real captures
+        if: always()
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          from pathlib import Path
+          root=Path('/tmp/liquid-evidence')
+          groups=[('transition',sorted(root.glob('collapse-*.png'))),('interaction',[root/(n+'.png') for n in ['sloshing','released','liquid-light','liquid-checker','mobile-liquid','mobile-reformed','tongue-dark']])]
+          for name,paths in groups:
+              paths=[p for p in paths if p.exists()]
+              if not paths: continue
+              sheet=Image.new('RGB',(1000,((len(paths)+1)//2)*475),'#171b23')
+              draw=ImageDraw.Draw(sheet)
+              for i,p in enumerate(paths):
+                  im=Image.open(p).convert('RGB'); im.thumbnail((500,450))
+                  x=(i%2)*500; y=(i//2)*475
+                  draw.text((x+8,y+5),p.stem,fill='white')
+                  sheet.paste(im,(x+(500-im.width)//2,y+25))
+              sheet.save(root/(name+'-sheet.png'),optimize=True)
+          PY
+      - name: Publish only evidence on its isolated review branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os,json,base64,urllib.request
+          from pathlib import Path
+          base='https://api.github.com/repos/George-RD/hologlyph'
+          def api(path,data=None,method=None):
+              req=urllib.request.Request(base+path,data=None if data is None else json.dumps(data).encode(),method=method,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'})
+              with urllib.request.urlopen(req) as r:return json.load(r)
+          ref=api('/git/ref/heads/review/liquid-99-evidence')['object']['sha']
+          tree=api('/git/commits/'+ref)['tree']['sha']
+          root=Path('/tmp/liquid-evidence'); entries=[]
+          for p in [root/'transition-sheet.png',root/'interaction-sheet.png',root/'result.json',root/'collapse-100.png',root/'tongue-dark.png']:
+              if not p.exists():continue
+              blob=api('/git/blobs',{'content':base64.b64encode(p.read_bytes()).decode(),'encoding':'base64'})['sha']
+              entries.append({'path':'review/liquid-99/'+os.environ['CANDIDATE'][:7]+'/'+p.name,'mode':'100644','type':'blob','sha':blob})
+          if not entries:raise SystemExit('No actual renderer evidence exists')
+          newtree=api('/git/trees',{'base_tree':tree,'tree':entries})['sha']
+          commit=api('/git/commits',{'message':'review: real liquid renderer evidence '+os.environ['CANDIDATE'],'tree':newtree,'parents':[ref]})['sha']
+          api('/git/refs/heads/review/liquid-99-evidence',{'sha':commit,'force':False},'PATCH')
+          print('EVIDENCE_COMMIT',commit)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pinned-liquid-evidence
+          path: |
+            /tmp/liquid-evidence/
+            /tmp/liquid-server.log
+          retention-days: 7
