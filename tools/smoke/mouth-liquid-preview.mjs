@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { decodePng } from '../evals/score.mjs';
+import { reviewLiquidHandover } from './liquid-handover-review.mjs';
 
 /** Mean absolute RGB difference, excluding the PNG's optional alpha channel. */
 function imageDifference(a, b) {
@@ -180,6 +181,7 @@ export async function reviewLiquidBody(base = 'http://localhost:5173/hologlyph/e
     await capture('mobile-head-reduced');
     const reduced = await page.evaluate(() => ({ amount: window.__liquidLab.liquid.amount, energy: window.__liquidLab.liquid.waveEnergy }));
     assert.deepEqual(reduced, { amount: 0, energy: 0 });
+    await reviewLiquidHandover(page, capture, report);
     assert.deepEqual(errors, []);
   } finally {
     const shaders = await page.evaluate(() => window.__liquidShaders ?? []).catch(() => []);

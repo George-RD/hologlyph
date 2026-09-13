@@ -2,9 +2,12 @@
  * Head-owned liquid dynamics. No DOM, three.js or GPU work.
  *
  * A fixed-step damped height-field solver carries surface waves. Acceleration
- * of the travelling body drives those waves; releasing a drag retains momentum.
- * This is a shallow surface model, not a volumetric or particle-fluid solver.
+ * of the travelling body drives those waves and the independent radial edge;
+ * releasing a drag retains momentum. This is a reduced-order surface model,
+ * not a volumetric or particle-fluid solver.
  */
+import { LiquidBoundary } from './liquid-boundary';
+
 export const LIQUID_RESOLUTION = 33;
 export const LIQUID_STEP = 1 / 120;
 export const LIQUID_MAX_FRAME = 0.1;
@@ -29,7 +32,7 @@ export type LiquidPosition = readonly [number, number, number];
 /**
  * Allowed carrier-origin positions in model-space X/Y, not CSS pixels.
  * Hosts must reserve space for the body's visible footprint. These limits
- * constrain placement, not the future liquid contour or arbitrary obstacles.
+ * constrain placement, not arbitrary obstacles.
  */
 export interface LiquidBounds {
   readonly minX: number;
@@ -52,10 +55,10 @@ function clamp(value: number, low: number, high: number): number {
 }
 
 /**
- * The unperturbed collapse has a positive Jacobian throughout. Radial scale
- * compensates its vertical derivative, so its determinant is one, including
- * the fully liquid endpoint. Unlike a constant-height target, it retains depth.
- * The renderer adds small, zero-mean surface waves to this reference map.
+ * The unperturbed initial collapse has a positive unit Jacobian. Radial scale
+ * compensates its vertical derivative and retains depth. The renderer adds
+ * bounded waves and then hands over to an independent closed surface. This
+ * reference invariant is not a volume-conservation claim for that handover.
  */
 export function liquidProjection(
   position: LiquidPosition,
@@ -80,6 +83,7 @@ export function liquidProjection(
 }
 
 export class LiquidDynamics {
+  readonly boundary = new LiquidBoundary();
   readonly heights = new Float64Array(N * N);
   readonly waveVelocity = new Float64Array(N * N);
   private readonly nextVelocity = new Float64Array(N * N);
@@ -212,7 +216,7 @@ export class LiquidDynamics {
   /** Drop the steering target while retaining bounded release momentum. */
   release(): void { this.targetPoint = null; }
 
-  /** Local fluid-disc coordinates in [-1,1]. A dipole preserves mean height. */
+  /** Disturb the local edge and height field without changing mean height. */
   impulse(x: number, y: number, strength = 1): void {
     finite(x, 'Impulse x');
     finite(y, 'Impulse y');
@@ -220,6 +224,7 @@ export class LiquidDynamics {
     if (this.dead || this.reduced || this.progress < 0.5) return;
     x = clamp(x, -1, 1);
     y = clamp(y, -1, 1);
+    this.boundary.impulse(x, y, strength);
     const gain = clamp(strength, -2, 2) * 0.045;
     let mean = 0;
     for (const i of this.cells) {
@@ -264,7 +269,7 @@ export class LiquidDynamics {
     }
   }
 
-  /** Advance the transition, constrained carrier and zero-mean wave field once. */
+  /** Advance transition, constrained carrier, free edge and zero-mean waves once. */
   private step(): void {
     const dt = LIQUID_STEP;
     const omega = 10;
@@ -302,6 +307,7 @@ export class LiquidDynamics {
       this.clearWaves();
       return;
     }
+    this.boundary.step(dt, ax, ay);
 
     const spring = SPEED * SPEED / (CELL * CELL);
     const friction = Math.exp(-DAMPING * dt);
@@ -377,8 +383,9 @@ export class LiquidDynamics {
     }
   }
 
-  /** Return all wave buffers to exact rest without changing carrier placement. */
+  /** Return waves and the free edge to exact rest without changing placement. */
   private clearWaves(): void {
+    this.boundary.clear();
     this.heights.fill(0);
     this.waveVelocity.fill(0);
     this.nextVelocity.fill(0);

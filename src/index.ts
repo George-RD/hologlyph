@@ -12,6 +12,8 @@ export type * from './contracts.js';
 export { defineHologlyphHead, HologlyphHeadElement } from './element/index.js';
 
 /** Experimental liquid controls; no second clock or renderer is created. */
-export { liquidBody } from './shaders/liquid-material.js';
+export { liquidBody, liquidBodyFootprint } from './shaders/liquid-material.js';
 export type { LiquidControls } from './shaders/liquid-material.js';
 export type { LiquidBounds } from './shaders/liquid-dynamics.js';
+export { insetLiquidBounds } from './shaders/liquid-footprint.js';
+export type { LiquidFootprint } from './shaders/liquid-footprint.js';
