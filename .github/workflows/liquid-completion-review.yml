@@ -1,0 +1,55 @@
+name: Liquid completion review
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'demo/liquid*'
+      - 'tools/smoke/*liquid*'
+      - 'meta/decisions/liquid-free-boundary.md'
+      - '.github/workflows/liquid-completion-review.yml'
+permissions:
+  contents: read
+jobs:
+  complete-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile
+      - name: Boundary regression first
+        run: bunx vitest run test/liquid-boundary.test.ts
+      - name: Populate verified source cache
+        run: bun tools/asset-pipeline/build-bust.ts /tmp/liquid-source-check.glb
+      - name: Full project gate
+        run: |
+          bunx tsc --noEmit
+          bun run lint
+          bunx vitest run
+          bun run build
+      - name: Install the pinned architecture gate
+        run: |
+          curl -fL --retry 2 https://github.com/cairn-framework/cairn/releases/download/v0.10.0/cairn-framework-x86_64-unknown-linux-gnu.tar.xz -o /tmp/cairn.tar.xz
+          echo '6415bac1217d9e23eab992571b434a832a0ed0cd43958adbc999f5bb301512d0  /tmp/cairn.tar.xz' | sha256sum --check
+          mkdir -p /tmp/cairn-bin "$HOME/.local/bin"
+          tar -xJf /tmp/cairn.tar.xz -C /tmp/cairn-bin
+          CAIRN=$(find /tmp/cairn-bin -type f -name cairn | head -1)
+          test -n "$CAIRN"
+          install -m 755 "$CAIRN" "$HOME/.local/bin/cairn"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Authoritative architecture gate
+        run: |
+          set -o pipefail
+          cairn scan 2>&1 | tee /tmp/liquid-cairn-scan.log
+          cairn hook all 2>&1 | tee /tmp/liquid-cairn-gate.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: liquid-completion-gate
+          path: /tmp/liquid-cairn-*.log
+          retention-days: 7
