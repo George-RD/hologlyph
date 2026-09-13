@@ -5,6 +5,7 @@ import type { TextSkinEngine, VFXEngine } from '../src/contracts';
 import { createVFXEngine, liquidBody } from '../src/shaders';
 import { buildMouthMaterial, MOUTH_TEETH_DENSITY, MOUTH_TONGUE_DENSITY } from '../src/shaders/mouth-material';
 
+/** Provide a borrowed live atlas without allocating a renderer. */
 function source(): TextSkinEngine {
   return {
     texture: new CanvasTexture(document.createElement('canvas')),
@@ -13,6 +14,7 @@ function source(): TextSkinEngine {
   };
 }
 
+/** Advance only the production VFX owner at a deterministic frame rate. */
 function advance(vfx: VFXEngine, seconds: number): void {
   for (let i = 0; i < seconds * 60; i++) vfx.update(1 / 60);
 }
@@ -35,6 +37,9 @@ describe('liquid renderer binding', () => {
     expect(mouth.blending).toBe(NoBlending);
     expect(mouth.depthWrite).toBe(true);
     expect(mouth.alphaTestNode).not.toBeNull();
+    // Opaque alpha cannot blend away. Coverage must also discard depth, or
+    // the darkened mouth keeps occluding the surface until a sudden cutoff.
+    expect(mouth.alphaHash).toBe(true);
     expect(MOUTH_TEETH_DENSITY).toBeGreaterThan(MOUTH_TONGUE_DENSITY);
     const textures: unknown[] = [];
     mouth.colorNode?.traverse(node => {
@@ -74,8 +79,8 @@ describe('liquid renderer binding', () => {
     expect(body.amount).toBe(1);
     body.steerTo(0.2, 0.1);
     vfx.update(0);
-    expect(body.position).toEqual([0.2, 0.1]);
     vfx.dispose(); vfx.dispose();
+    expect(body.position).toEqual([0.2, 0.1]);
     expect(body.steerTo(1, 1)).toBe(false);
     body.setAmount(0);
     expect(body.amount).toBe(1);

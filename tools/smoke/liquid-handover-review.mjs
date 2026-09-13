@@ -51,9 +51,33 @@ async function interrupt(page, target) {
   return state;
 }
 
+/** Assert that fading opaque fragments releases depth before the final cutoff. */
+async function reviewMouthFade(page, report) {
+  const result = await page.evaluate(async () => {
+    const { probeLiquidMouthFade } = await import('./liquid-mouth-fade-probe.ts');
+    return probeLiquidMouthFade();
+  });
+  report.opaqueMouthFade = result;
+  console.log('OPAQUE MOUTH FADE', JSON.stringify(result));
+  assert.equal(result.offPixelDifferences, 0, 'Alpha hashing must preserve opaque head-mode pixels');
+  assert.equal(result.phases[0].mouth, 1);
+  assert.equal(result.phases.at(-1).mouth, 0);
+  assert.equal(result.phases.at(-1).background, 1);
+  for (let i = 1; i < result.phases.length; i++) {
+    const previous = result.phases[i - 1];
+    const current = result.phases[i];
+    assert(current.mouth < previous.mouth, 'Opaque mouth coverage must progressively disappear, not only darken');
+    assert(Math.abs(current.mouth + current.background - 1) < 1e-6, 'Discarded mouth depth must reveal the backing');
+  }
+  assert(result.phases[3].mouth > 0.1 && result.phases[3].mouth < 0.6, 'Mid-fade must have partial coverage');
+  assert.equal(result.opaqueControl.mouth, 1, 'The negative control must reproduce opaque occlusion');
+  assert.equal(result.opaqueControl.background, 0);
+}
+
 /** Fixed-camera handover, interruption and release evidence on six host cases. */
 export async function reviewLiquidHandover(page, capture, report) {
   report.handover = [];
+  await reviewMouthFade(page, report);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   for (const viewport of [{ width: 1000, height: 900 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
