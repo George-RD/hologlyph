@@ -7,6 +7,7 @@ export interface LiquidSceneState {
 }
 
 export interface LiquidSceneBinding {
+  readonly carrier: Group;
   update(state: LiquidSceneState): void;
   dispose(): void;
 }
@@ -15,7 +16,8 @@ export interface LiquidSceneBinding {
  * Placement belongs to the scene, not to a vertex-only offset. Carrying the
  * bones, meshes and overlays together keeps eye trim, culling and projected
  * bounds at the same place as the rendered head. Emergence still owns root Y.
- * This binding owns no geometry or materials.
+ * This binding owns no geometry or materials. The separate liquid surface is
+ * attached by its owner after the original mesh snapshot has been taken.
  */
 export function createLiquidScene(root: Group): LiquidSceneBinding {
   const carrier = new Group();
@@ -31,33 +33,47 @@ export function createLiquidScene(root: Group): LiquidSceneBinding {
       visible: mesh.visible, culled: mesh.frustumCulled });
   });
   let active = false;
+  let hidden = false;
   let disposed = false;
 
+  /** Restore every original visibility and culling flag, including hidden meshes. */
   function restore(): void {
     for (const entry of meshes) {
       entry.mesh.frustumCulled = entry.culled;
-      if (entry.trim) entry.mesh.visible = entry.visible;
+      entry.mesh.visible = entry.visible;
     }
   }
 
   return {
+    carrier,
+    /** Carry the whole rig and switch topology without keeping rigid internals. */
     update(state): void {
       if (disposed) return;
       carrier.position.set(state.position[0], state.position[1], 0);
       const next = state.amount > 0 || state.targetAmount > 0;
-      if (next === active) return;
-      active = next;
-      if (!active) { restore(); return; }
-      for (const entry of meshes) {
-        entry.culled = entry.mesh.frustumCulled;
-        entry.visible = entry.mesh.visible;
-        // CPU bind bounds cannot describe the collapsed, spreading shell.
-        entry.mesh.frustumCulled = false;
-        // Authored corner trim has no liquid shader. Hide it during the
-        // transition; it returns with the complete rig, never at the origin.
-        if (entry.trim) entry.mesh.visible = false;
+      const nextHidden = state.amount >= 0.95;
+      if (!next) {
+        if (active) restore();
+        active = false;
+        hidden = false;
+        return;
       }
+      if (!active) {
+        for (const entry of meshes) {
+          entry.culled = entry.mesh.frustumCulled;
+          entry.visible = entry.mesh.visible;
+        }
+      }
+      if (!active || nextHidden !== hidden) {
+        for (const entry of meshes) {
+          entry.mesh.frustumCulled = false;
+          entry.mesh.visible = !nextHidden && !entry.trim && entry.visible;
+        }
+      }
+      active = true;
+      hidden = nextHidden;
     },
+    /** Restore hierarchy and visibility idempotently before avatar replacement. */
     dispose(): void {
       if (disposed) return;
       disposed = true;
