@@ -1,6 +1,7 @@
 import { Plane, Raycaster, Vector2, Vector3 } from 'three';
-import { createEngine, liquidBody } from '../src/index.js';
+import { createEngine, liquidBody, liquidBodyFootprint } from '../src/index.js';
 import type { Engine, LoadedAvatar, RendererHost } from '../src/contracts.js';
+import { viewportLiquidBounds } from './liquid-viewport';
 
 // This undeployed review page exposes the same inspection hooks as engine.html.
 // Private scene access is not part of the consumer API.
@@ -20,13 +21,12 @@ const rippleButton = element<HTMLButtonElement>('ripple');
 const speakButton = element<HTMLButtonElement>('speak');
 const engine = createEngine() as ReviewEngine;
 const liquid = liquidBody(engine.vfx);
-// Carrier-origin limits, with the same travel area previously used for drag
-// targets. The solver now also contains released and re-forming momentum.
-// These are not a claim that a future free contour fits every viewport.
-liquid.setBounds({ minX: -0.6, maxX: 0.6, minY: -0.2, maxY: 0.85 });
+const desiredBounds = { minX: -0.6, maxX: 0.6, minY: -0.2, maxY: 0.85 };
+liquid.setBounds(desiredBounds);
 let ready = false;
 let close = false;
 let side = false;
+let fits = false;
 let poseHeld = false;
 let pointer = -1;
 let frame = 0;
@@ -40,24 +40,33 @@ const down = new Vector3();
 const origin = new Vector2();
 const ndc = new Vector2();
 
-/** Frame the selected review pose; fixed-camera topology review remains separate. */
+/**
+ * Keep one camera throughout collapse, handover, release and re-formation.
+ * Only an explicit close/side selection or viewport resize changes framing.
+ * Recompute containment when emergence moves the root, without moving camera.
+ */
 function view(): void {
   if (!ready) return;
   const camera = engine.sysRenderer.camera;
-  const state = `${liquid.amount}:${close}:${side}:${camera.aspect}`;
+  const root = engine.avatar.root;
+  const footprint = liquidBodyFootprint(engine.vfx);
+  const state = `${close}:${side}:${camera.aspect}:${root.position.y}:${footprint?.maxX}`;
   if (state === lastView) return;
   lastView = state;
-  const q = liquid.amount * liquid.amount * (3 - 2 * liquid.amount);
   const yaw = side ? 0.48 : 0;
-  // A puddle spreads wider than the head and sits lower. Frame its surface,
-  // not the original head's empty centre; retain visible room for travel.
   const aspectScale = Math.max(1, 0.85 / Math.max(camera.aspect, 0.2));
-  const distance = ((close ? 0.88 : 2.45) * (1 - q) + 4.5 * q) * aspectScale;
-  const targetY = (close ? -0.12 : -0.03) * (1 - q) - 0.68 * q;
-  const rise = (close ? 0.04 : 0.27) * (1 - q) + 2 * q;
+  const distance = (close ? 0.88 : 4.5) * aspectScale;
+  const targetY = close ? -0.12 : -0.25;
+  const rise = close ? 0.04 : 2;
   camera.position.set(Math.sin(yaw) * distance, targetY + rise, Math.cos(yaw) * distance);
-  camera.lookAt(0, targetY, close ? 0.12 * (1 - q) : 0);
+  camera.lookAt(0, targetY, close ? 0.12 : 0);
   camera.updateMatrixWorld();
+  const bounds = footprint ? viewportLiquidBounds(camera, root, footprint, desiredBounds) : null;
+  fits = bounds !== null;
+  // A close-up is a deliberate head-only inspection. Entering liquid first
+  // exits that mode and recomputes the actual visible travel envelope.
+  if (bounds) liquid.setBounds(bounds);
+  else if (!close) liquid.setBounds({ minX: 0, maxX: 0, minY: 0, maxY: 0 });
 }
 
 /** Keep the page backdrop and shader backdrop in agreement for visual review. */
@@ -103,12 +112,12 @@ function pointerPoint(event: PointerEvent): Vector3 | null {
 
 /** Delegate target and release containment to the single simulation owner. */
 function steer(x: number, y: number): void {
-  liquid.steerTo(x, y);
+  if (fits) liquid.steerTo(x, y);
 }
 
 canvas.tabIndex = 0;
 canvas.addEventListener('pointerdown', event => {
-  if (!ready || !liquid.canSteer || pointer !== -1) return;
+  if (!ready || !fits || !liquid.canSteer || pointer !== -1) return;
   const world = pointerPoint(event);
   if (!world) return;
   pointer = event.pointerId;
@@ -134,7 +143,7 @@ canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('lostpointercapture', release);
 canvas.addEventListener('keydown', event => {
-  if (!liquid.canSteer) return;
+  if (!fits || !liquid.canSteer) return;
   const delta: Record<string, readonly [number, number]> = {
     ArrowLeft: [-0.12, 0], ArrowRight: [0.12, 0], ArrowUp: [0, 0.12], ArrowDown: [0, -0.12],
   };
@@ -147,7 +156,9 @@ headButton.addEventListener('click', () => amount(0));
 liquidButton.addEventListener('click', () => amount(1));
 rippleButton.addEventListener('click', () => liquid.impulse(0.5, -0.2, 1.5));
 element('side').addEventListener('click', () => { side = !side; view(); });
-element('close').addEventListener('click', () => { close = !close; view(); });
+element('close').addEventListener('click', () => {
+  if (liquid.amount === 0 && liquid.targetAmount === 0) { close = !close; view(); }
+});
 speakButton.addEventListener('click', () => {
   if (!ready || liquid.amount > 0.001) return;
   poseHeld = false;
@@ -177,9 +188,10 @@ function tick(): void {
   const inHead = liquid.amount === 0 && liquid.targetAmount === 0;
   if (inHead && !poseHeld) engine.setMotionFrozen(false);
   view();
-  rippleButton.disabled = !liquid.canSteer;
+  rippleButton.disabled = !fits || !liquid.canSteer;
   speakButton.disabled = !inHead;
-  const message = liquid.canSteer ? 'Drag the liquid. Release to let it settle.'
+  const message = !inHead && !fits ? 'The liquid does not fit this viewport.'
+    : liquid.canSteer ? 'Drag the liquid. Release to let it settle.'
     : inHead ? 'Choose a mouth shape or press Speak.' : liquid.targetAmount === 1 ? 'Becoming liquid.' : 'Re-forming here.';
   if (message !== lastStatus) { lastStatus = message; status.textContent = message; }
   frame = requestAnimationFrame(tick);
@@ -193,6 +205,8 @@ const review = {
     side = options.side ?? side;
     view();
   },
+  /** Whether the conservative full-liquid footprint fits the current viewport. */
+  get fits(): boolean { return fits; },
   /** Whether the real avatar and renderer are ready for browser inspection. */
   get ready(): boolean { return ready; },
 };
