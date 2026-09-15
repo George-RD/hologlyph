@@ -665,6 +665,9 @@ describe('buildSkinMaterial (no GPU objects)', () => {
       (node) => (node as { _attributeName?: string })._attributeName === 'aThickness',
     );
     expect(thickness, 'aThickness reaches the front opacity').toBeDefined();
+    // Bright-backdrop adaptation must reach alpha, not only colour. Otherwise
+    // Beer-Lambert thickness keeps painting a grey shell behind the glyphs.
+    expect(reachesNode(front.opacityNode, uniforms.inkMix)).toBe(true);
 
     // Absorption is the half of the feature that cannot be seen in the
     // material's shape: thick body hides more of the page, and the light that
