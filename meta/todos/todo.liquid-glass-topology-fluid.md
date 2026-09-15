@@ -6,6 +6,28 @@ created: 2026-07-25
 
 # Tier 4: topology-changing fluid, and the only real viseme trade
 
+## 13 September 2026 scope reconciliation
+
+The owner has now explicitly requested a non-head liquid state. The earlier
+product block about whether the head may stop being a head is resolved by
+`dec.liquid-free-boundary`. PR #99 implements the first connected-boundary
+slice on PR #98: an independent closed surface, steered from the existing
+VFX clock, with the authored rig restored on re-formation.
+
+This does not require WebGPU compute. The bounded angular-mode surface and
+shared RGBA8 wave field support the existing WebGL2 fallback. The historical
+compute-only proposal below applies to a different, larger particle-fluid
+scope, not a prerequisite for the connected-boundary slice.
+
+This TODO remains blocked for the separate pinch-off, multiple-blob merging
+and arbitrary-obstacle work. Those capabilities are not implemented by #99
+and are not required by its first-slice acceptance. The historical discussion
+below is retained as context, not as a renewed block on the owner-approved
+non-head state. Speech continues to use the authored rig, not an analytic
+approximation of a mouth in the liquid.
+
+## Historical full topology proposal
+
 Order 9 (`dec.liquid-glass-architecture`). Its stated prerequisite,
 `todo.liquid-glass-fluidity-driver`, LANDED 2026-07-27, so this item is
 unblocked in principle and stays `blocked` for a different reason.
