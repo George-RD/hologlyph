@@ -1152,29 +1152,39 @@ export function buildSkinMaterial(
     .add(aJaw.mul(uJawOp))
     .add(aEyelid.mul(uOrbitOp))
     .add(browM.mul(uBrowOp));
-  // Beer-Lambert: thicker body transmits less of the page behind it, so the
-  // cranium reads as a block while the nose and chin stay clear.
+  // Beer-Lambert: thicker body transmits less of the page behind it. On the
+  // approved dark page that can spend alpha across the surface; on a bright
+  // page the same signal must strengthen glyphs instead of exposing a grey
+  // shaded mesh beneath them.
   const bodyOpacity = float(1)
     .sub(exp(aThickness.mul(GLASS_ABSORPTION).negate()))
     .mul(uGlassAmount);
-  // The pre-glass alpha, kept in exactly the order and shape it had before
-  // this change so the GPU evaluates the same instruction sequence and
-  // `glass.amount = 0` reproduces the approved look bit for bit.
-  const baseAlpha = luma.mul(float(1).sub(uBaseOpacity)).add(uBaseOpacity)
+  // Keep the approved dark-page alpha expression intact as one side of the
+  // backdrop mix. The bright-page side has no surface floor: regional feature
+  // boosts make sampled letters more present, while gaps stay transparent.
+  const surfaceAlpha = luma.mul(float(1).sub(uBaseOpacity)).add(uBaseOpacity)
     .add(zoneBoost)
     .add(socket.mul(uSocketMask));
-  // What the body newly hides, as a share of the pixel. The front glyphs keep
-  // their own alpha; this is the extra coverage the thickness buys. The
-  // saturate is what stops the additive zone boosts driving it negative.
-  const bodyShare = bodyOpacity.mul(float(1).sub(baseAlpha.saturate()));
+  const glyphAlpha = luma
+    .add(zoneBoost.mul(luma))
+    .add(socket.mul(uSocketMask).mul(luma));
+  const baseAlpha = mix(surfaceAlpha, glyphAlpha, uInkMix);
+  // The same backdrop mix routes every contour-bearing alpha term. At inkMix
+  // 0 this is the existing glass surface. At inkMix 1, thickness, Fresnel and
+  // mid-tone reinforcement can only increase coverage where a glyph exists.
+  const adaptiveCoverage = mix(float(1), luma, uInkMix);
+  const surfaceBodyShare = bodyOpacity.mul(float(1).sub(baseAlpha.saturate()));
+  const glyphBodyShare = surfaceBodyShare.mul(luma);
+  const bodyShare = mix(surfaceBodyShare, glyphBodyShare, uInkMix);
   const totalAlpha = baseAlpha
     // Glass thickens towards the silhouette, which also stops the back of the
     // head reading through at grazing angles. The waterline fade rides on the
     // glass terms only: the base glyph alpha is left alone so the face does
     // not dissolve, only the shell's own volume does.
-    .add(glassFresnel.mul(uFresnel).mul(waterFadeMix))
-    // Mid-tone pages give neither glow nor ink much contrast; lift the floor.
-    .add(uOpacityFloor)
+    .add(glassFresnel.mul(uFresnel).mul(waterFadeMix).mul(adaptiveCoverage))
+    // Mid-tone pages need more contrast, but spend it on glyph coverage rather
+    // than laying an opacity wash over the host page.
+    .add(uOpacityFloor.mul(adaptiveCoverage))
     .add(bodyShare.mul(waterFadeMix))
     .clamp(0, 1);
   material.opacityNode = totalAlpha;

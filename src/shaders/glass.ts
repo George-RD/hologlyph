@@ -22,7 +22,7 @@ export interface BackdropAdaptation {
   readonly inkColor: readonly [number, number, number];
   /** Multiplier on the emissive glow; falls off as the backdrop brightens. */
   readonly glowScale: number;
-  /** Extra base opacity, peaking on mid tones where contrast is worst. */
+  /** Extra glyph-opacity reinforcement, peaking on mid tones where contrast is worst. */
   readonly opacityFloor: number;
   /** Fresnel rim colour: a cool glow on dark pages, a dark outline on light. */
   readonly rimColor: readonly [number, number, number];
@@ -34,7 +34,7 @@ const RIM_DARK: readonly [number, number, number] = [0.5, 0.7, 1.0];
 /** Rim colour on a light backdrop: a deep outline that still reads as glass. */
 const RIM_LIGHT: readonly [number, number, number] = [0.08, 0.12, 0.22];
 
-/** Peak opacity added on a mid-tone backdrop. */
+/** Peak glyph-opacity reinforcement on a mid-tone backdrop. */
 const MAX_OPACITY_FLOOR = 0.2;
 
 /** Fraction of the emissive glow a fully white backdrop removes. */
