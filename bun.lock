@@ -24,11 +24,9 @@
         "vitest": "^3.2.4",
       },
       "peerDependencies": {
-        "@zumer/snapdom": "^2.22.0",
         "kokoro-js": "^1.2.1",
       },
       "optionalPeers": [
-        "@zumer/snapdom",
         "kokoro-js",
       ],
     },
